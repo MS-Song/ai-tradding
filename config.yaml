@@ -1,9 +1,9 @@
 # KIS-Vibe-Trader Configuration
 vibe_strategy:
-  # 기본 익절 기준 (수익률 5%)
-  take_profit_threshold: 5.0
-  # 기본 손절 기준 (수익률 -3%)
-  stop_loss_threshold: -3.0
+  # 기본 익절 기준 (수익률 10%)
+  take_profit_threshold: 10.0
+  # 기본 손절 기준 (수익률 -10%)
+  stop_loss_threshold: -10.0
   
   # 익절 시 매도 수량 비율 (30%)
   take_profit_ratio: 0.3
@@ -19,7 +19,7 @@ vibe_strategy:
     # 물타기(추가 매수) 설정 (현재 보유 종목 대상)
     average_down_amount: 500000      # 1회 추가 매수 금액 (50만원)
     min_loss_to_buy: -3.0            # 수익률이 -3% 이하일 때만 물타기 시작
-    max_investment_per_stock: 3000000 # 한 종목당 최대 누적 투자액 (300만원)
+    max_investment_per_stock: 2000000 # 한 종목당 최대 누적 투자액 (200만원)
 
   # 초기 포트폴리오 구성을 위한 Starter Kit 설정
   starter_kit:

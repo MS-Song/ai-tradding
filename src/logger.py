@@ -25,8 +25,13 @@ def setup_logger(name="VibeTrader"):
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     
+    # 파일 핸들러 설정 (로그 파일 저장)
+    file_handler = logging.FileHandler("trading.log", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    
     if not logger.handlers:
         logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
         
     return logger
 

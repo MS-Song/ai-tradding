@@ -11,6 +11,8 @@ class KISAPI:
         self._last_balance_time = 0
         self._gainers_cache = None
         self._last_gainers_time = 0
+        self._losers_cache = None
+        self._last_losers_time = 0
         self._news_cache = {} # 종목별 뉴스 캐시
         self._cache_duration = 0.5 # 0.5초 캐시
         
@@ -126,16 +128,19 @@ class KISAPI:
             time.sleep(0.5)
             res = requests.post(url, headers=headers, json=body, timeout=10)
             data = res.json()
-            
+
             if data.get("rt_cd") == "0":
-                logger.info(f"[{action} 성공] 종목코드: {stock_code} | 수량: {qty}주")
-                return True
+                msg = f"[{action} 성공] 종목코드: {stock_code} | 수량: {qty}주"
+                logger.info(msg)
+                return True, msg
             else:
-                logger.error(f"[{action} 거부] 사유: {data.get('msg1')}")
-                return False
+                err_msg = data.get("msg1", "알 수 없는 에러")
+                logger.error(f"[{action} 거부] 사유: {err_msg}")
+                return False, err_msg
         except Exception as e:
-            logger.error(f"[Order] 시장가 주문 API 에러: {e}")
-            return False
+            logger.error(f"[{action} 에러] 시스템 문제: {e}")
+            return False, str(e)
+
 
     def get_inquire_price(self, stock_code):
         """현재가, 거래량 및 등락 정보 확인"""
@@ -162,22 +167,24 @@ class KISAPI:
             logger.error(f"[Price] 가격/거래량 조회 에러 ({stock_code}): {e}")
         return None
 
-    def get_top_gainers(self):
-        """상승률 상위 종목 조회 (공식 API: FHPST01700000)"""
+    def _get_ranking(self, is_gainer=True):
+        """상승률(0) 또는 하락률(1) 순위 조회 공통 함수 (1분 캐시)"""
         current_time = time.time()
-        if self._gainers_cache and (current_time - self._last_gainers_time < 30): # 30초 캐시
-            return self._gainers_cache
+        cache = self._gainers_cache if is_gainer else self._losers_cache
+        last_time = self._last_gainers_time if is_gainer else self._last_losers_time
+        
+        if cache and (current_time - last_time < 60):
+            return cache
 
         url = f"{self.domain}/uapi/domestic-stock/v1/ranking/fluctuation"
         headers = self.auth.get_auth_headers()
         headers["tr_id"] = "FHPST01700000"
         
-        # 검증된 18개 풀 파라미터 세트
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_COND_SCR_DIV_CODE": "20170",
             "FID_INPUT_ISCD": "0000",
-            "FID_RANK_SORT_CLS_CODE": "0",
+            "FID_RANK_SORT_CLS_CODE": "0" if is_gainer else "1",
             "FID_INPUT_CNT_1": "0",
             "FID_PRC_CLS_CODE": "0",
             "FID_INQR_RANGE_1": "0",
@@ -195,26 +202,40 @@ class KISAPI:
         }
         
         try:
+            time.sleep(0.5)
             res = requests.get(url, headers=headers, params=params, timeout=10)
             if res.status_code == 200:
                 data = res.json()
                 if data.get("rt_cd") == "0":
                     output = data.get("output", [])
                     results = []
-                    for item in output[:5]:
+                    # 로컬 필터링을 위해 충분한 데이터(상위 50개)를 확보
+                    for item in output[:50]: 
+                        code = item.get("stck_shrn_iscd")
+                        mkt_name = "KSP" if code.startswith(('00', '01', '02', '03', '05', '06')) else "KDQ"
                         results.append({
-                            "hts_kor_isnm": item.get("hts_kor_isnm"),
-                            "stck_shrn_iscd": item.get("stck_shrn_iscd"),
-                            "data_rank_sort_val": item.get("prdy_ctrt")
+                            "mkt": mkt_name,
+                            "name": item.get("hts_kor_isnm"),
+                            "code": code,
+                            "price": item.get("stck_prpr"),
+                            "rate": item.get("prdy_ctrt")
                         })
-                    self._gainers_cache = results
-                    self._last_gainers_time = current_time
+                    if is_gainer:
+                        self._gainers_cache = results
+                        self._last_gainers_time = current_time
+                    else:
+                        self._losers_cache = results
+                        self._last_losers_time = current_time
                     return results
-            logger.error(f"[Gainers] API 응답 에러: {res.text}")
             return []
-        except Exception as e:
-            logger.error(f"[Gainers] 예외 발생: {e}")
+        except:
             return []
+
+    def get_top_gainers(self):
+        return self._get_ranking(is_gainer=True)
+
+    def get_top_losers(self):
+        return self._get_ranking(is_gainer=False)
 
     def get_stock_news(self, stock_code):
         """종목 뉴스 조회 (최근 1건 제목, 10분 캐시)"""
@@ -255,12 +276,13 @@ class KISAPI:
         headers = self.auth.get_auth_headers()
         headers["tr_id"] = "FHKUP01010100"
         
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "U",
-            "FID_INPUT_ISCD": iscd
-        }
+        params = {"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": iscd}
         
         try:
+            # 해외 지수 코드(NAS, SPX, NQF)는 즉시 외부 API로 분기
+            if iscd in ["NAS", "SPX", "NQF", "USD"]:
+                return self._get_external_index(iscd)
+
             res = requests.get(url, headers=headers, params=params, timeout=10)
             if res.status_code == 200:
                 data = res.json()
@@ -270,54 +292,60 @@ class KISAPI:
                         "name": "KOSPI" if iscd == "0001" else "KOSDAQ",
                         "price": float(output.get("bstp_nmix_prpr", 0)),
                         "rate": float(output.get("bstp_nmix_prni", 0)),
-                        "diff": float(output.get("bstp_nmix_prdy_vrss", 0))
+                        "diff": float(output.get("bstp_nmix_prdy_vrss", 0)),
+                        "status": output.get("bstp_nmix_prpr_stat_cls_code", "00")
                     }
             return self._get_external_index(iscd)
         except:
             return self._get_external_index(iscd)
 
     def _get_external_index(self, iscd):
-        """외부 API(네이버/야후) 실시간 지수 조회 및 수치 보정"""
+        """외부 API(네이버/야후) 실시간 지수 및 환율 조회"""
         try:
-            if iscd in ["0001", "1001"]:
+            # 1. 환율 전용 (네이버 모바일 API가 가장 정확함)
+            if iscd == "USD":
+                url = "https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=exchange&re_id=FX_USDKRW&size=1"
+                res = requests.get(url, timeout=5)
+                data = res.json()
+                result = data['result'][0]
+                return {
+                    "name": "USD",
+                    "price": float(result['closePrice'].replace(',', '')),
+                    "rate": float(result['fluctuationsRatio']),
+                    "diff": float(result['fluctuationsPrice'].replace(',', ''))
+                }
+
+            # 2. 국내 지수 (네이버 폴링 API)
+            elif iscd in ["0001", "1001"]:
                 target = "KOSPI" if iscd == "0001" else "KOSDAQ"
                 url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_INDEX:{target}"
                 res = requests.get(url, timeout=5)
                 data = res.json()
-                result = data['result']['areas'][0]['datas'][0]
-                
-                # 네이버 nv값은 소수점 없이 정수로 올 때가 많음 (예: 265012 -> 2650.12)
-                raw_price = float(result['nv'])
-                # 코스피가 10,000을 넘을 리 없으므로(현재 기준) 비정상적으로 크면 100으로 나눔
-                if raw_price > 10000:
-                    price = raw_price / 100
-                else:
-                    price = raw_price
-                    
-                # 대비(cv)와 등락율(cr)도 동일하게 보정
-                raw_diff = float(result['cv'])
-                diff = raw_diff / 100 if abs(raw_diff) > 500 else raw_diff
-                
+                item = data['result']['areas'][0]['datas'][0]
+                price = float(item['nv'])
+                if price > 10000: price /= 100
                 return {
-                    "name": target,
+                    "name": "KSP" if iscd=="0001" else "KDQ",
                     "price": price,
-                    "rate": float(result['cr']),
-                    "diff": diff
+                    "rate": float(item['cr']),
+                    "diff": float(item['cv'])
                 }
+            
+            # 3. 해외 지수 및 선물 (야후 파이낸스)
             else:
-                # 해외 지수 (야후는 소수점이 포함되어 오므로 그대로 사용)
-                symbol = "^IXIC" if iscd == "NAS" else "^GSPC"
+                symbol = "^IXIC" if iscd == "NAS" else "^GSPC" if iscd == "SPX" else "NQ=F"
                 url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
                 headers = {"User-Agent": "Mozilla/5.0"}
                 res = requests.get(url, headers=headers, timeout=5)
                 data = res.json()
                 meta = data['chart']['result'][0]['meta']
-                curr_price = meta['regularMarketPrice']
-                prev_close = meta['previousClose']
+                curr_price = meta.get('regularMarketPrice', 0)
+                prev_close = meta.get('previousClose', 0)
+                rate = ((curr_price - prev_close) / prev_close * 100) if prev_close != 0 else 0
                 return {
-                    "name": "NASDAQ" if iscd == "NAS" else "S&P 500",
+                    "name": "NAS" if iscd=="NAS" else "SPX" if iscd=="SPX" else "NAS.F",
                     "price": curr_price,
-                    "rate": ((curr_price - prev_close) / prev_close) * 100,
+                    "rate": rate,
                     "diff": curr_price - prev_close
                 }
         except:

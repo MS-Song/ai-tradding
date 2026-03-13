@@ -32,8 +32,30 @@ class VibeStrategy:
         
         # 실시간 분석 데이터 저장소 (대시보드 공유용)
         self.current_market_vibe = "Neutral"
-        self.current_market_data = {} # 누락된 속성 추가
+        self.current_market_data = {} 
         self.global_panic = False
+        
+        # 수동 TP/SL 설정 로드
+        self.thresholds_file = ".manual_thresholds.json"
+        self.manual_thresholds = self._load_manual_thresholds()
+
+    def _load_manual_thresholds(self):
+        """파일에서 수동 설정값 로드"""
+        if os.path.exists(self.thresholds_file):
+            try:
+                with open(self.thresholds_file, "r") as f:
+                    return json.load(f)
+            except:
+                pass
+        return {}
+
+    def save_manual_thresholds(self):
+        """현재 수동 설정값을 파일에 저장"""
+        try:
+            with open(self.thresholds_file, "w") as f:
+                json.dump(self.manual_thresholds, f)
+        except Exception as e:
+            logger.error(f"수동 설정값 저장 실패: {e}")
 
     def _load_state(self):
         """파일에서 매매 이력(쿨다운용) 로드"""
@@ -56,35 +78,17 @@ class VibeStrategy:
 
     def _get_timeout_input(self, prompt, timeout=50):
         """타임아웃이 있는 사용자 입력 (윈도우/리눅스 호환)"""
-        print(f"\n{prompt} ({timeout}초 내에 'y' 입력 시 실행): ", end="", flush=True)
-        
-        if sys.platform == 'win32':
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                if msvcrt.kbhit():
-                    char = msvcrt.getche().decode('utf-8').lower()
-                    if char == 'y':
-                        print("\n   ✅ 승인되었습니다.")
-                        return 'y'
-                    if char in ['\r', '\n', 'n']: break
-                time.sleep(0.1)
-        else:
-            old_settings = termios.tcgetattr(sys.stdin)
-            try:
-                tty.setcbreak(sys.stdin.fileno())
-                if select.select([sys.stdin], [], [], timeout)[0]:
-                    char = sys.stdin.read(1).lower()
-                    if char == 'y':
-                        print("\n   ✅ 승인되었습니다.")
-                        return 'y'
-            finally:
-                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-        
-        print("\n   ⏳ 응답 시간이 초과되었거나 거부되었습니다.")
+        # TUI 환경에서는 이 함수가 차단적일 수 있으므로 주의 필요
+        # 현재는 main.py의 interaction이 우선시됨
         return 'n'
 
     def get_dynamic_thresholds(self, stock_code, market_trend):
         """종목별 가변 익절/손절선 계산 (대시보드 표시용)"""
+        # 0. 수동 설정값이 있으면 우선 반환
+        if stock_code in self.manual_thresholds:
+            vals = self.manual_thresholds[stock_code]
+            return float(vals[0]), float(vals[1]), True 
+            
         # 1. 시장 상황에 따른 TP 보정
         current_tp = self.base_tp
         if market_trend == "bull":
@@ -106,11 +110,13 @@ class VibeStrategy:
 
     def determine_market_trend(self):
         """국내외 지수를 종합하여 시장 트렌드 판별"""
-        self.current_market_data = { # 결과를 인스턴스 변수에 저장
+        self.current_market_data = {
             "KOSPI": self.api.get_index_price("0001"),
             "KOSDAQ": self.api.get_index_price("1001"),
             "NASDAQ": self.api.get_index_price("NAS"),
-            "S&P500": self.api.get_index_price("SNX")
+            "S&P500": self.api.get_index_price("SPX"),
+            "NAS_FUT": self.api.get_index_price("NQF"),
+            "USD_KRW": self.api.get_index_price("USD")
         }
         
         active_indices = {k: v for k, v in self.current_market_data.items() if v is not None}
@@ -121,7 +127,7 @@ class VibeStrategy:
         avg_rate = sum(v['rate'] for v in active_indices.values()) / len(active_indices)
         
         # 글로벌 패닉 체크
-        us_indices = [self.current_market_data["NASDAQ"], self.current_market_data["S&P500"]]
+        us_indices = [self.current_market_data.get("NASDAQ"), self.current_market_data.get("S&P500")]
         self.global_panic = all(idx and idx['rate'] <= -1.5 for idx in us_indices)
 
         if self.global_panic:
@@ -137,10 +143,11 @@ class VibeStrategy:
             self.current_market_vibe = "Neutral"
             return "neutral"
 
-    def evaluate_holdings(self, market_trend="neutral"):
-        """보유 종목 평가 및 가변 Exit Strategy 실행"""
+    def evaluate_holdings(self, market_trend="neutral", skip_trade=False):
+        """보유 종목 평가 및 가변 Exit Strategy 실행 (결과 리스트 반환)"""
         holdings = self.api.get_balance()
-        if not holdings: return
+        if not holdings: return []
+        results = []
 
         for item in holdings:
             stock_code = item.get("pdno")
@@ -151,27 +158,46 @@ class VibeStrategy:
             evlu_pfls_rt = float(item.get("evlu_pfls_rt", 0.0))
             current_tp, current_sl, _ = self.get_dynamic_thresholds(stock_code, market_trend)
 
+            action_label = ""
+            sell_ratio = 1.0
             if evlu_pfls_rt >= current_tp:
-                sell_qty = max(1, math.floor(hldg_qty * self.tp_ratio))
-                logger.info(f"  💰 [익절] {stock_name} {sell_qty}주 매도 실행.")
-                self.api.order_market(stock_code, sell_qty, is_buy=False)
+                action_label = "익절"
+                sell_ratio = self.tp_ratio
             elif evlu_pfls_rt <= current_sl:
-                sell_qty = max(1, math.floor(hldg_qty * self.sl_ratio))
-                logger.info(f"  🛡️ [손절] {stock_name} {sell_qty}주 전량 매도 실행.")
-                self.api.order_market(stock_code, sell_qty, is_buy=False)
+                action_label = "손절"
+                sell_ratio = self.sl_ratio
 
-    def evaluate_opportunities(self, market_trend="neutral"):
-        """하락장 대응: 물타기 실행"""
-        if market_trend != "bear": return
+            if action_label:
+                sell_qty = max(1, math.floor(hldg_qty * sell_ratio))
+                msg_base = f"{stock_name} {action_label} 조건 달성 ({evlu_pfls_rt}% / 목표:{current_tp if action_label=='익절' else current_sl}%)"
 
+                if skip_trade:
+                    results.append(f"계측 알림(대기중): {msg_base}")
+                    continue
+
+                # 실제 매매 호출 전 1초 대기 (TPS 방어)
+                time.sleep(1.0)
+                success, api_msg = self.api.order_market(stock_code, sell_qty, is_buy=False)
+                
+                if success:
+                    res_txt = f"자동 {action_label} 성공: {stock_name} {sell_qty}주 ({evlu_pfls_rt}%)"
+                    results.append(res_txt)
+                    self._save_state(stock_code)
+                else:
+                    results.append(f"자동 {action_label} 실패: {stock_name} ({api_msg})")
+        return results
+
+    def get_buy_recommendations(self, market_trend):
+        """물타기(추가 매수) 추천 종목 탐색 (수동 실행용)"""
+        if market_trend == "panic": return [] # 패닉일 땐 절대 금지
+        
         holdings = self.api.get_balance()
-        if not holdings: return
-
-        invest_amount = self.bear_config.get("average_down_amount", 500000)
-        min_loss = self.bear_config.get("min_loss_to_buy", -3.0)
+        recommendations = []
+        
+        # 설정값 로드
+        buy_trigger = self.bear_config.get("min_loss_to_buy", -3.0) # 예: -3.0%
         max_limit = self.bear_config.get("max_investment_per_stock", 3000000)
-        cooldown_sec = 600
-
+        
         for item in holdings:
             stock_code = item.get("pdno")
             stock_name = item.get("prdt_name", stock_code)
@@ -179,21 +205,29 @@ class VibeStrategy:
             pchs_amt = int(float(item.get("pchs_amt", 0)))
             if pchs_amt == 0: pchs_amt = int(float(item.get("pchs_avg_pric", 0)) * float(item.get("hldg_qty", 0)))
 
+            # 마지막 매매 후 1시간 쿨다운 (잦은 물타기 방지)
             last_trade = self.trade_history.get(stock_code, 0)
-            if time.time() - last_trade < cooldown_sec: continue
-            if evlu_pfls_rt > min_loss: continue
-            if pchs_amt >= max_limit: continue
+            if time.time() - last_trade < 3600: continue
+            
+            # 추천 조건: 수익률이 트리거 이하이고, 아직 최대 투자금액 미만일 때
+            if evlu_pfls_rt <= buy_trigger and pchs_amt < max_limit:
+                # 손절가(SL)보다는 위에 있어야 함 (손절 구역은 추천 안 함)
+                _, current_sl, _ = self.get_dynamic_thresholds(stock_code, market_trend)
+                if evlu_pfls_rt > current_sl:
+                    recommendations.append({
+                        "code": stock_code,
+                        "name": stock_name,
+                        "rt": evlu_pfls_rt,
+                        "suggested_amt": self.bear_config.get("average_down_amount", 500000)
+                    })
+        return recommendations
 
-            prompt = f"  ❓ [{stock_name}] 수익률 {evlu_pfls_rt}%! {invest_amount:,}원 추가 매수할까요?"
-            if self._get_timeout_input(prompt, timeout=50) == 'y':
-                price_data = self.api.get_inquire_price(stock_code)
-                if price_data:
-                    buy_qty = math.floor(invest_amount / price_data['price'])
-                    if buy_qty > 0:
-                        if self.api.order_market(stock_code, buy_qty, is_buy=True):
-                            self._save_state(stock_code)
+    def evaluate_opportunities(self, market_trend="neutral"):
+        """자동 물타기 기능을 알림 기반 수동으로 전환하기 위해 비워둠"""
+        return []
 
-    def run_cycle(self, market_trend="neutral"):
-        """1회 사이클 실행"""
-        self.evaluate_holdings(market_trend)
-        self.evaluate_opportunities(market_trend)
+    def run_cycle(self, market_trend="neutral", skip_trade=False):
+        """1회 사이클 실행 및 자동 매매 결과 반환"""
+        auto_results = self.evaluate_holdings(market_trend, skip_trade)
+        # opportunities_results = self.evaluate_opportunities(market_trend)
+        return auto_results

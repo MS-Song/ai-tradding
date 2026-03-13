@@ -70,8 +70,6 @@ class KISAuth:
         if self.is_token_valid():
             return True
 
-        logger.info(f"🔑 [인증] 토큰이 없거나 만료되어 새로 발급받습니다. (도메인: {self.domain})")
-        
         url = f"{self.domain}/oauth2/tokenP"
         headers = {"content-type": "application/json"}
         body = {
@@ -93,7 +91,6 @@ class KISAuth:
             # 2. 새로 발급받은 토큰을 파일에 저장 (다른 프로세스와 공유)
             self._save_token_cache()
             
-            logger.info("✅ [인증 성공] 새 토큰이 발급 및 저장되었습니다. (10분 공유 모드)")
             return True
         except Exception as e:
             logger.error(f"❌ 토큰 발급 에러: {e}")
