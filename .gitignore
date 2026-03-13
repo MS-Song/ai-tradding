@@ -4,4 +4,5 @@ __pycache__/
 *.pyc
 .vscode/
 .token_cache.json
-.trading_state.jsontrading.log
+.trading_state.json
+trading.log
