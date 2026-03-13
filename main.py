@@ -91,6 +91,7 @@ def show_surging_stocks(api):
     except Exception: pass
 
 def show_portfolio_dashboard(api, strategy):
+    """현재 자산, 보유 종목 및 전략 지표를 화면에 출력 (최종 완성본)"""
     try:
         asset_info = api.get_deposit()
         holdings = api.get_balance()
@@ -132,32 +133,43 @@ def show_portfolio_dashboard(api, strategy):
                 else: val = get_visual_width(row.get(k, ''))
                 widths[k] = max(widths[k], val)
 
+        # 2. 상단 정보 섹션 출력 (복구됨)
+        # 헤더 조립 후 너비 측정
+        header_row = f"    {align_kr('시장', widths['market'], 'left')} | {align_kr('종목명', widths['name'], 'left')} | {align_kr('평단가', widths['price'], 'right')} | {align_kr('현재가', widths['price'], 'right')} | {align_kr('보유량', widths['qty'], 'right')} | {align_kr('평가액', widths['eval'], 'right')} |    {align_kr('수익률', widths['rt'], 'right')} | {align_kr('수익금', widths['pnl'], 'right')} | {align_kr('목표TP', widths['goal'], 'right')} | {align_kr('손절SL', widths['goal'], 'right')}"
+        total_width = get_visual_width(header_row) + 2
+        
+        print(sep + "━"*total_width)
+        
+        # [복구] 실시간 시장 지수
+        idx_msg = " 📊 [실시간 시장 지수] "
+        for name, data in indices.items():
+            if data:
+                trend = "\033[91m▲\033[0m" if data['rate'] >= 0 else "\033[94m▼\033[0m"
+                idx_msg += f"{name}: {data['price']:,.2f} ({trend}{data['rate']:+0.2f}%)  "
+        print(idx_msg)
+        
+        # [복구] 장 상태 및 Vibe
+        kr_status = "☀️ 운영 중" if is_market_open() else "🌙 휴장"
+        us_status = "☀️ 운영 중" if is_us_market_open() else "🌙 휴장"
+        v_color = "\033[91m" if "Bull" in strategy.current_market_vibe else ("\033[94m" if "Bear" in strategy.current_market_vibe else "\033[93m")
+        panic = " 🚨 \033[91m[GLOBAL PANIC DETECTED]\033[0m" if strategy.global_panic else ""
+        print(f" 🕒 [장 상태] 한국: {kr_status} | 미국: {us_status} | 🎯 [Vibe]: {v_color}{strategy.current_market_vibe.upper()}\033[0m{panic}")
+        
+        # [복구] 자산 현황
+        print(f"{sep} 💰 [자산 현황]")
+        print(f"   - 총 평가 자산: {asset_info['total_asset']:,}원 | 예수금 잔량: {asset_info['deposit']:,}원")
+        print(f"   - 주문 가능액: \033[92m{asset_info['cash']:,}원\033[0m | 주식 평가액: {asset_info['stock_eval']:,}원")
+        pnl_val = asset_info['pnl']
+        pnl_lbl = "\033[91m▲ 이익\033[0m" if pnl_val >= 0 else "\033[94m▼ 손실\033[0m"
+        print(f"   - 총 평가 손익: {pnl_lbl} {pnl_val:,}원 | 시각: {datetime.now().strftime('%H:%M:%S')}")
+        
+        # 3. 보유 종목 분석 섹션
         print(f"{sep} 📋 [보유 종목 분석 및 매매 전략]")
         if processed_data:
-            # 2. 헤더 구성 및 너비 측정
-            h_mkt = align_kr("시장", widths['market'], 'left')
-            h_name = align_kr("종목명", widths['name'], 'left')
-            h_avg = align_kr("평단가", widths['price'], 'right')
-            h_curr = align_kr("현재가", widths['price'], 'right')
-            h_qty = align_kr("보유량", widths['qty'], 'right')
-            h_eval = align_kr("평가액", widths['eval'], 'right')
-            h_rt = align_kr("수익률", widths['rt'], 'right')
-            h_pnl = align_kr("수익금", widths['pnl'], 'right')
-            h_tp = align_kr("목표TP", widths['goal'], 'right')
-            h_sl = align_kr("손절SL", widths['goal'], 'right')
-            
-            # 실제 출력될 헤더 행 조립
-            header_row = f"    {h_mkt} | {h_name} | {h_avg} | {h_curr} | {h_qty} | {h_eval} |    {h_rt} | {h_pnl} | {h_tp} | {h_sl}"
-            
-            # 헤더의 시각적 너비를 기준으로 가로바 길이 확정
-            total_width = get_visual_width(header_row) + 2
-            
-            # 상단 굵은 선 (위치 이동: 헤더 직전)
             print("━"*total_width)
             print(header_row)
             print("─"*total_width)
             
-            # 3. 데이터 행 출력
             for row in processed_data:
                 icon = "\033[91m▲\033[0m" if row['is_plus'] else "\033[94m▼\033[0m"
                 color = "\033[91m" if row['is_plus'] else "\033[94m"
@@ -167,7 +179,6 @@ def show_portfolio_dashboard(api, strategy):
                       f"{icon} {align_kr(row['rt'], widths['rt'], 'right')} | {color}{align_kr(row['pnl'], widths['pnl'], 'right')}\033[0m | "
                       f"{color}{align_kr(row['tp'], widths['goal'], 'right')}\033[0m | {color}{align_kr(row['sl'], widths['goal'], 'right')}\033[0m")
         else:
-            total_width = 100 # 기본값
             print("━"*total_width)
             print("    현재 보유 중인 종목이 없습니다.")
         
