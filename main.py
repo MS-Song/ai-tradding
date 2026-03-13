@@ -74,6 +74,7 @@ def get_market_name(stock_code):
     return "해외"
 
 def show_surging_stocks(api):
+    """실시간 급등주 정보 출력"""
     try:
         gainers = api.get_top_gainers()
         sep = get_line_sep()
@@ -84,17 +85,19 @@ def show_surging_stocks(api):
             for i, g in enumerate(gainers, 1):
                 name = g.get("hts_kor_isnm", "Unknown")
                 rate = g.get("data_rank_sort_val", "0.0")
-                reason = api.get_stock_news(g.get("stck_shrn_iscd", ""))
+                code = g.get("stck_shrn_iscd", "")
+                reason = api.get_stock_news(code) if code else "정보 없음"
                 print(f"  {i}. {align_kr(name, 14, 'left')} | \033[91m{rate:>6}%\033[0m | 사유: {reason[:50]}...")
         print("─"*95 + sep)
         sys.stdout.flush()
-    except Exception: pass
+    except Exception as e:
+        logger.error(f"급등주 탐색 출력 에러: {e}")
 
 def show_portfolio_dashboard(api, strategy):
     """현재 자산, 보유 종목 및 전략 지표를 화면에 출력 (최종 완성본)"""
     try:
-        asset_info = api.get_deposit()
-        holdings = api.get_balance()
+        # 통합 조회를 통해 API 호출 횟수 단축 (TPS 최적화)
+        holdings, asset_info = api.get_full_balance()
         indices = strategy.current_market_data
         sep = get_line_sep()
         
@@ -113,17 +116,25 @@ def show_portfolio_dashboard(api, strategy):
             mkt = get_market_name(code)
             tp_rate, sl_rate, is_spike = strategy.get_dynamic_thresholds(code, strategy.current_market_vibe.lower())
             
+            # 직접 계산: (현재가 - 평단가) * 보유수량
+            curr_price = float(h.get('prpr', 0))
+            avg_price = float(h.get('pchs_avg_pric', 0))
+            qty = float(h.get('hldg_qty', 0))
+            pnl_amt = int((curr_price - avg_price) * qty)
+            
+            is_plus = pnl_amt >= 0
+            
             row = {
                 'mkt': mkt, 'name': name,
-                'avg': f"{int(float(h.get('pchs_avg_pric', 0))):,}",
-                'curr': f"{int(float(h.get('prpr', 0))):,}",
-                'qty': f"{int(float(h.get('hldg_qty', 0))):,}",
+                'avg': f"{int(avg_price):,}",
+                'curr': f"{int(curr_price):,}",
+                'qty': f"{int(qty):,}",
                 'eval': f"{int(float(h.get('evlu_amt', 0))):,}",
-                'pnl': f"{int(float(h.get('evlu_pfls_amt', 0))):,}",
-                'rt': f"{h.get('evlu_pfls_rt', '0.0')}%",
-                'tp': f"{tp_rate:+}%", 'sl': f"{sl_rate:+}%",
-                'is_plus': float(h.get('evlu_pfls_rt', '0.0')) >= 0,
-                'spike': "🔥" if is_spike else ""
+                'rt': f"{float(h.get('evlu_pfls_rt', 0)):+.2f}%",
+                'pnl': f"{pnl_amt:+,}",
+                'tp': f"{tp_rate:+1.1f}%", 'sl': f"{sl_rate:+1.1f}%",
+                'spike': " 🔥" if is_spike else "",
+                'is_plus': is_plus
             }
             processed_data.append(row)
             for k in ['market', 'name', 'price', 'qty', 'eval', 'rt', 'pnl', 'goal']:
@@ -159,9 +170,11 @@ def show_portfolio_dashboard(api, strategy):
         print(f"{sep} 💰 [자산 현황]")
         print(f"   - 총 평가 자산: {asset_info['total_asset']:,}원 | 예수금 잔량: {asset_info['deposit']:,}원")
         print(f"   - 주문 가능액: \033[92m{asset_info['cash']:,}원\033[0m | 주식 평가액: {asset_info['stock_eval']:,}원")
+        
+        # 계산된 통합 손익 사용
         pnl_val = asset_info['pnl']
         pnl_lbl = "\033[91m▲ 이익\033[0m" if pnl_val >= 0 else "\033[94m▼ 손실\033[0m"
-        print(f"   - 총 평가 손익: {pnl_lbl} {pnl_val:,}원 | 시각: {datetime.now().strftime('%H:%M:%S')}")
+        print(f"   - 실시간 평가 손익: {pnl_lbl} {pnl_val:,}원 | 시각: {datetime.now().strftime('%H:%M:%S')}")
         
         # 3. 보유 종목 분석 섹션
         print(f"{sep} 📋 [보유 종목 분석 및 매매 전략]")
@@ -193,13 +206,15 @@ def main():
     interval = config.get("vibe_strategy", {}).get("check_interval", 60)
     if interval < 60: interval = 60
     auth = KISAuth(is_virtual=True)
+    api = KISAPI(auth)
+    strategy = VibeStrategy(api, config)
+    
     cycle_count = 0
     while True:
         try:
             cycle_count += 1
             if not auth.is_token_valid(): auth.generate_token()
-            api = KISAPI(auth)
-            strategy = VibeStrategy(api, config)
+            
             market_trend = strategy.determine_market_trend()
             show_portfolio_dashboard(api, strategy)
             strategy.run_cycle(market_trend=market_trend)

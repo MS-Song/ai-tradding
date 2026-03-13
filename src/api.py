@@ -1,13 +1,25 @@
 import requests
+import time
 from src.logger import logger
 
 class KISAPI:
     def __init__(self, auth):
         self.auth = auth
         self.domain = auth.domain
+        # TPS 방어를 위한 캐시 변수
+        self._balance_cache = None
+        self._last_balance_time = 0
+        self._gainers_cache = None
+        self._last_gainers_time = 0
+        self._news_cache = {} # 종목별 뉴스 캐시
+        self._cache_duration = 0.5 # 0.5초 캐시
         
-    def get_balance(self):
-        """계좌 잔고 및 종목별 수익률 확인"""
+    def get_full_balance(self):
+        """계좌 잔고(종목)와 예수금/자산 요약을 한 번에 조회 (TPS 최적화 및 캐싱)"""
+        current_time = time.time()
+        if self._balance_cache and (current_time - self._last_balance_time < self._cache_duration):
+            return self._balance_cache
+            
         url = f"{self.domain}/uapi/domestic-stock/v1/trading/inquire-balance"
         headers = self.auth.get_auth_headers()
         headers["tr_id"] = "VTTC8434R" if self.auth.is_virtual else "TTTC8434R"
@@ -27,65 +39,68 @@ class KISAPI:
         }
         
         try:
+            time.sleep(0.5) # 강제 TPS 방어 (초당 2회 제한)
             res = requests.get(url, headers=headers, params=params, timeout=10)
             data = res.json()
-            if data.get("rt_cd") == "0":
-                return data.get("output1", [])
-            else:
-                logger.error(f"[Balance] 잔고 조회 실패: {data.get('msg1')} ({data.get('rt_cd')})")
-                return []
-        except Exception as e:
-            logger.error(f"[Balance] 잔고 조회 시스템 에러: {e}")
-            return []
+            
+            if data.get("rt_cd") != "0":
+                logger.error(f"[Balance] 조회 실패: {data.get('msg1')} ({data.get('rt_cd')})")
+                return [], {"deposit": 0, "cash": 0, "total_asset": 0, "stock_eval": 0, "pnl": 0}
 
-    def get_deposit(self):
-        """계좌 잔고 및 예수금 상세 정보 확인 (실시간 반영)"""
-        url = f"{self.domain}/uapi/domestic-stock/v1/trading/inquire-balance"
-        headers = self.auth.get_auth_headers()
-        headers["tr_id"] = "VTTC8434R" if self.auth.is_virtual else "TTTC8434R"
-        
-        params = {
-            "CANO": self.auth.cano,
-            "ACNT_PRDT_CD": "01",
-            "AFHR_FLPR_YN": "N",
-            "OFL_YN": "",
-            "INQR_DVSN": "02",
-            "UNPR_DVSN": "01",
-            "FUND_STTL_ICLD_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "01",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": ""
-        }
-        
-        try:
-            res = requests.get(url, headers=headers, params=params, timeout=10)
-            data = res.json()
-            output2 = data.get("output2", [{}])[0]
+            # 1. 종목 리스트 (output1)
+            holdings = data.get("output1", [])
             
-            # 예수금 총액 (D+2)
-            deposit = int(output2.get("dnca_tot_amt", 0))
+            # 2. 계좌 요약 (output2)
+            summary = data.get("output2", [{}])[0]
             
-            # 실시간 주문 가능 금액 탐색 (우선순위 순)
-            # 1. prvs_rcdl_exca_amt: 이전익일환급금포함현금 (실시간 매수금 차감됨)
-            # 2. nll_amt: 실제 현금 잔액
-            # 3. dnca_tot_amt: 최후의 보루 (이것마저 0이면 진짜 0원)
-            actual_cash = int(output2.get("prvs_rcdl_exca_amt", 0))
+            deposit = int(summary.get("dnca_tot_amt", 0))        # 예수금 (D+2)
+            actual_cash = int(summary.get("prvs_rcdl_exca_amt", 0)) # 주문 가능 현금
             if actual_cash == 0:
-                actual_cash = int(output2.get("nll_amt", 0))
+                actual_cash = int(summary.get("nll_amt", 0))
             if actual_cash == 0:
                 actual_cash = deposit
 
-            return {
+            stock_eval = int(summary.get("scts_evlu_amt", 0))    # 주식 평가액 합계
+            
+            # 직접 합산 로직 (정합성 강화)
+            calculated_pnl = 0
+            calculated_stock_eval = 0
+            for h in holdings:
+                curr_price = float(h.get('prpr', 0))
+                avg_price = float(h.get('pchs_avg_pric', 0))
+                h_qty = float(h.get('hldg_qty', 0))
+                
+                calculated_pnl += int((curr_price - avg_price) * h_qty)
+                calculated_stock_eval += int(float(h.get('evlu_amt', 0)))
+            
+            # API 제공 데이터와 직접 계산 데이터 중 더 신뢰할 수 있는 쪽 선택 (보통 직접 계산이 정확)
+            asset_info = {
                 "deposit": deposit,
-                "cash": actual_cash,                               # 실시간 현금 잔액
-                "total_asset": int(output2.get("tot_evlu_amt", 0)), # 총 평가금액
-                "stock_eval": int(output2.get("scts_evlu_amt", 0)), # 주식 평가금액
-                "pnl": int(output2.get("evlu_pfls_smtl_amt", 0)), # 총 평가 손익
+                "cash": actual_cash,
+                "total_asset": deposit + calculated_stock_eval, # 예수금 + 실제 종목 평가액 합계
+                "stock_eval": calculated_stock_eval,
+                "pnl": calculated_pnl,
             }
+            
+            # 캐시 업데이트
+            self._balance_cache = (holdings, asset_info)
+            self._last_balance_time = time.time()
+            
+            return holdings, asset_info
+            
         except Exception as e:
-            logger.error(f"[Deposit] 예수금 조회 실패: {e}")
-            return {"deposit": 0, "cash": 0, "total_asset": 0, "stock_eval": 0, "pnl": 0}
+            logger.error(f"[Balance] 통합 조회 시스템 에러: {e}")
+            return [], {"deposit": 0, "cash": 0, "total_asset": 0, "stock_eval": 0, "pnl": 0}
+
+    def get_balance(self):
+        """하위 호환성을 위해 유지"""
+        holdings, _ = self.get_full_balance()
+        return holdings
+
+    def get_deposit(self):
+        """하위 호환성을 위해 유지"""
+        _, asset_info = self.get_full_balance()
+        return asset_info
 
     def order_market(self, stock_code, qty, is_buy=True):
         """시장가 주문 실행 (매수/매도)"""
@@ -108,6 +123,7 @@ class KISAPI:
         
         action = "매수" if is_buy else "매도"
         try:
+            time.sleep(0.5)
             res = requests.post(url, headers=headers, json=body, timeout=10)
             data = res.json()
             
@@ -130,6 +146,7 @@ class KISAPI:
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": stock_code}
         
         try:
+            time.sleep(0.5) # 강제 TPS 방어 (초당 2회 제한)
             res = requests.get(url, headers=headers, params=params, timeout=10)
             data = res.json()
             if data.get("rt_cd") == "0":
@@ -146,7 +163,11 @@ class KISAPI:
         return None
 
     def get_top_gainers(self):
-        """상승률 상위 종목 조회 (공식 API: FHPST01700000 - MEGA 18 파라미터 적용)"""
+        """상승률 상위 종목 조회 (공식 API: FHPST01700000)"""
+        current_time = time.time()
+        if self._gainers_cache and (current_time - self._last_gainers_time < 30): # 30초 캐시
+            return self._gainers_cache
+
         url = f"{self.domain}/uapi/domestic-stock/v1/ranking/fluctuation"
         headers = self.auth.get_auth_headers()
         headers["tr_id"] = "FHPST01700000"
@@ -183,16 +204,26 @@ class KISAPI:
                     for item in output[:5]:
                         results.append({
                             "hts_kor_isnm": item.get("hts_kor_isnm"),
-                            "mksc_shrn_iscd": item.get("stck_shrn_iscd"),
+                            "stck_shrn_iscd": item.get("stck_shrn_iscd"),
                             "data_rank_sort_val": item.get("prdy_ctrt")
                         })
+                    self._gainers_cache = results
+                    self._last_gainers_time = current_time
                     return results
+            logger.error(f"[Gainers] API 응답 에러: {res.text}")
             return []
-        except:
+        except Exception as e:
+            logger.error(f"[Gainers] 예외 발생: {e}")
             return []
 
     def get_stock_news(self, stock_code):
-        """종목 뉴스 조회 (최근 1건 제목)"""
+        """종목 뉴스 조회 (최근 1건 제목, 10분 캐시)"""
+        current_time = time.time()
+        if stock_code in self._news_cache:
+            news_data, last_time = self._news_cache[stock_code]
+            if current_time - last_time < 600: # 10분 캐시
+                return news_data
+
         url = f"{self.domain}/uapi/domestic-stock/v1/quotations/stock-news"
         headers = self.auth.get_auth_headers()
         headers["tr_id"] = "FHKSW10100100"
@@ -211,10 +242,11 @@ class KISAPI:
                 data = res.json()
                 if data.get("rt_cd") == "0":
                     output = data.get("output", [])
-                    if output:
-                        return output[0].get("hts_news_titl", "최근 소식 없음")
+                    news_title = output[0].get("hts_news_titl", "최근 소식 없음") if output else "최근 소식 없음"
+                    self._news_cache[stock_code] = (news_title, current_time)
+                    return news_title
             return "최근 소식 없음"
-        except:
+        except Exception:
             return "정보 없음"
 
     def get_index_price(self, iscd="0001"):
