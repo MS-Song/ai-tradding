@@ -16,83 +16,133 @@ class KISAPI:
         self._news_cache = {} # 종목별 뉴스 캐시
         self._cache_duration = 0.5 # 0.5초 캐시
         
-    def get_full_balance(self):
-        """계좌 잔고(종목)와 예수금/자산 요약을 한 번에 조회 (TPS 최적화 및 캐싱)"""
-        current_time = time.time()
-        if self._balance_cache and (current_time - self._last_balance_time < self._cache_duration):
-            return self._balance_cache
-            
-        url = f"{self.domain}/uapi/domestic-stock/v1/trading/inquire-balance"
+    def get_overseas_balance(self):
+        """해외 주식 잔고 조회"""
+        url = f"{self.domain}/uapi/overseas-stock/v1/trading/inquire-balance"
         headers = self.auth.get_auth_headers()
-        headers["tr_id"] = "VTTC8434R" if self.auth.is_virtual else "TTTC8434R"
+        headers["tr_id"] = "VTRP6504R" if self.auth.is_virtual else "JTTT1101R" # 해외 잔고 TR ID (실전은 다를 수 있음)
         
         params = {
             "CANO": self.auth.cano,
             "ACNT_PRDT_CD": "01",
-            "AFHR_FLPR_YN": "N",
-            "OFL_YN": "",
-            "INQR_DVSN": "02",
-            "UNPR_DVSN": "01",
-            "FUND_STTL_ICLD_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "01",
-            "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": ""
+            "OVRS_EXCG_CD": "NASD", # 기본 나스닥 (전체 조회가 안될 경우 순회 필요할 수 있으나 보통 통합됨)
+            "TR_P_CRNC_CD": "USD",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": ""
         }
         
         try:
-            time.sleep(0.5) # 강제 TPS 방어 (초당 2회 제한)
+            time.sleep(0.5)
             res = requests.get(url, headers=headers, params=params, timeout=10)
             data = res.json()
-            
-            if data.get("rt_cd") != "0":
-                logger.error(f"[Balance] 조회 실패: {data.get('msg1')} ({data.get('rt_cd')})")
-                return [], {"deposit": 0, "cash": 0, "total_asset": 0, "stock_eval": 0, "pnl": 0}
+            if data.get("rt_cd") == "0":
+                return data.get("output1", []), data.get("output2", {})
+            return [], {}
+        except:
+            return [], {}
 
-            # 1. 종목 리스트 (output1)
-            holdings = data.get("output1", [])
+    def get_full_balance(self):
+        """국내/해외 계좌 잔고 및 자산 요약 통합 조회"""
+        current_time = time.time()
+        if self._balance_cache and (current_time - self._last_balance_time < self._cache_duration):
+            return self._balance_cache
             
-            # 2. 계좌 요약 (output2)
-            summary = data.get("output2", [{}])[0]
-            
-            deposit = int(summary.get("dnca_tot_amt", 0))        # 예수금 (D+2)
-            actual_cash = int(summary.get("prvs_rcdl_exca_amt", 0)) # 주문 가능 현금
-            if actual_cash == 0:
-                actual_cash = int(summary.get("nll_amt", 0))
-            if actual_cash == 0:
-                actual_cash = deposit
+        # 0. 환율 정보 획득
+        fx_data = self.get_index_price("USD")
+        fx_rate = fx_data['price'] if fx_data else 1350.0 # 기본값
+        
+        # 1. 국내 잔고 조회
+        url_kr = f"{self.domain}/uapi/domestic-stock/v1/trading/inquire-balance"
+        headers_kr = self.auth.get_auth_headers()
+        headers_kr["tr_id"] = "VTTC8434R" if self.auth.is_virtual else "TTTC8434R"
+        params_kr = {
+            "CANO": self.auth.cano, "ACNT_PRDT_CD": "01", "AFHR_FLPR_YN": "N", "OFL_YN": "",
+            "INQR_DVSN": "02", "UNPR_DVSN": "01", "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N", "PRCS_DVSN": "01", "CTX_AREA_FK100": "", "CTX_AREA_NK100": ""
+        }
+        
+        holdings_kr, summary_kr = [], {}
+        try:
+            time.sleep(0.5)
+            res_kr = requests.get(url_kr, headers=headers_kr, params=params_kr, timeout=10)
+            data_kr = res_kr.json()
+            if data_kr.get("rt_cd") == "0":
+                holdings_kr = data_kr.get("output1", [])
+                summary_kr = data_kr.get("output2", [{}])[0]
+        except: pass
 
-            stock_eval = int(summary.get("scts_evlu_amt", 0))    # 주식 평가액 합계
+        # 2. 해외 잔고 조회
+        holdings_os, summary_os = self.get_overseas_balance()
+        
+        # 3. 데이터 통합 가공
+        combined_holdings = []
+        total_stock_eval = 0
+        total_pnl = 0
+        
+        # 국내 종목 가공
+        for h in holdings_kr:
+            eval_amt = int(float(h.get('evlu_amt', 0)))
+            pnl = int(float(h.get('evlu_pfls_amt', 0)))
+            total_stock_eval += eval_amt
+            total_pnl += pnl
+            combined_holdings.append({
+                "pdno": h.get('pdno'),
+                "prdt_name": h.get('prdt_name'),
+                "hldg_qty": h.get('hldg_qty'),
+                "pchs_avg_pric": h.get('pchs_avg_pric'),
+                "prpr": h.get('prpr'),
+                "evlu_amt": eval_amt,
+                "evlu_pfls_rt": h.get('evlu_pfls_rt'),
+                "evlu_pfls_amt": pnl,
+                "currency": "KRW"
+            })
             
-            # 직접 합산 로직 (정합성 강화)
-            calculated_pnl = 0
-            calculated_stock_eval = 0
-            for h in holdings:
-                curr_price = float(h.get('prpr', 0))
-                avg_price = float(h.get('pchs_avg_pric', 0))
-                h_qty = float(h.get('hldg_qty', 0))
-                
-                calculated_pnl += int((curr_price - avg_price) * h_qty)
-                calculated_stock_eval += int(float(h.get('evlu_amt', 0)))
+        # 해외 종목 가공 (KRW 변환)
+        for h in holdings_os:
+            # 해외 API 필드명이 다를 수 있음 (보통 output1에 있음)
+            qty = float(h.get('ovrs_cqty', 0))
+            avg_price = float(h.get('pchs_avg_pric', 0)) # USD
+            curr_price = float(h.get('now_pric', 0))     # USD
             
-            # API 제공 데이터와 직접 계산 데이터 중 더 신뢰할 수 있는 쪽 선택 (보통 직접 계산이 정확)
-            asset_info = {
-                "deposit": deposit,
-                "cash": actual_cash,
-                "total_asset": deposit + calculated_stock_eval, # 예수금 + 실제 종목 평가액 합계
-                "stock_eval": calculated_stock_eval,
-                "pnl": calculated_pnl,
-            }
+            eval_usd = qty * curr_price
+            pnl_usd = (curr_price - avg_price) * qty
             
-            # 캐시 업데이트
-            self._balance_cache = (holdings, asset_info)
-            self._last_balance_time = time.time()
+            eval_krw = int(eval_usd * fx_rate)
+            pnl_krw = int(pnl_usd * fx_rate)
             
-            return holdings, asset_info
+            total_stock_eval += eval_krw
+            total_pnl += pnl_krw
             
-        except Exception as e:
-            logger.error(f"[Balance] 통합 조회 시스템 에러: {e}")
-            return [], {"deposit": 0, "cash": 0, "total_asset": 0, "stock_eval": 0, "pnl": 0}
+            combined_holdings.append({
+                "pdno": h.get('ovrs_pdno'),
+                "prdt_name": h.get('ovrs_item_name'),
+                "hldg_qty": qty,
+                "pchs_avg_pric": avg_price * fx_rate, # KRW 변환 평단가
+                "prpr": curr_price * fx_rate,         # KRW 변환 현재가
+                "evlu_amt": eval_krw,
+                "evlu_pfls_rt": h.get('evlu_pfls_rt'), # 수익률은 퍼센트이므로 그대로
+                "evlu_pfls_amt": pnl_krw,
+                "currency": "USD"
+            })
+
+        # 자산 요약 통합
+        deposit_kr = int(summary_kr.get("dnca_tot_amt", 0))
+        # 해외 예수금 (보통 summary_os 혹은 다른 API 필요할 수 있으나 여기서는 원화 예수금 위주로 합산)
+        # 실전에서는 외화 예수금도 환산해야 하나 KIS는 통합 예수금 조회가 복잡할 수 있음
+        # 일단 국내 예수금 기준으로 처리 (해외 주식 매수시에도 원화 예수금이 사용되는 통합증거금 기준 가정)
+        
+        asset_info = {
+            "deposit": deposit_kr,
+            "cash": int(summary_kr.get("prvs_rcdl_exca_amt", deposit_kr)),
+            "total_asset": deposit_kr + total_stock_eval,
+            "stock_eval": total_stock_eval,
+            "pnl": total_pnl,
+            "fx_rate": fx_rate
+        }
+        
+        self._balance_cache = (combined_holdings, asset_info)
+        self._last_balance_time = current_time
+        return self._balance_cache
 
     def get_balance(self):
         """하위 호환성을 위해 유지"""

@@ -110,6 +110,9 @@ def get_market_name(stock_code):
     if m: return m
     if len(stock_code) == 6 and stock_code.isdigit():
         return "KSP" if stock_code[:2] in ['00', '01', '02', '03', '05', '06', '07'] else "KDQ"
+    # 해외 주식 (티커 3자 이상 영문/숫자 혼합 또는 영문)
+    if len(stock_code) >= 1 and any(c.isalpha() for c in stock_code):
+        return "USA"
     return "STK"
 
 # --- 전역 상태 및 데이터 캐시 ---
@@ -276,7 +279,7 @@ def draw_tui(strategy, remaining_sec, cycle_info, prompt_mode=None):
 
         # [6] Ranking
         half_w = (tw - 3) // 2
-        m_label = "ALL" if _ranking_filter == "ALL" else "KOSPI" if _ranking_filter == "KSP" else "KOSDAQ"
+        m_label = "ALL" if _ranking_filter == "ALL" else "KOSPI" if _ranking_filter == "KSP" else "KOSDAQ" if _ranking_filter == "KDQ" else "USA"
         gains = _cached_gains_raw[:5] if _ranking_filter == "ALL" else [g for g in _cached_gains_raw if g.get('mkt') == _ranking_filter][:5]
         loses = _cached_loses_raw[:5] if _ranking_filter == "ALL" else [l for l in _cached_loses_raw if l.get('mkt') == _ranking_filter][:5]
         def format_rank(item, is_hot=True):
@@ -380,11 +383,12 @@ def perform_interaction(key, api, strategy, cycle, remaining):
             else: show_status("❌ 오류: 입력 형식 불량", True)
             
         elif mode == '4': # 필터
-            sys.stdout.write("\033[1;33m > 필터 [1:ALL, 2:KSP, 3:KDQ]: \033[0m")
+            sys.stdout.write("\033[1;33m > 필터 [1:ALL, 2:KSP, 3:KDQ, 4:USA]: \033[0m")
             sys.stdout.flush(); sel = sys.stdin.readline().strip()
             if sel == '1': _ranking_filter = "ALL"
             elif sel == '2': _ranking_filter = "KSP"
             elif sel == '3': _ranking_filter = "KDQ"
+            elif sel == '4': _ranking_filter = "USA"
             show_status(f"✅ 필터 변경 완료: {_ranking_filter}")
             
         elif mode == '5': # 물타기 추천 실행
