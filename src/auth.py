@@ -1,5 +1,7 @@
 import os
 import requests
+import time
+import json
 from src.logger import logger
 
 class KISAuth:
@@ -9,18 +11,66 @@ class KISAuth:
         self.cano = os.getenv("KIS_CANO")
         self.is_virtual = is_virtual
         
-        # Domain: Simulation First 설정 적용
         self.domain = (
             "https://openapivts.koreainvestment.com:29443" 
             if is_virtual else 
             "https://openapi.koreainvestment.com:9443"
         )
         
+        self.cache_file = ".token_cache.json"
         self.access_token = None
+        self.token_issued_at = 0
+        self.token_expiry_sec = 600 # 10분간 공유
+
+    def _load_token_cache(self):
+        """파일에서 저장된 토큰 정보 로드"""
+        if not os.path.exists(self.cache_file):
+            return False
         
+        try:
+            with open(self.cache_file, "r") as f:
+                cache = json.load(f)
+                # 현재 설정(모의/실전)과 같은 경우만 로드
+                if cache.get("is_virtual") == self.is_virtual:
+                    self.access_token = cache.get("access_token")
+                    self.token_issued_at = cache.get("token_issued_at", 0)
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _save_token_cache(self):
+        """새로 발급받은 토큰 정보를 파일에 저장"""
+        try:
+            cache = {
+                "access_token": self.access_token,
+                "token_issued_at": self.token_issued_at,
+                "is_virtual": self.is_virtual
+            }
+            with open(self.cache_file, "w") as f:
+                json.dump(cache, f)
+        except Exception as e:
+            logger.error(f"토큰 캐시 저장 실패: {e}")
+
+    def is_token_valid(self):
+        """현재 토큰이 유효한지(10분 이내) 확인"""
+        # 메모리에 없으면 파일에서 먼저 읽어옴
+        if not self.access_token:
+            self._load_token_cache()
+            
+        if not self.access_token:
+            return False
+        
+        elapsed = time.time() - self.token_issued_at
+        return elapsed < self.token_expiry_sec
+
     def generate_token(self):
-        """OAuth 2.0 토큰 발급"""
-        logger.info(f"발급 도메인: {self.domain} (모의투자: {self.is_virtual})")
+        """OAuth 2.0 토큰 발급 (파일 기반 10분 공유)"""
+        # 1. 파일/메모리에 유효한 토큰이 있다면 즉시 사용
+        if self.is_token_valid():
+            return True
+
+        logger.info(f"🔑 [인증] 토큰이 없거나 만료되어 새로 발급받습니다. (도메인: {self.domain})")
         
         url = f"{self.domain}/oauth2/tokenP"
         headers = {"content-type": "application/json"}
@@ -33,16 +83,20 @@ class KISAuth:
         try:
             res = requests.post(url, headers=headers, json=body, timeout=10)
             if res.status_code != 200:
-                logger.error(f"토큰 발급 실패 (HTTP {res.status_code}): {res.text}")
+                logger.error(f"❌ 토큰 발급 실패 (HTTP {res.status_code}): {res.text}")
                 return False
             
             data = res.json()
             self.access_token = data.get("access_token")
-            logger.info("토큰 발급 완료 (성공)")
+            self.token_issued_at = time.time()
+            
+            # 2. 새로 발급받은 토큰을 파일에 저장 (다른 프로세스와 공유)
+            self._save_token_cache()
+            
+            logger.info("✅ [인증 성공] 새 토큰이 발급 및 저장되었습니다. (10분 공유 모드)")
             return True
-        except requests.exceptions.RequestException as e:
-            # Strict Error Handling
-            logger.error(f"토큰 발급 실패 (네트워크/인증 오류): {e}")
+        except Exception as e:
+            logger.error(f"❌ 토큰 발급 에러: {e}")
             return False
 
     def get_auth_headers(self):
@@ -51,5 +105,6 @@ class KISAuth:
             "authorization": f"Bearer {self.access_token}",
             "appkey": self.appkey,
             "appsecret": self.secret,
-            "tr_id": "" # API 호출 시 오버라이드 됨
+            "tr_id": "",
+            "custtype": "P"
         }

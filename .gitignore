@@ -3,5 +3,5 @@
 __pycache__/
 *.pyc
 .vscode/
-test_purchase.py
-check_account.py
+.token_cache.json
+.trading_state.json

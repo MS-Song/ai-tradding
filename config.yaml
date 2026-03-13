@@ -16,8 +16,18 @@ vibe_strategy:
     
   # 하락장(Bear Market) 특별 설정
   bear_market:
-    # 물타기(추가 매수) 설정
-    average_down_amount: 500000 # 50만원씩 매수
-    target_stocks:
+    # 물타기(추가 매수) 설정 (현재 보유 종목 대상)
+    average_down_amount: 500000      # 1회 추가 매수 금액 (50만원)
+    min_loss_to_buy: -3.0            # 수익률이 -3% 이하일 때만 물타기 시작
+    max_investment_per_stock: 3000000 # 한 종목당 최대 누적 투자액 (300만원)
+
+  # 초기 포트폴리오 구성을 위한 Starter Kit 설정
+  starter_kit:
+    # 종목별 초기 투자 예산 (단위: 원)
+    budget_per_stock: 1000000 
+    # 초기 매수 대상 종목 (우량주 중심)
+    stocks:
       - "005930" # 삼성전자
       - "000660" # SK하이닉스
+      - "035420" # NAVER
+      - "005380" # 현대차
