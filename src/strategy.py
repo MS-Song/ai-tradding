@@ -99,7 +99,7 @@ class VibeStrategy:
         # 2. 거래량 폭발에 따른 보정
         price_data = self.api.get_inquire_price(stock_code)
         is_vol_spike = False
-        if price_data:
+        if price_data and 'vol' in price_data and 'prev_vol' in price_data:
             vol_ratio = (price_data['vol'] / price_data['prev_vol']) if price_data['prev_vol'] > 0 else 1.0
             if vol_ratio >= 1.5:
                 current_tp += 3.0

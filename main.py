@@ -149,40 +149,53 @@ def add_log(msg):
 def data_update_worker(api, strategy, interval, is_virtual):
     global _cached_holdings, _cached_asset, _cached_gains_raw, _cached_loses_raw, _cached_recommendations
     global _cached_market_data, _cached_vibe, _cached_panic, _last_update_time, _is_kr_market_active
-    api_delay = 1.0 if is_virtual else 0.1
-    internal_cycle = 0
+    
+    # 모의투자는 초당 2회 제한이 엄격하므로 1초 대기 사용
+    delay = 1.0 if is_virtual else 0.2
+    
     while True:
         try:
-            internal_cycle += 1
+            # 1. 지수 정보 (외부 API 병행으로 TPS 부담 적음)
             strategy.determine_market_trend()
-            kospi_info = strategy.current_market_data.get("KOSPI")
-            with _data_lock:
-                _is_kr_market_active = kospi_info.get("status") == "02" if (kospi_info and "status" in kospi_info) else False
+            time.sleep(delay)
             
-            time.sleep(api_delay)
-            # 1. 자동 매매 분석
-            skip_r = "첫 사이클" if internal_cycle == 1 else "장 종료" if not _is_kr_market_active else ""
-            auto_res = strategy.run_cycle(market_trend=strategy.current_market_vibe.lower(), skip_trade=(skip_r != ""))
-            
-            # 2. 물타기 추천 탐색
-            recoms = strategy.get_buy_recommendations(market_trend=strategy.current_market_vibe.lower())
-            
-            time.sleep(api_delay)
+            # 2. 잔고 정보 (KIS API 호출)
             h, a = api.get_full_balance()
-            g_raw, l_raw = api.get_top_gainers(), api.get_top_losers()
+            time.sleep(delay)
+            
+            # 3. 랭킹 정보 (KIS API 호출)
+            g_raw = api.get_top_gainers()
+            time.sleep(delay)
+            l_raw = api.get_top_losers()
+            time.sleep(delay)
+            
+            # 4. 분석 및 추천
+            vibe = strategy.current_market_vibe
+            recoms = strategy.get_buy_recommendations(market_trend=vibe.lower())
+            
+            kospi_info = strategy.current_market_data.get("KOSPI")
+            kr_active = kospi_info.get("status") == "02" if (kospi_info and "status" in kospi_info) else is_market_open()
+            
+            auto_res = []
+            if kr_active:
+                auto_res = strategy.run_cycle(market_trend=vibe.lower(), skip_trade=False)
             
             with _data_lock:
                 _cached_holdings = h; _cached_asset = a
                 _cached_gains_raw = g_raw; _cached_loses_raw = l_raw
-                _cached_recommendations = recoms # 추천 캐시
+                _cached_recommendations = recoms
                 _cached_market_data = strategy.current_market_data
-                _cached_vibe = strategy.current_market_vibe
+                _cached_vibe = vibe
                 _cached_panic = strategy.global_panic
+                _is_kr_market_active = kr_active
                 _last_update_time = datetime.now().strftime('%H:%M:%S')
-                if auto_res and not skip_r:
+                if auto_res:
                     for r in auto_res: add_log(f"🤖 {r}")
+                    
         except Exception as e:
             logger.error(f"Data Update Error: {e}")
+            time.sleep(5)
+            
         time.sleep(max(1, interval - 5))
 
 # --- TUI 렌더러 ---
@@ -222,15 +235,10 @@ def draw_tui(strategy, remaining_sec, cycle_info, prompt_mode=None):
                 idx_l += f"{name} {d['price']:,.1f}({color}{d['rate']:+0.2f}%\033[0m)  "
         buf.write(align_kr(idx_l, tw) + "\n")
 
-        # [3] Vibe & FX (환율 키 USD로 수정)
+        # [3] Vibe (환율 표시 제거)
         v_c = "\033[91m" if "Bull" in _cached_vibe else ("\033[94m" if "Bear" in _cached_vibe else "\033[93m")
         panic_txt = " !!! PANIC !!!" if _cached_panic else ""
         vibe_line = f" VIBE: {v_c}{_cached_vibe.upper()}\033[0m {panic_txt}"
-
-        fx = _cached_market_data.get("USD_KRW") or _cached_market_data.get("USD")
-        if fx:
-            fx_color = "\033[91m" if fx['rate'] >= 0 else "\033[94m"
-            vibe_line += f" | 💵 USD/KRW: {fx_color}{fx['price']:,.2f}\033[0m ({fx['rate']:+0.2f}%)"
 
         buf.write(align_kr(vibe_line, tw) + "\n")
         
@@ -383,12 +391,11 @@ def perform_interaction(key, api, strategy, cycle, remaining):
             else: show_status("❌ 오류: 입력 형식 불량", True)
             
         elif mode == '4': # 필터
-            sys.stdout.write("\033[1;33m > 필터 [1:ALL, 2:KSP, 3:KDQ, 4:USA]: \033[0m")
+            sys.stdout.write("\033[1;33m > 필터 [1:ALL, 2:KSP, 3:KDQ]: \033[0m")
             sys.stdout.flush(); sel = sys.stdin.readline().strip()
             if sel == '1': _ranking_filter = "ALL"
             elif sel == '2': _ranking_filter = "KSP"
             elif sel == '3': _ranking_filter = "KDQ"
-            elif sel == '4': _ranking_filter = "USA"
             show_status(f"✅ 필터 변경 완료: {_ranking_filter}")
             
         elif mode == '5': # 물타기 추천 실행
