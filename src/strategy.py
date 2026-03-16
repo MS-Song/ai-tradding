@@ -98,7 +98,9 @@ class VibeStrategy:
         # 1. 시장 상황에 따른 TP 보정
         current_tp = self.base_tp
         if market_trend == "bull":
-            current_tp = self.bull_config.get("take_profit_threshold", 3.0)
+            # [팀장 지시] 일괄 3% 지정 대신 기존 값에 +3%를 더하는 상대적 보정 적용
+            # "상승장(Bull): 익절 기준을 +3% 상향하여 수익 극대화" (MD의 '낮추어'는 '상향하여'로 재해석)
+            current_tp += 3.0
             
         current_sl = self.base_sl
         
@@ -121,8 +123,8 @@ class VibeStrategy:
             "KOSDAQ": self.api.get_index_price("1001"),
             "NASDAQ": self.api.get_index_price("NAS"),
             "S&P500": self.api.get_index_price("SPX"),
-            "NAS_FUT": self.api.get_index_price("NQF"),
-            "USD_KRW": self.api.get_index_price("USD")
+            "NAS_FUT": self.api.get_index_price("NAS_FUT"),
+            "SPX_FUT": self.api.get_index_price("SPX_FUT")
         }
         
         active_indices = {k: v for k, v in self.current_market_data.items() if v is not None}
@@ -132,9 +134,16 @@ class VibeStrategy:
 
         avg_rate = sum(v['rate'] for v in active_indices.values()) / len(active_indices)
         
-        # 글로벌 패닉 체크
-        us_indices = [self.current_market_data.get("NASDAQ"), self.current_market_data.get("S&P500")]
-        self.global_panic = all(idx and idx['rate'] <= -1.5 for idx in us_indices)
+        # 글로벌 패닉 체크 (본장 및 선물 지수 모두 감시)
+        us_indices = [
+            self.current_market_data.get("NASDAQ"), 
+            self.current_market_data.get("S&P500"),
+            self.current_market_data.get("NAS_FUT"),
+            self.current_market_data.get("SPX_FUT")
+        ]
+        # 유효한(None이 아닌) 지수 중 하나라도 -1.5% 이하로 급락하면 패닉으로 간주 (또는 본장 기준)
+        active_us = [idx for idx in us_indices if idx is not None]
+        self.global_panic = any(idx['rate'] <= -1.5 for idx in active_us) if active_us else False
 
         if self.global_panic:
             self.current_market_vibe = "Bear (GLOBAL PANIC)"

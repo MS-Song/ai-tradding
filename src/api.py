@@ -127,15 +127,29 @@ class KISAPI:
     def get_balance(self): return self.get_full_balance()[0]
     def get_deposit(self): return self.get_full_balance()[1]
 
-    def order_market(self, code, qty, is_buy=True):
+    def order_market(self, code, qty, is_buy=True, price=0):
         url = f"{self.domain}/uapi/domestic-stock/v1/trading/order-cash"
         headers = self.auth.get_auth_headers()
         headers["tr_id"] = ("VTTC0802U" if is_buy else "VTTC0801U") if self.auth.is_virtual else ("TTTC0802U" if is_buy else "TTTC0801U")
-        body = {"CANO": self.auth.cano, "ACNT_PRDT_CD": "01", "PDNO": code, "ORD_DVSN": "01", "ORD_QTY": str(int(qty)), "ORD_UNPR": "0"}
+        
+        # 가격이 0보다 크면 지정가(00), 아니면 시장가(01)
+        dvsn = "00" if price > 0 else "01"
+        unpr = str(int(price)) if price > 0 else "0"
+        
+        body = {
+            "CANO": self.auth.cano, 
+            "ACNT_PRDT_CD": "01", 
+            "PDNO": code, 
+            "ORD_DVSN": dvsn, 
+            "ORD_QTY": str(int(qty)), 
+            "ORD_UNPR": unpr
+        }
         try:
             res = requests.post(url, headers=headers, json=body, timeout=5)
             data = res.json()
-            if data.get("rt_cd") == "0": return True, f"[{'매수' if is_buy else '매도'} 성공] {code} {qty}주"
+            p_desc = f"{price:,}원 지정가" if price > 0 else "시장가"
+            if data.get("rt_cd") == "0": 
+                return True, f"[{'매수' if is_buy else '매도'} 성공] {code} {qty}주 ({p_desc})"
             return False, data.get("msg1", "오류")
         except: return False, "API 오류"
 
@@ -148,12 +162,25 @@ class KISAPI:
                 res = requests.get(url, timeout=3)
                 data = res.json()
                 item = data['result']['areas'][0]['datas'][0]
-                return {"name": target, "price": float(item['nv']), "rate": float(item['cr']), "diff": float(item['cv']), "status": "02"}
+                
+                # 네이버 지수 데이터는 보통 100배 부풀려진 정수(예: 2500.12 -> 250012)로 내려옵니다.
+                # 콤마 제거 및 소수점 2자리 복원
+                raw_nv = str(item['nv']).replace(',', '')
+                price = float(raw_nv) / 100.0
+                
+                rate = float(item['cr'])
+                diff = float(item['cv']) / 100.0
+                
+                return {"name": target, "price": price, "rate": rate, "diff": diff, "status": "02"}
             except: pass
             
-        if iscd in ["NAS", "NASDAQ", "SPX", "S&P500"]:
+        if iscd in ["NAS", "NASDAQ", "SPX", "S&P500", "NAS_FUT", "SPX_FUT"]:
             try:
-                symbol = "^IXIC" if iscd in ["NAS", "NASDAQ"] else "^GSPC"
+                if iscd in ["NAS", "NASDAQ"]: symbol = "^IXIC"
+                elif iscd in ["SPX", "S&P500"]: symbol = "^GSPC"
+                elif iscd == "NAS_FUT": symbol = "NQ=F"
+                elif iscd == "SPX_FUT": symbol = "ES=F"
+                
                 url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
                 res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
                 data = res.json()
