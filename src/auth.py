@@ -5,15 +5,21 @@ import json
 from src.logger import logger
 
 class KISAuth:
-    def __init__(self, is_virtual=True):
+    def __init__(self, is_virtual=None):
         self.appkey = os.getenv("KIS_APPKEY")
         self.secret = os.getenv("KIS_SECRET")
         self.cano = os.getenv("KIS_CANO")
-        self.is_virtual = is_virtual
+        
+        # 인자로 명시적 지정이 없으면 환경변수 사용, 환경변수도 없으면 True(모의)
+        if is_virtual is None:
+            env_val = os.getenv("KIS_IS_VIRTUAL", "TRUE").upper()
+            self.is_virtual = (env_val != "FALSE")
+        else:
+            self.is_virtual = is_virtual
         
         self.domain = (
             "https://openapivts.koreainvestment.com:29443" 
-            if is_virtual else 
+            if self.is_virtual else 
             "https://openapi.koreainvestment.com:9443"
         )
         

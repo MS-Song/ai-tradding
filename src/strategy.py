@@ -25,56 +25,62 @@ class VibeStrategy:
         self.sl_ratio = self.config.get("stop_loss_ratio", 1.0)
         
         self.bull_config = self.config.get("bull_market", {})
-        self.bear_config = self.config.get("bear_market", {})
+        # Bear 설정 (기본값 로드 후 파일 저장값으로 덮어씀)
+        self.bear_config = self.config.get("bear_market", {
+            "min_loss_to_buy": -3.0,
+            "average_down_amount": 500000,
+            "max_investment_per_stock": 3000000,
+            "auto_mode": False
+        })
         
-        self.state_file = ".trading_state.json"
-        self.trade_history = self._load_state()
+        self.state_file = "trading_state.json"
+        self.last_avg_down_msg = "없음"
+        self._load_all_states()
         
         # 실시간 분석 데이터 저장소 (대시보드 공유용)
         self.current_market_vibe = "Neutral"
         self.current_market_data = {} 
         self.global_panic = False
-        
-        # 수동 TP/SL 설정 로드
-        self.thresholds_file = ".manual_thresholds.json"
-        self.manual_thresholds = self._load_manual_thresholds()
 
-    def _load_manual_thresholds(self):
-        """파일에서 수동 설정값 로드"""
-        if os.path.exists(self.thresholds_file):
-            try:
-                with open(self.thresholds_file, "r") as f:
-                    return json.load(f)
-            except:
-                pass
-        return {}
-
-    def save_manual_thresholds(self):
-        """현재 수동 설정값을 파일에 저장"""
-        try:
-            with open(self.thresholds_file, "w") as f:
-                json.dump(self.manual_thresholds, f)
-        except Exception as e:
-            logger.error(f"수동 설정값 저장 실패: {e}")
-
-    def _load_state(self):
-        """파일에서 매매 이력(쿨다운용) 로드"""
+    def _load_all_states(self):
+        """파일에서 모든 상태(매매 이력, 수동 설정, 물타기 옵션) 로드"""
+        self.trade_history = {}
+        self.manual_thresholds = {}
         if os.path.exists(self.state_file):
             try:
                 with open(self.state_file, "r") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    self.trade_history = data.get("trade_history", {})
+                    self.manual_thresholds = data.get("manual_thresholds", {})
+                    # 물타기 설정 덮어쓰기
+                    if "bear_config" in data:
+                        self.bear_config.update(data["bear_config"])
+                    self.last_avg_down_msg = data.get("last_avg_down_msg", "없음")
             except:
                 pass
-        return {}
 
-    def _save_state(self, stock_code):
-        """특정 종목의 매매 시각 저장"""
-        self.trade_history[stock_code] = time.time()
+    def _save_all_states(self):
+        """현재 모든 상태를 파일에 저장"""
         try:
+            data = {
+                "trade_history": self.trade_history,
+                "manual_thresholds": self.manual_thresholds,
+                "bear_config": self.bear_config,
+                "last_avg_down_msg": self.last_avg_down_msg
+            }
             with open(self.state_file, "w") as f:
-                json.dump(self.trade_history, f)
+                json.dump(data, f, indent=4)
         except Exception as e:
             logger.error(f"상태 저장 실패: {e}")
+
+    def save_manual_thresholds(self):
+        """수동 설정값 저장 (상위 호환성 유지)"""
+        self._save_all_states()
+
+    def _save_state(self, stock_code):
+        """특정 종목의 매매 시각 저장 및 전체 저장"""
+        self.trade_history[stock_code] = time.time()
+        self._save_all_states()
 
     def _get_timeout_input(self, prompt, timeout=50):
         """타임아웃이 있는 사용자 입력 (윈도우/리눅스 호환)"""
@@ -203,11 +209,12 @@ class VibeStrategy:
             stock_name = item.get("prdt_name", stock_code)
             evlu_pfls_rt = float(item.get("evlu_pfls_rt", 0.0))
             pchs_amt = int(float(item.get("pchs_amt", 0)))
-            if pchs_amt == 0: pchs_amt = int(float(item.get("pchs_avg_pric", 0)) * float(item.get("hldg_qty", 0)))
+            if pchs_amt == 0:
+                pchs_amt = int(float(item.get("pchs_avg_pric", 0)) * float(item.get("hldg_qty", 0)))
 
-            # 마지막 매매 후 1시간 쿨다운 (잦은 물타기 방지)
+            # 마지막 매매 후 10분 쿨다운 (잦은 물타기 방지)
             last_trade = self.trade_history.get(stock_code, 0)
-            if time.time() - last_trade < 3600: continue
+            if time.time() - last_trade < 600: continue
             
             # 추천 조건: 수익률이 트리거 이하이고, 아직 최대 투자금액 미만일 때
             if evlu_pfls_rt <= buy_trigger and pchs_amt < max_limit:

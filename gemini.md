@@ -55,9 +55,12 @@
 ---
 
 ## 5. Development Instructions
-1. **Simulation First**: 기본적으로 `is_virtual=True` 설정을 유지할 것.
+1. **Simulation First**: 기본적으로 `is_virtual=True` 설정을 유지하거나, `.env`의 `KIS_IS_VIRTUAL` 설정을 따를 것.
 2. **Modularization**: 인증(`auth.py`), API 연동(`api.py`), 매매 로직(`strategy.py`), 로깅(`logger.py`) 모듈화 유지.
-3. **Thought Process**: 모든 코드 수정 전에는 반드시 `### Thought Process` 섹션을 만들어 논리적 근거를 설명할 것.
-4. **Validation**: 수정 후에는 반드시 가로바 정렬, 데이터 누락 여부, API 호출 안정성을 검증할 것.
+3. **Tools & Tests Management**: 
+    *   메인 로직(`main.py`) 외의 모든 보조 도구, 테스트 스크립트, 유틸리티는 반드시 **`tools/`** 디렉토리에 위치시킨다.
+    *   `tools/` 내의 스크립트가 `src/` 모듈을 참조할 수 있도록 파일 상단에 `sys.path.append` 로직을 포함한다.
+4. **Thought Process**: 모든 코드 수정 전에는 반드시 `### Thought Process` 섹션을 만들어 논리적 근거를 설명할 것.
+5. **Validation**: 수정 후에는 반드시 가로바 정렬, 데이터 누락 여부, API 호출 안정성을 검증할 것.
 
-# "팀장의 지시는 곧 법이며, 모든 수치는 정렬되어야 하고 모든 로그는 이유가 있어야 한다."
+# "팀장의 지시는 곧 법이며, 모든 수치는 정렬되어야 하고 모든 로그는 이유가 있어야 하며 반드시 한글로 한다."

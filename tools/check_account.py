@@ -1,4 +1,8 @@
 import os
+import sys
+# 상위 디렉토리를 path에 추가하여 src 모듈 임포트 가능하게 함
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from dotenv import load_dotenv
 from src.logger import logger
 from src.auth import KISAuth
@@ -8,8 +12,8 @@ def check_account():
     # 환경변수 로드
     load_dotenv()
     
-    # 1. 인증 객체 생성 (모의투자)
-    auth = KISAuth(is_virtual=True)
+    # 1. 인증 객체 생성 (환경변수 설정에 따름)
+    auth = KISAuth()
     if not auth.generate_token():
         logger.error("인증 실패: .env 파일의 API KEY를 확인하세요.")
         return

@@ -21,17 +21,18 @@ def setup_logger(name="VibeTrader"):
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # 터미널 핸들러 설정
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    
-    # 파일 핸들러 설정 (로그 파일 저장)
+    # 콘솔 핸들러 제거 (TUI 화면 보호)
+    # console_handler = logging.StreamHandler(sys.stdout)
+    # console_handler.setFormatter(formatter)
+
+    # 파일 핸들러 (로그 저장용)
     file_handler = logging.FileHandler("trading.log", encoding="utf-8")
     file_handler.setFormatter(formatter)
-    
+
     if not logger.handlers:
-        logger.addHandler(console_handler)
+        # logger.addHandler(console_handler) # 화면 출력 중단
         logger.addHandler(file_handler)
+
         
     return logger
 

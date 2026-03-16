@@ -1,15 +1,19 @@
 import os
+import sys
 import yaml
 import math
-import sys
-from dotenv import load_dotenv
+# 상위 디렉토리를 path에 추가하여 src 모듈 임포트 가능하게 함
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
 from src.logger import logger
 from src.auth import KISAuth
 from src.api import KISAPI
 
 def load_config():
-    with open("config.yaml", "r", encoding="utf-8") as f:
+    # 상위 폴더의 config.yaml 참조
+    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.yaml")
+    with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 def run_starter_kit():
@@ -21,8 +25,8 @@ def run_starter_kit():
     budget = kit_config.get("budget_per_stock", 1000000)
     stocks_to_buy = kit_config.get("stocks", [])
     
-    # 2. 인증 및 API 클라이언트 생성
-    auth = KISAuth(is_virtual=True)
+    # 2. 인증 및 API 클라이언트 생성 (환경변수 설정에 따름)
+    auth = KISAuth()
     if not auth.generate_token():
         logger.error("❌ 인증 실패: 토큰을 발급할 수 없습니다.")
         return

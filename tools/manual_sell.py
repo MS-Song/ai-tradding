@@ -1,5 +1,8 @@
 import os
 import sys
+# 상위 디렉토리를 path에 추가하여 src 모듈 임포트 가능하게 함
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from dotenv import load_dotenv
 from src.logger import logger
 from src.auth import KISAuth
@@ -8,7 +11,8 @@ from src.api import KISAPI
 def run_manual_sell():
     # 1. 초기화 및 인증
     load_dotenv()
-    auth = KISAuth(is_virtual=True)
+    # 환경변수 설정에 따름
+    auth = KISAuth()
     if not auth.generate_token():
         logger.error("인증 실패: 토큰을 발급할 수 없습니다.")
         return

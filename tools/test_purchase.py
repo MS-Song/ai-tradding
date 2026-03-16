@@ -1,4 +1,8 @@
 import os
+import sys
+# 상위 디렉토리를 path에 추가하여 src 모듈 임포트 가능하게 함
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from dotenv import load_dotenv
 from src.logger import logger
 from src.auth import KISAuth
@@ -8,8 +12,8 @@ def test_buy_stocks():
     # 환경변수 로드
     load_dotenv()
     
-    # 1. 인증 및 API 객체 생성 (모의투자 모드)
-    auth = KISAuth(is_virtual=True)
+    # 1. 인증 및 API 객체 생성 (환경변수 설정에 따름)
+    auth = KISAuth()
     if not auth.generate_token():
         logger.error("인증 실패")
         return
