@@ -1,9 +1,9 @@
 # KIS-Vibe-Trader Configuration
 vibe_strategy:
-  # 기본 익절 기준 (수익률 10%)
-  take_profit_threshold: 10.0
-  # 기본 손절 기준 (수익률 -10%)
-  stop_loss_threshold: -10.0
+  # 기본 익절 기준 (수익률 5%)
+  take_profit_threshold: 5.0
+  # 기본 손절 기준 (수익률 -5.0% / 물타기 작동 구간 확보를 위해 하향 조정)
+  stop_loss_threshold: -5.0
   
   # 익절 시 매도 수량 비율 (30%)
   take_profit_ratio: 0.3

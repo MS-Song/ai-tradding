@@ -7,3 +7,4 @@ __pycache__/
 .trading_state.json
 trading_state.json
 trading.log
+error.log

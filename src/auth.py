@@ -103,6 +103,10 @@ class KISAuth:
             return False
 
     def get_auth_headers(self):
+        # 헤더 요청 시 토큰이 유효하지 않으면 자동 갱신 시도
+        if not self.is_token_valid():
+            self.generate_token()
+            
         return {
             "content-type": "application/json",
             "authorization": f"Bearer {self.access_token}",
