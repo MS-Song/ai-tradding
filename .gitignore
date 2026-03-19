@@ -8,3 +8,5 @@ __pycache__/
 trading_state.json
 trading.log
 error.log
+activate_venv.sh
+run.sh
