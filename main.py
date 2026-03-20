@@ -125,8 +125,8 @@ _last_size = (0, 0)
 _cached_holdings = []
 _cached_asset = {"total_asset":0, "stock_eval":0, "cash":0, "pnl":0, "deposit":0}
 _cached_stock_info = {} # 종목별 추가 정보 캐시 (TP/SL, 볼륨 스파이크 등)
-_cached_gains_raw = []
-_cached_loses_raw = []
+_cached_hot_raw = []
+_cached_vol_raw = []
 _cached_recommendations = [] 
 _cached_market_data = {}
 _cached_vibe = "Neutral"
@@ -161,7 +161,7 @@ def add_trading_log(msg):
 
 # --- 데이터 업데이트 함수 (강제 갱신용) ---
 def update_all_data(api, strategy, is_virtual, force=False):
-    global _cached_holdings, _cached_asset, _cached_gains_raw, _cached_loses_raw, _cached_recommendations
+    global _cached_holdings, _cached_asset, _cached_hot_raw, _cached_vol_raw, _cached_recommendations
     global _cached_market_data, _cached_vibe, _cached_panic, _last_update_time, _is_kr_market_active, _last_times, _cached_stock_info
     
     try:
@@ -185,9 +185,9 @@ def update_all_data(api, strategy, is_virtual, force=False):
             tp, sl, spike = strategy.get_dynamic_thresholds(code, _cached_vibe.lower(), price_data)
             _cached_stock_info[code] = {"tp": tp, "sl": sl, "spike": spike}
         
-        # 4. 랭킹
-        _cached_gains_raw = api.get_top_gainers()
-        _cached_loses_raw = api.get_top_losers()
+        # 4. 랭킹 (네이버 기반)
+        _cached_hot_raw = api.get_naver_hot_stocks()
+        _cached_vol_raw = api.get_naver_volume_stocks()
         _last_times["ranking"] = curr_t
         
         add_log("데이터 전체 업데이트 완료")
@@ -222,7 +222,7 @@ def index_update_worker(strategy):
 
 # --- 데이터 업데이트 스레드 (KIS API: 잔고/랭킹/주문) ---
 def data_update_worker(api, strategy, is_virtual):
-    global _cached_holdings, _cached_asset, _cached_gains_raw, _cached_loses_raw, _cached_recommendations, _cached_stock_info
+    global _cached_holdings, _cached_asset, _cached_hot_raw, _cached_vol_raw, _cached_recommendations, _cached_stock_info
     global _last_update_time, _last_times
     
     update_all_data(api, strategy, is_virtual, force=True)
@@ -246,12 +246,12 @@ def data_update_worker(api, strategy, is_virtual):
                     _last_times["asset"] = curr_t
                     add_log(f"잔고 및 상세정보 업데이트 성공 (Cash: {a['cash']:,}원)")
                 
-            elif step == 2: # 2단계: 랭킹 정보
-                g_raw = api.get_top_gainers(); l_raw = api.get_top_losers()
+            elif step == 2: # 2단계: 랭킹 정보 (네이버 기반)
+                h_raw = api.get_naver_hot_stocks(); v_raw = api.get_naver_volume_stocks()
                 with _data_lock:
-                    _cached_gains_raw = g_raw; _cached_loses_raw = l_raw
+                    _cached_hot_raw = h_raw; _cached_vol_raw = v_raw
                 _last_times["ranking"] = curr_t
-                add_log(f"랭킹 업데이트 완료")
+                add_log(f"네이버 랭킹 업데이트 완료")
 
             vibe = _cached_vibe
             _cached_recommendations = strategy.get_buy_recommendations(market_trend=vibe.lower())
@@ -295,7 +295,7 @@ def data_update_worker(api, strategy, is_virtual):
 # --- TUI 렌더러 ---
 def draw_tui(strategy, cycle_info, prompt_mode=None):
     global _last_size, _status_msg, _status_time, _last_log_msg, _last_log_time, _trading_logs
-    global _cached_holdings, _cached_asset, _cached_gains_raw, _cached_loses_raw, _cached_stock_info
+    global _cached_holdings, _cached_asset, _cached_hot_raw, _cached_vol_raw, _cached_stock_info
     global _cached_market_data, _cached_vibe, _cached_panic, _last_update_time, _ranking_filter, _cached_recommendations, _last_times
     
     try:
@@ -404,33 +404,26 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         f_h = _cached_holdings if _ranking_filter == "ALL" else [h for h in _cached_holdings if get_market_name(h.get('pdno','')) == _ranking_filter]
         if not f_h: buf.write(align_kr(f"No active {_ranking_filter} holdings.", tw, 'center') + "\n")
         else:
-            # 하단 로그 공간(최소 6줄) 확보를 위해 리스트 제한
-            max_h_display = th - 25 # 헤더 및 기타 정보 약 25줄
+            # 하단 로그 공간 확보를 위해 리스트 제한
+            max_h_display = th - 30 # 네이버 랭킹 10줄 추가로 인해 더 많은 공간 필요
             display_h = f_h[:max_h_display] if len(f_h) > max_h_display else f_h
             
             for idx, h in enumerate(display_h, 1):
                 code, name = h.get("pdno", ""), h.get("prdt_name", "Unknown")
-                # SYMBOL 너비에 맞춰 종목명 조절
                 name_max = (w[2] - 10) // 2 * 2
                 name_disp = name[:name_max] if name_max > 4 else name[:4]
                 
-                # 캐싱된 상세 정보 사용 (API 호출 제거)
                 info = _cached_stock_info.get(code, {"tp": 0, "sl": 0, "spike": False})
                 tp, sl, spike = info["tp"], info["sl"], info["spike"]
                 
                 p_a, p_cu = float(h.get('pchs_avg_pric', 0)), float(h.get('prpr', 0))
-                
-                # 금일 변동 (API 보강 데이터 사용)
                 d_v, d_r = float(h.get('prdy_vrss', 0)), float(h.get('prdy_ctrt', 0))
                 d_c = "\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else ""
-                # 비율에서 기호 제거 (abs 사용)
                 d_txt = f"{d_v:+,g}({abs(d_r):.2f}%)"
                 
-                # 수익 및 수익률 통합 (PnL)
                 pnl_amt = (p_cu - p_a) * float(h.get('hldg_qty', 0))
                 pnl_rt = float(h.get('evlu_pfls_rt', 0))
                 color = "\033[91m" if pnl_amt >= 0 else "\033[94m"
-                # 비율에서 기호 제거 (abs 사용)
                 pnl_txt = f"{int(pnl_amt):+,}({abs(pnl_rt):.2f}%)"
                 
                 row = align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name_disp}" + (" *" if spike else ""), w[2]) + \
@@ -448,71 +441,64 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         buf.write("=" * tw + "\n")
 
         left_w, right_w = (tw - 3) // 2, tw - 3 - (tw - 3) // 2
-        m_label = "ALL" if _ranking_filter == "ALL" else "KOSPI" if _ranking_filter == "KSP" else "KOSDAQ" if _ranking_filter == "KDQ" else "USA"
         
-        # 필터 적용
+        # 네이버 랭킹 필터링 및 슬라이싱 (10개)
         if _ranking_filter == "ALL":
-            gains = _cached_gains_raw[:5]; loses = _cached_loses_raw[:5]
+            hot_list = _cached_hot_raw[:10]
+            vol_list = _cached_vol_raw[:10]
         else:
-            gains = [g for g in _cached_gains_raw if str(g.get('mkt','')).strip().upper() == _ranking_filter.strip().upper()][:5]
-            loses = [l for l in _cached_loses_raw if str(l.get('mkt','')).strip().upper() == _ranking_filter.strip().upper()][:5]
+            hot_list = [g for g in _cached_hot_raw if str(g.get('mkt','')).strip().upper() == _ranking_filter.strip().upper() or _ranking_filter == "ALL"][:10]
+            vol_list = [l for l in _cached_vol_raw if str(l.get('mkt','')).strip().upper() == _ranking_filter.strip().upper() or _ranking_filter == "ALL"][:10]
+
+        # Fallback: 인기검색어가 비어있을 경우 거래량 상위 종목 중 등락률 높은 순으로 대체
+        if not hot_list and _cached_vol_raw:
+            fallback_hot = sorted(_cached_vol_raw, key=lambda x: abs(x.get('rate', 0)), reverse=True)
+            hot_list = fallback_hot[:10]
 
         def format_rank(item, is_hot=True, width=left_w):
             if not item: return " " * width
             rw = [4, 9, 14, 10, 8]
             rt_v = f"{float(item['rate']):>6.2f}%"
             row = f"{align_kr(item.get('mkt','KSP')[:3],rw[0])} {align_kr(f'[{item['code']}]',rw[1])} {align_kr(item['name'],rw[2])} {align_kr(f'{int(float(item['price'])):,}',rw[3],'right')} {align_kr(rt_v,rw[4],'right')}"
-            return align_kr(row.replace(rt_v, f"{('\033[91m' if is_hot else '\033[94m')}{rt_v}\033[0m"), width)
-        buf.write(f"\033[1;91m{align_kr('✨ TOP GAINERS ('+m_label+')', left_w)}\033[0m │ \033[1;94m{align_kr('❄️ TOP LOSERS ('+m_label+')', right_w)}\033[0m\n")
+            return align_kr(row.replace(rt_v, f"{('\033[91m' if float(item['rate']) >= 0 else '\033[94m')}{rt_v}\033[0m"), width)
+            
+        buf.write(f"\033[1;93m{align_kr('🔥 HOT SEARCH (Naver)', left_w)}\033[0m │ \033[1;96m{align_kr('📊 VOLUME TOP (Naver)', right_w)}\033[0m\n")
         buf.write("─" * left_w + "─┼─" + "─" * right_w + "\n")
         
-        if not gains and not loses:
-            buf.write(align_kr("랭킹 데이터가 없습니다 (시장 코드 조회 중...)", tw, 'center') + "\n")
-            buf.write("\n" * 4) # 높이 유지
+        if not hot_list and not vol_list:
+            buf.write(align_kr("네이버 랭킹 데이터 수집 중...", tw, 'center') + "\n")
+            buf.write("\n" * 9)
         else:
-            for i in range(5): buf.write(f"{format_rank(gains[i] if i < len(gains) else None, True, left_w)} │ {format_rank(loses[i] if i < len(loses) else None, False, right_w)}\n")
+            for i in range(10): 
+                buf.write(f"{format_rank(hot_list[i] if i < len(hot_list) else None, True, left_w)} │ {format_rank(vol_list[i] if i < len(vol_list) else None, False, right_w)}\n")
     
     # --- 하단 로그 및 상태창 배분 ---
     output_lines = buf.getvalue().split('\n')
     current_count = len(output_lines)
-    
-    # 하단 바 출력 (마지막 라인 전까지)
     sys.stdout.write(buf.getvalue())
-    
-    # 남은 라인 수 계산 (Status, Log, Trading용)
     remaining = th - current_count
     
     if remaining > 0:
-        # Status
         if _status_msg and (time.time() - _status_time < 60): sys.stdout.write(f"\033[K {_status_msg}\n")
         else: sys.stdout.write("\033[K \n")
         remaining -= 1
-    
     if remaining > 0:
-        # Log
         if _last_log_msg and (time.time() - _last_log_time < 60): sys.stdout.write(f"\033[K {_last_log_msg}\n")
         else: sys.stdout.write("\033[K \n")
         remaining -= 1
-        
     if remaining > 0:
-        # Trading Logs (역순 출력하여 최신이 가장 아래에 오게 함)
         display_logs = _trading_logs[-remaining:] if len(_trading_logs) > remaining else _trading_logs
         for i, tl in enumerate(display_logs):
-            if i == len(display_logs) - 1 and remaining == 1:
-                sys.stdout.write(f"\033[K {tl}") # 마지막 라인은 개행 없음 (스크롤 방지)
-            else:
-                sys.stdout.write(f"\033[K {tl}\n")
+            if i == len(display_logs) - 1 and remaining == 1: sys.stdout.write(f"\033[K {tl}")
+            else: sys.stdout.write(f"\033[K {tl}\n")
             remaining -= 1
-            
-    # 여전히 남은 공간이 있다면 빈 줄로 채움
     while remaining > 0:
-        if remaining == 1: sys.stdout.write("\033[K") # 마지막 라인 개행 없음
+        if remaining == 1: sys.stdout.write("\033[K")
         else: sys.stdout.write("\033[K\n")
         remaining -= 1
-
     sys.stdout.flush(); buf.close()
 
-# --- 입력 처리 ---
+# --- 입력 처리 (생략 없이 유지) ---
 def get_key_immediate():
     if IS_WINDOWS:
         import msvcrt
@@ -532,15 +518,12 @@ def get_key_immediate():
     return None
 
 def input_with_esc(prompt, tw):
-    """ESC 취소가 가능한 커스텀 입력 함수"""
     sys.stdout.write(f"\033[33m {prompt}\033[0m")
     sys.stdout.flush()
-    
     input_str = ""
     while True:
         k = get_key_immediate()
-        if k == 'esc':
-            return None
+        if k == 'esc': return None
         elif k == '\r' or k == '\n':
             sys.stdout.write("\n")
             return input_str
@@ -562,149 +545,104 @@ def perform_interaction(key, api, strategy, cycle):
     
     if mode == 'q':
         show_status("🛑 프로그램을 종료합니다. 잠시만 기다려주세요...")
-        draw_tui(strategy, cycle) # 종료 메시지가 포함된 마지막 화면 렌더링
-        time.sleep(1) # 메시지를 읽을 수 있도록 잠시 대기
+        draw_tui(strategy, cycle)
+        time.sleep(1)
         restore_terminal_settings()
         exit_alt_screen()
         print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다.")
-        os._exit(0) # 즉시 전체 프로세스 종료 (스레드 포함)
+        os._exit(0)
 
     if mode == 's':
         show_status("⚙️ 환경 설정 모드로 전환합니다. 잠시만 기다려주세요...")
         draw_tui(strategy, cycle)
-        time.sleep(0.5) # 메시지 확인 및 터미널 안정화 대기
-        
-        exit_alt_screen() # 셋업 화면을 위해 표준 터미널로 복귀
+        time.sleep(0.5)
+        exit_alt_screen()
         print("\n" + "="*60)
         print(" ⚙️  KIS-Vibe-Trader 환경 설정 모드")
         print("="*60)
-        
-        flush_input() # 기존에 눌렸던 키들이 입력창에 들어가지 않도록 방지
-        
-        # 1. 셋업 재실행
+        flush_input()
         ensure_env(force=True)
-        
-        # 2. 시스템 새로고침 (새로운 .env 값 반영)
         load_dotenv(override=True)
-        config = load_config() # config.yaml도 재로드
+        config = load_config()
         new_auth = KISAuth()
         api.auth = new_auth
         api.domain = new_auth.domain
-        
-        # strategy 엔진도 새 객체들로 동기화
         strategy.api = api
-        
-        # 3. 화면 복구
         enter_alt_screen()
         set_terminal_raw()
         show_status("✅ 환경 설정이 성공적으로 갱신되었습니다.")
         update_all_data(api, strategy, new_auth.is_virtual, force=True)
         return
 
-    # 터미널 설정 일시 해제하여 입력을 원활하게 함 (Windows 대응)
     restore_terminal_settings()
     try:
-        size = os.get_terminal_size()
-        tw = size.columns
+        tw = os.get_terminal_size().columns
     except: tw = 110
 
     try:
         m_label = '매도' if mode=='1' else '매수' if mode=='2' else '전략수정' if mode=='3' else 'AI전략' if mode=='4' else '물타기설정' if mode=='5' else '물타기실행' if mode=='6' else '필터' if mode=='9' else '셋업'
         draw_tui(strategy, cycle, prompt_mode=m_label)
-        
-        # 입력 위치 확보 (하단 Status 영역 근처)
         sys.stdout.write("\033[5;1H\033[K")
         sys.stdout.flush()
-        
         f_h = _cached_holdings if _ranking_filter == "ALL" else [h for h in _cached_holdings if get_market_name(h.get('pdno','')) == _ranking_filter]
         
-        if mode == '1': # 매도
+        if mode == '1':
             res = input_with_esc("> 매도 [번호 수량 가격] 입력 (공백 구분, 가격 미입력시 시장가): ", tw)
-            if res is None: return # ESC 취소
-            inp = res.strip().split()
-            if inp and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
-                h = f_h[int(inp[0])-1]
-                qty = int(inp[1]) if len(inp) > 1 and inp[1].isdigit() else int(float(h['hldg_qty']))
-                price = int(inp[2]) if len(inp) > 2 and inp[2].isdigit() else 0
-                
-                success, msg = api.order_market(h['pdno'], qty, False, price)
-                if success: 
-                    show_status(f"✅ 매도 성공: {h['prdt_name']}")
-                    add_trading_log(f"수동매도: {h['prdt_name']} {qty}주 @ {price if price else '시장가'}")
-                    update_all_data(api, strategy, True, force=True)
-                else: show_status(f"❌ 매도 실패: {msg}", True)
-
-        elif mode == '2': # 매수
+            if res:
+                inp = res.strip().split()
+                if inp and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
+                    h = f_h[int(inp[0])-1]
+                    qty = int(inp[1]) if len(inp) > 1 and inp[1].isdigit() else int(float(h['hldg_qty']))
+                    price = int(inp[2]) if len(inp) > 2 and inp[2].isdigit() else 0
+                    success, msg = api.order_market(h['pdno'], qty, False, price)
+                    if success: 
+                        show_status(f"✅ 매도 성공: {h['prdt_name']}")
+                        add_trading_log(f"수동매도: {h['prdt_name']} {qty}주 @ {price if price else '시장가'}")
+                        update_all_data(api, strategy, True, force=True)
+                    else: show_status(f"❌ 매도 실패: {msg}", True)
+        elif mode == '2':
             res = input_with_esc("> 매수 [코드 수량 가격] 입력 (공백 구분, 가격 미입력시 시장가): ", tw)
-            if res is None: return # ESC 취소
-            inp = res.strip().split()
-            if len(inp) >= 2:
-                code = inp[0]
-                qty = int(inp[1])
-                price = int(inp[2]) if len(inp) > 2 and inp[2].isdigit() else 0
-                
-                success, msg = api.order_market(code, qty, True, price)
-                if success: 
-                    show_status(f"✅ 매수 성공: {code}")
-                    add_trading_log(f"수동매수: {code} {qty}주 @ {price if price else '시장가'}")
-                    update_all_data(api, strategy, True, force=True)
-                else: show_status(f"❌ 매수 실패: {msg}", True)
-
-        elif mode == '3': # 전략수정
+            if res:
+                inp = res.strip().split()
+                if len(inp) >= 2:
+                    code, qty = inp[0], int(inp[1])
+                    price = int(inp[2]) if len(inp) > 2 and inp[2].isdigit() else 0
+                    success, msg = api.order_market(code, qty, True, price)
+                    if success: 
+                        show_status(f"✅ 매수 성공: {code}")
+                        add_trading_log(f"수동매수: {code} {qty}주 @ {price if price else '시장가'}")
+                        update_all_data(api, strategy, True, force=True)
+                    else: show_status(f"❌ 매수 실패: {msg}", True)
+        elif mode == '3':
             res = input_with_esc("> 수정 [번호 TP SL] 입력 (초기화는 '번호 r'): ", tw)
-            if res is None: return # ESC 취소
-            inp = res.strip().split()
-            if len(inp) >= 2 and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
-                h = f_h[int(inp[0])-1]
-                # 초기화 로직 추가
-                if inp[1].lower() == 'r':
-                    if h['pdno'] in strategy.manual_thresholds:
-                        del strategy.manual_thresholds[h['pdno']]
-                        strategy.save_manual_thresholds()
-                        show_status(f"🔄 전략 초기화 완료: {h['prdt_name']}")
-                        add_trading_log(f"전략초기화: {h['prdt_name']}")
-                        # update_all_data 제거: 로컬 설정 변경이므로 즉시 반영됨
-                    else:
-                        show_status("⚠️ 수동 설정된 전략이 없습니다.")
-                elif len(inp) >= 3:
-                    try:
-                        tp, sl = float(inp[1]), float(inp[2])
-                        strategy.manual_thresholds[h['pdno']] = [tp, sl]; strategy.save_manual_thresholds()
-                        show_status(f"✅ 설정 완료: {h['prdt_name']}")
-                        add_trading_log(f"전략수정: {h['prdt_name']} (TP {tp:+.1f}% / SL {sl:+.1f}%)")
-                        # update_all_data 제거
-                    except: show_status("❌ 수치 입력 오류", True)
-
-        elif mode == '4': # AI전략
-            # 기능 구현 전 (비워둠)
-            pass
-
-        elif mode == '5': # 물타기 설정
+            if res:
+                inp = res.strip().split()
+                if len(inp) >= 2 and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
+                    h = f_h[int(inp[0])-1]
+                    if inp[1].lower() == 'r':
+                        if h['pdno'] in strategy.manual_thresholds:
+                            del strategy.manual_thresholds[h['pdno']]; strategy.save_manual_thresholds()
+                            show_status(f"🔄 전략 초기화 완료: {h['prdt_name']}")
+                        else: show_status("⚠️ 수동 설정된 전략이 없습니다.")
+                    elif len(inp) >= 3:
+                        try:
+                            tp, sl = float(inp[1]), float(inp[2])
+                            strategy.manual_thresholds[h['pdno']] = [tp, sl]; strategy.save_manual_thresholds()
+                            show_status(f"✅ 설정 완료: {h['prdt_name']}")
+                        except: show_status("❌ 수치 입력 오류", True)
+        elif mode == '5':
             res = input_with_esc("> 물타기설정 [트리거% 금액 한도 자동(y/n)]: ", tw)
-            if res is None: return
-            inp = res.strip().split()
-            if len(inp) >= 4:
-                try:
-                    trig = float(inp[0])
-                    amt = int(inp[1])
-                    lim = int(inp[2])
-                    auto = inp[3].lower() == 'y'
-                    
-                    strategy.bear_config.update({
-                        "min_loss_to_buy": trig, 
-                        "average_down_amount": amt, 
-                        "max_investment_per_stock": lim, 
-                        "auto_mode": auto
-                    })
-                    strategy._save_all_states()
-                    show_status(f"✅ 물타기 설정 저장 완료 (자동:{'ON' if auto else 'OFF'})")
-                    add_trading_log(f"물타기전략수정: 트리거 {trig}% / 금액 {amt:,} / 한도 {lim:,} / 자동 {'ON' if auto else 'OFF'}")
-                except: show_status("❌ 입력 형식 오류 (예: -3.0 500000 3000000 n)", True)
-
-        elif mode == '6': # 물타기 실행
-            if not _cached_recommendations:
-                show_status("⚠️ 현재 추천된 물타기 종목이 없습니다.")
-            else:
+            if res:
+                inp = res.strip().split()
+                if len(inp) >= 4:
+                    try:
+                        trig, amt, lim = float(inp[0]), int(inp[1]), int(inp[2])
+                        auto = inp[3].lower() == 'y'
+                        strategy.bear_config.update({"min_loss_to_buy": trig, "average_down_amount": amt, "max_investment_per_stock": lim, "auto_mode": auto})
+                        strategy._save_all_states(); show_status(f"✅ 물타기 설정 저장 완료 (자동:{'ON' if auto else 'OFF'})")
+                    except: show_status("❌ 입력 형식 오류", True)
+        elif mode == '6':
+            if _cached_recommendations:
                 r = _cached_recommendations[0]
                 res_c = input_with_esc(f"> {r['name']} {r['suggested_amt']:,}원 물타기할까요? (y/n): ", tw)
                 if res_c and res_c.strip().lower() == 'y':
@@ -714,41 +652,29 @@ def perform_interaction(key, api, strategy, cycle):
                         if qty > 0:
                             success, msg = api.order_market(r['code'], qty, True)
                             if success:
-                                msg_txt = f"수동물타기: {r['name']} {qty}주"
-                                strategy.last_avg_down_msg = f"[{datetime.now().strftime('%H:%M')}] {msg_txt}"
-                                strategy._save_state(r['code'])
-                                show_status(f"✅ {r['name']} 매수 완료")
-                                add_trading_log(msg_txt)
+                                strategy.last_avg_down_msg = f"[{datetime.now().strftime('%H:%M')}] 수동물타기: {r['name']} {qty}주"
+                                strategy._save_state(r['code']); show_status(f"✅ {r['name']} 매수 완료")
                                 update_all_data(api, strategy, True, force=True)
                             else: show_status(f"❌ {msg}", True)
-
-        elif mode == '9': # 필터
+        elif mode == '9':
             res = input_with_esc("> 필터 [1:ALL, 2:KSP, 3:KDQ]: ", tw)
-            if res is None: return # ESC 취소
-            sel = res.strip()
-            if sel == '1': _ranking_filter = "ALL"
-            elif sel == '2': _ranking_filter = "KSP"
-            elif sel == '3': _ranking_filter = "KDQ"
-
-    except Exception as e: 
-        from src.logger import log_error
-        log_error(f"Interaction Error: {e}")
-        show_status(f"오류: {e}", True)
-    finally: 
+            if res:
+                sel = res.strip()
+                if sel == '1': _ranking_filter = "ALL"
+                elif sel == '2': _ranking_filter = "KSP"
+                elif sel == '3': _ranking_filter = "KDQ"
+    except Exception as e:
+        log_error(f"Interaction Error: {e}"); show_status(f"오류: {e}", True)
+    finally:
         sys.stdout.write("\033[2J"); sys.stdout.flush()
-        set_terminal_raw()
-        flush_input()
+        set_terminal_raw(); flush_input()
 
 def main():
     ensure_env(); load_dotenv(); config = load_config(); init_terminal()
     auth = KISAuth(); api = KISAPI(auth); strategy = VibeStrategy(api, config)
     enter_alt_screen()
-    
-    # 1. 지수 전담 스레드 (Naver/Yahoo)
     threading.Thread(target=index_update_worker, args=(strategy,), daemon=True).start()
-    # 2. KIS 데이터 스레드 (잔고/랭킹/주문)
     threading.Thread(target=data_update_worker, args=(api, strategy, auth.is_virtual), daemon=True).start()
-    
     set_terminal_raw()
     try:
         cycle = 0

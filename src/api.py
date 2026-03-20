@@ -1,6 +1,8 @@
 import requests
 import time
 import threading
+import re
+from bs4 import BeautifulSoup
 from src.logger import logger
 
 class KISAPI:
@@ -9,11 +11,11 @@ class KISAPI:
         self.domain = auth.domain
         self._balance_cache = None
         self._last_balance_time = 0
-        self._gainers_cache = []
-        self._last_gainers_time = 0
-        self._losers_cache = []
-        self._last_losers_time = 0
-        self._cache_duration = 5.0 
+        self._hot_cache = []
+        self._last_hot_time = 0
+        self._vol_cache = []
+        self._last_vol_time = 0
+        self._cache_duration = 120.0 
         
         # KIS API 호출 제한 관리 (초당 1~2건)
         self._last_request_time = 0
@@ -228,87 +230,102 @@ class KISAPI:
             pass
         return None
 
-    def get_top_gainers(self): return self._get_ranking(True)
-    def get_top_losers(self): return self._get_ranking(False)
+    def _filter_risky_stocks(self, name):
+        """관리종목, 정지, 환기, 정리매매, 단기과열 및 우선주 필터링"""
+        risky_keywords = ["관리", "정지", "환기", "정리매매", "단기과열", "투자위험", "투자경고"]
+        if any(kw in name for kw in risky_keywords): return True
+        if name.endswith(('우', '우A', '우B')) or name.find(' (우)') != -1: return True
+        return False
 
-    def _get_ranking(self, is_gainer=True):
-        """코스피(0001)와 코스닥(1001) 데이터를 각각 조회하여 통합 반환"""
+    def get_naver_hot_stocks(self):
+        """네이버 인기검색종목 수집 (모바일 JSON API 활용)"""
         curr_t = time.time()
-        cache = self._gainers_cache if is_gainer else self._losers_cache
-        last_t = self._last_gainers_time if is_gainer else self._last_losers_time
-        # 캐시 유효 시간을 120초(2분)로 연장
-        if cache and (curr_t - last_t < 120): return cache
+        if self._hot_cache and (curr_t - self._last_hot_time < self._cache_duration):
+            return self._hot_cache
         
-        all_results = []
-        # 코스피(0001), 코스닥(1001) 순차 조회
-        for mkt_code in ["0001", "1001"]:
-            # 호출 제한 방지를 위해 충분한 대기 시간 (1.5초)
-            time.sleep(1.5)
-            url = f"{self.domain}/uapi/domestic-stock/v1/ranking/fluctuation"
-            headers = self.auth.get_auth_headers()
-            headers["tr_id"] = "FHPST01700000"
-            sort_code = "0" if is_gainer else "1"
-            exls_code = "0000000000"
+        results = []
+        try:
+            # 모바일 웹 API (인기 검색어)
+            url = "https://m.stock.naver.com/api/stock/ranking/popularSearch"
+            res = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"}, timeout=5)
+            data = res.json()
             
-            params = {
-                "FID_COND_MRKT_DIV_CODE": "J", 
-                "FID_COND_SCR_DIV_CODE": "20170", 
-                "FID_INPUT_ISCD": mkt_code, 
-                "FID_RANK_SORT_CLS_CODE": sort_code, 
-                "FID_INPUT_CNT_1": "0", "FID_PRC_CLS_CODE": "0", 
-                "FID_INQR_RANGE_1": "0", "FID_INQR_RANGE_2": "0", 
-                "FID_VOL_CNT": "0", "FID_TRGT_CLS_CODE": "0", 
-                "FID_TRGT_EXLS_CLS_CODE": exls_code, 
-                "FID_PRC_RANGE_CLS_CODE": "0", "FID_RSFL_RATE1": "0", 
-                "FID_RSFL_RATE2": "0", "FID_DIV_CLS_CODE": "0", 
-                "FID_ETC_CLS_CODE": "0", "FID_INPUT_PRICE_1": "0", 
-                "FID_INPUT_PRICE_2": "0"
-            }
-            
-            try:
-                # logger.debug(f"Ranking Request: {mkt_code}")
-                res = self._request("GET", url, headers=headers, params=params, timeout=5)
-                data = res.json()
-                rt_cd = data.get("rt_cd")
-                msg1 = data.get("msg1", "")
-                
-                if rt_cd == "0":
-                    out = data.get("output", [])
-                    if not out: out = data.get("output1", [])
+            if data and isinstance(data, list):
+                for item in data:
+                    name = item.get('stockName')
+                    if self._filter_risky_stocks(name): continue
                     
-                    for item in out:
-                        code = item.get("stck_shrn_iscd")
-                        name = item.get("hts_kor_isnm", "Unknown")
-                        if not code or len(code) != 6: continue
-                        if name.endswith(('우', '우A', '우B')) or name.find(' (우)') != -1: continue
-                        
-                        try:
-                            rate = float(item.get("prdy_ctrt", 0))
+                    code = item.get('itemCode')
+                    price = self._safe_int(item.get('closePrice'))
+                    rate = float(item.get('fluctuationRate', 0))
+                    
+                    results.append({
+                        "mkt": "HOT", "name": name, "code": code,
+                        "price": price, "rate": rate
+                    })
+        except Exception as e:
+            # 모바일 API 실패 시 메인 페이지 파싱 시도 (백업)
+            logger.error(f"Naver Hot Stocks API Error: {e}")
+            
+        if results:
+            self._hot_cache = results[:100]
+            self._last_hot_time = curr_t
+        return self._hot_cache
+
+    def get_naver_volume_stocks(self):
+        """네이버 거래량 상위 종목 수집 (KOSPI & KOSDAQ 통합 Top 100)"""
+        curr_t = time.time()
+        if self._vol_cache and (curr_t - self._last_vol_time < self._cache_duration):
+            return self._vol_cache
+            
+        all_results = []
+        # 코스피(sosok=0), 코스닥(sosok=1) 각각 조회
+        for sosok in ["0", "1"]:
+            try:
+                url = f"https://finance.naver.com/sise/sise_quant.naver?sosok={sosok}"
+                res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+                res.encoding = 'euc-kr'
+                soup = BeautifulSoup(res.text, 'html.parser')
+                
+                table = soup.find('table', {'class': 'type_2'})
+                if table:
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cols = row.find_all('td')
+                        if len(cols) >= 6:
+                            a_tag = cols[1].find('a')
+                            if not a_tag: continue
+                            
+                            name = a_tag.text.strip()
+                            if self._filter_risky_stocks(name): continue
+                            
+                            code = a_tag['href'].split('=')[-1]
+                            price = self._safe_int(cols[2].text)
+                            vol = self._safe_int(cols[5].text)
+                            
+                            # 등락률 파싱 (cols[4])
+                            rate_td = cols[4].find('span')
+                            rate_text = rate_td.text.strip().replace('%', '') if rate_td else "0"
+                            rate = float(rate_text)
+                            if rate_td and 'tah' in rate_td.get('class', []) and 'nv01' in rate_td.get('class', []):
+                                rate = -abs(rate)
+                                
                             all_results.append({
-                                "mkt": "KSP" if mkt_code == "0001" else "KDQ", 
-                                "name": name, "code": code, 
-                                "price": item.get("stck_prpr", "0"), "rate": rate
+                                "mkt": "KSP" if sosok == "0" else "KDQ",
+                                "name": name, "code": code,
+                                "price": price, "rate": rate, "vol": vol
                             })
-                        except: continue
-                else:
-                    from src.logger import log_error
-                    log_error(f"Ranking API Failed ({mkt_code}): {rt_cd} - {msg1}")
             except Exception as e:
-                from src.logger import log_error
-                log_error(f"Ranking API Error ({mkt_code}): {e}")
-
-        # 전체 결과 재정렬
-        if is_gainer:
-            all_results.sort(key=lambda x: x['rate'], reverse=True)
-            all_results = [r for r in all_results if r['rate'] > 0]
-        else:
-            all_results.sort(key=lambda x: x['rate'])
-            all_results = [r for r in all_results if r['rate'] < 0]
-
-        final_res = all_results[:50]
-        if is_gainer: self._gainers_cache, self._last_gainers_time = final_res, curr_t
-        else: self._losers_cache, self._last_losers_time = final_res, curr_t
-        return final_res
+                logger.error(f"Naver Volume Stocks Error ({sosok}): {e}")
+        
+        # 거래량 순으로 재정렬 및 상위 100개 추출
+        all_results.sort(key=lambda x: x.get('vol', 0), reverse=True)
+        final_res = all_results[:100]
+        
+        if final_res:
+            self._vol_cache = final_res
+            self._last_vol_time = curr_t
+        return self._vol_cache
 
     def get_inquire_price(self, code):
         url = f"{self.domain}/uapi/domestic-stock/v1/quotations/inquire-price"
