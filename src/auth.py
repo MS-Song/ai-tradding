@@ -9,6 +9,7 @@ class KISAuth:
         self.appkey = os.getenv("KIS_APPKEY")
         self.secret = os.getenv("KIS_SECRET")
         self.cano = os.getenv("KIS_CANO")
+        self.acnt_prdt_cd = os.getenv("KIS_ACNT_PRDT_CD", "01") # 기본값 01
         
         # 인자로 명시적 지정이 없으면 환경변수 사용, 환경변수도 없으면 True(모의)
         if is_virtual is None:

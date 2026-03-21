@@ -115,6 +115,43 @@ def get_market_name(stock_code):
         return "USA"
     return "STK"
 
+_cached_themes = []
+
+# --- 테마 분석 엔진 ---
+THEME_KEYWORDS = {
+    "반도체": ["반도체", "HBM", "DDR5", "하이닉스", "삼성전자", "한미반도체", "리노공업", "가온칩스", "CXL", "온디바이스"],
+    "AI/로봇": ["AI", "인공지능", "로봇", "챗봇", "LLM", "엔비디아", "마음AI", "코난테크", "솔트룩스", "레인보우"],
+    "이차전지": ["이차전지", "2차전지", "에코프로", "포스코", "리튬", "배터리", "전고체", "양극재", "음극재", "금양"],
+    "바이오": ["바이오", "제약", "셀트리온", "HLB", "헬스케어", "알테오젠", "임상", "유한양행", "한미약품"],
+    "엔터/게임": ["엔터", "엔터테인먼트", "하이브", "JYP", "게임", "크래프톤", "넷마블", "네오위즈", "SM"],
+    "금융/PBR": ["은행", "금융", "지주", "보험", "증권", "PBR", "밸류업", "KB금융", "하나금융"],
+    "에너지/방산": ["에너지", "태양광", "풍력", "수소", "원자력", "원전", "방산", "한화에어로", "현대로템", "넥스원"],
+    "가상화폐": ["비트코인", "가상화폐", "우리기술투자", "한화투자증권", "위메이드", "블록체인"],
+    "초전도체": ["초전도체", "신성델타테크", "서남", "모비스", "덕성"]
+}
+
+def analyze_popular_themes(hot_list, vol_list):
+    global _cached_themes
+    counts = {k: 0 for k in THEME_KEYWORDS.keys()}
+    seen_codes = set()
+    
+    # 인기/거래량 통합 리스트 조사
+    for item in hot_list + vol_list:
+        code = item.get('code')
+        if code in seen_codes: continue
+        seen_codes.add(code)
+        
+        name = item.get('name', '')
+        for theme, keywords in THEME_KEYWORDS.items():
+            if any(kw.lower() in name.lower() for kw in keywords):
+                counts[theme] += 1
+                break # 한 종목당 하나의 테마만 매핑 (우선순위)
+                
+    # 카운트가 있는 테마만 내림차순 정렬
+    sorted_themes = sorted([{"name": k, "count": v} for k, v in counts.items() if v > 0], 
+                           key=lambda x: x['count'], reverse=True)
+    _cached_themes = sorted_themes
+
 # --- 전역 상태 및 데이터 캐시 ---
 _status_msg = ""
 _status_time = 0
@@ -159,111 +196,104 @@ def add_trading_log(msg):
     from src.logger import log_trade
     log_trade(msg)
 
+import concurrent.futures
+
 # --- 데이터 업데이트 함수 (강제 갱신용) ---
 def update_all_data(api, strategy, is_virtual, force=False):
     global _cached_holdings, _cached_asset, _cached_hot_raw, _cached_vol_raw, _cached_recommendations
-    global _cached_market_data, _cached_vibe, _cached_panic, _last_update_time, _is_kr_market_active, _last_times, _cached_stock_info
+    global _cached_market_data, _cached_vibe, _cached_panic, _last_update_time, _is_kr_market_active, _last_times, _cached_stock_info, _cached_themes
     
     try:
         curr_t = time.time()
-        # 1. 지수
-        strategy.determine_market_trend()
-        _cached_market_data = strategy.current_market_data
-        _cached_vibe = strategy.current_market_vibe
-        _cached_panic = strategy.global_panic
-        _last_times["index"] = curr_t
-        
-        # 2. 잔고 및 총자산
-        h, a = api.get_full_balance(force=True)
-        _cached_holdings = h; _cached_asset = a
-        _last_times["asset"] = curr_t
-        
-        # 3. 종목별 상세 정보 캐싱 (볼륨 스파이크 체크 포함)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_trend = executor.submit(strategy.determine_market_trend)
+            future_hot = executor.submit(api.get_naver_hot_stocks)
+            future_vol = executor.submit(api.get_naver_volume_stocks)
+            future_balance = executor.submit(api.get_full_balance, force=True)
+            
+            future_trend.result()
+            _cached_market_data = strategy.current_market_data
+            _cached_vibe = strategy.current_market_vibe
+            _cached_panic = strategy.global_panic
+            _last_times["index"] = curr_t
+            
+            h_raw = future_hot.result(); v_raw = future_vol.result()
+            _cached_hot_raw = h_raw; _cached_vol_raw = v_raw
+            analyze_popular_themes(h_raw, v_raw)
+            _last_times["ranking"] = curr_t
+            
+            h, a = future_balance.result()
+            _cached_holdings = h; _cached_asset = a
+            _last_times["asset"] = curr_t
+
         for stock in h:
             code = stock.get('pdno')
             price_data = api.get_inquire_price(code)
             tp, sl, spike = strategy.get_dynamic_thresholds(code, _cached_vibe.lower(), price_data)
             _cached_stock_info[code] = {"tp": tp, "sl": sl, "spike": spike}
         
-        # 4. 랭킹 (네이버 기반)
-        _cached_hot_raw = api.get_naver_hot_stocks()
-        _cached_vol_raw = api.get_naver_volume_stocks()
-        _last_times["ranking"] = curr_t
-        
-        add_log("데이터 전체 업데이트 완료")
+        _last_update_time = datetime.now().strftime('%H:%M:%S')
+        add_log("데이터 동기화 완료")
         return True
     except Exception as e:
         from src.logger import log_error
         log_error(f"Update Error: {e}")
         return False
 
-# --- 데이터 업데이트 스레드 (지수 전담: Naver/Yahoo) ---
-def index_update_worker(strategy):
+# --- 데이터 업데이트 스레드 (지수 및 네이버 랭킹 전담: Naver/Yahoo) ---
+def index_update_worker(api, strategy):
     global _cached_market_data, _cached_vibe, _cached_panic, _last_times, _is_kr_market_active
+    global _cached_hot_raw, _cached_vol_raw, _cached_themes
     while True:
         try:
             curr_t = time.time()
-            # Naver/Yahoo API는 KIS 제한과 무관하므로 즉시/자주 호출 가능
             strategy.determine_market_trend()
+            h_raw = api.get_naver_hot_stocks(); v_raw = api.get_naver_volume_stocks()
+            analyze_popular_themes(h_raw, v_raw)
+            strategy.update_ai_recommendations(_cached_themes, h_raw, v_raw)
             with _data_lock:
                 _cached_market_data = strategy.current_market_data
                 _cached_vibe = strategy.current_market_vibe
                 _cached_panic = strategy.global_panic
-            _last_times["index"] = curr_t
-            
-            # 장 상태 업데이트 (KOSPI 데이터 기준)
+                _cached_hot_raw = h_raw; _cached_vol_raw = v_raw
+            _last_times["index"] = curr_t; _last_times["ranking"] = curr_t
             kospi_info = _cached_market_data.get("KOSPI")
             _is_kr_market_active = kospi_info.get("status") == "02" if (kospi_info and "status" in kospi_info) else is_market_open()
-            
         except Exception as e:
             from src.logger import log_error
-            log_error(f"Index Update Error: {e}")
+            log_error(f"Index/Ranking Update Error: {e}")
         time.sleep(5)
 
-# --- 데이터 업데이트 스레드 (KIS API: 잔고/랭킹/주문) ---
+# --- 데이터 업데이트 스레드 (KIS API: 잔고/주문) ---
 def data_update_worker(api, strategy, is_virtual):
-    global _cached_holdings, _cached_asset, _cached_hot_raw, _cached_vol_raw, _cached_recommendations, _cached_stock_info
+    global _cached_holdings, _cached_asset, _cached_recommendations, _cached_stock_info
     global _last_update_time, _last_times
     
     update_all_data(api, strategy, is_virtual, force=True)
     
-    step = 1 # 1:잔고/총자산(현금포함), 2:랭킹 정보
     while True:
         try:
             curr_t = time.time()
-            if step == 1: # 1단계: 주식 잔고 및 총자산 조회 (현금 포함)
-                h, a = api.get_full_balance(force=True)
-                if h or a.get('total_asset', 0) > 0:
-                    with _data_lock:
-                        _cached_holdings = h; _cached_asset = a
-                        # 종목 상세 정보 순차 캐싱
-                        for stock in h:
-                            code = stock.get('pdno')
-                            p_data = api.get_inquire_price(code)
-                            tp, sl, spike = strategy.get_dynamic_thresholds(code, _cached_vibe.lower(), p_data)
-                            _cached_stock_info[code] = {"tp": tp, "sl": sl, "spike": spike}
-                            
-                    _last_times["asset"] = curr_t
-                    add_log(f"잔고 및 상세정보 업데이트 성공 (Cash: {a['cash']:,}원)")
-                
-            elif step == 2: # 2단계: 랭킹 정보 (네이버 기반)
-                h_raw = api.get_naver_hot_stocks(); v_raw = api.get_naver_volume_stocks()
+            h, a = api.get_full_balance(force=True)
+            if h or a.get('total_asset', 0) > 0:
                 with _data_lock:
-                    _cached_hot_raw = h_raw; _cached_vol_raw = v_raw
-                _last_times["ranking"] = curr_t
-                add_log(f"네이버 랭킹 업데이트 완료")
+                    _cached_holdings = h; _cached_asset = a
+                    for stock in h:
+                        code = stock.get('pdno')
+                        p_data = api.get_inquire_price(code)
+                        tp, sl, spike = strategy.get_dynamic_thresholds(code, _cached_vibe.lower(), p_data)
+                        _cached_stock_info[code] = {"tp": tp, "sl": sl, "spike": spike}
+                _last_times["asset"] = curr_t
+                add_log(f"잔고 업데이트 완료 (Cash: {a['cash']:,}원)")
 
             vibe = _cached_vibe
             _cached_recommendations = strategy.get_buy_recommendations(market_trend=vibe.lower())
             
-            # [자동화 로직] 장중 자동 매매 실행
-            if _is_kr_market_active:
-                # 1. TP/SL 자동 매매
+            if _is_kr_market_active and not _cached_panic:
                 auto_res = strategy.run_cycle(market_trend=vibe.lower(), skip_trade=False)
                 if auto_res:
                     for r in auto_res: add_trading_log(f"🤖 자동: {r}")
                 
-                # 2. 물타기 자동 실행
                 if strategy.bear_config.get("auto_mode", False) and _cached_recommendations:
                     r = _cached_recommendations[0]
                     p = api.get_inquire_price(r['code'])
@@ -272,24 +302,34 @@ def data_update_worker(api, strategy, is_virtual):
                         if qty > 0:
                             success, msg = api.order_market(r['code'], qty, True)
                             if success:
-                                msg_txt = f"자동물타기: {r['name']} {qty}주"
+                                msg_txt = f"자동{r['type']}: {r['name']} {qty}주"
                                 strategy.last_avg_down_msg = f"[{datetime.now().strftime('%H:%M')}] {msg_txt}"
-                                strategy.record_buy(r['code'], p['price']) # 가격 기록 추가
+                                strategy.record_buy(r['code'], p['price'])
                                 add_trading_log(f"🤖 {msg_txt}")
                                 update_all_data(api, strategy, is_virtual, force=True)
 
+                if strategy.auto_ai_trade and strategy.ai_recommendations:
+                    top_ai = strategy.ai_recommendations[0]
+                    is_held = any(h['pdno'] == top_ai['code'] for h in _cached_holdings)
+                    if not is_held:
+                        p = api.get_inquire_price(top_ai['code'])
+                        if p:
+                            a_cfg = strategy.ai_config
+                            amt = a_cfg.get("amount_per_trade", 500000)
+                            qty = math.floor(amt / p['price'])
+                            if qty > 0:
+                                success, msg = api.order_market(top_ai['code'], qty, True)
+                                if success:
+                                    add_trading_log(f"✨ AI자율매수: {top_ai['name']} {qty}주 선점")
+                                    update_all_data(api, strategy, is_virtual, force=True)
+                                else:
+                                    if "잔고가 부족" in msg: strategy.auto_ai_trade = False
+                                    add_log(f"AI매수 실패: {msg}")
+
             _last_update_time = datetime.now().strftime('%H:%M:%S')
-            
-            # 다음 단계 (1, 2 로테이션)
-            step = 1 if step == 2 else step + 1
-            
         except Exception as e:
-            err_msg = str(e)
-            if "초당 거래건수를 초과" in err_msg:
-                show_status("⚠️ API 부하 조절 중...", True); time.sleep(10)
-            else:
-                from src.logger import log_error
-                log_error(f"Data Update Error: {err_msg}"); show_status("⚠️ 데이터 동기화 일시 오류", True)
+            from src.logger import log_error
+            log_error(f"Data Update Error: {e}")
         time.sleep(5)
 
 # --- TUI 렌더러 ---
@@ -357,18 +397,20 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
             
         buf.write(align_kr(f" VIBE: {v_c}{_cached_vibe.upper()}\033[0m {panic_txt} {vibe_desc}", tw) + "\n")
         
-        buf.write("\033[93m" + align_kr(" [COMMANDS] 1:매도 | 2:매수 | 3:매입/수 전략수정 | 4:AI전략 | 5:물타기설정 | 6:물타기실행 | 9:필터 | S:셋업 | Q:종료", tw) + "\033[0m\n")
-        if _cached_recommendations:
-            r = _cached_recommendations[0]
-            avg_chg = r.get('expected_avg_change', '계산불가')
-            buf.write("\033[1;30;43m" + align_kr(f" 🔔 [추천] {r['name']} ({r['rt']:.2f}%) -> {r['suggested_amt']:,}원 추가매수 (평단 {avg_chg}) (6번 실행)", tw) + "\033[0m\n")
-        elif prompt_mode: buf.write("\033[1;33m" + align_kr(f" >>> [{prompt_mode} MODE] 입력 대기 중... (ESC 취소)", tw) + "\033[0m\n")
-        else:
-            trig = b_cfg.get("min_loss_to_buy"); lim = b_cfg.get("max_investment_per_stock")/10000
-            buf.write("\033[90m" + align_kr(f" 🔔 [물타기] 추천 없음 (조건: {trig}% 이하, 한도 {lim:,.0f}만, 자동:{auto_st} 탐색 중...)", tw) + "\033[0m\n")
+        buf.write("\033[93m" + align_kr(" [COMMANDS] 1:매도 | 2:매수 | 3:자동매매 | 4:추천매매 | 물타기(5:설정 6:실행) | 9:필터 | A:AI도움 | D:리포트 | S:셋업 | Q:종료", tw) + "\033[0m\n")
         
-        # 최근 물타기 내역 추가
-        buf.write("\033[90m" + align_kr(f" └─ 최근 물타기: {strategy.last_avg_down_msg}", tw) + "\033[0m\n")
+        # 커맨드 하단 브리핑/가이드 영역 (2~3줄)
+        if prompt_mode: 
+            buf.write("\033[1;33m" + align_kr(f" >>> [{prompt_mode} MODE] 입력 대기 중... (ESC 취소)", tw) + "\033[0m\n")
+        elif strategy.ai_briefing:
+            # AI 브리핑 출력 (AI가 생성한 AI[시장]: 형식을 그대로 활용)
+            brief_lines = [line.strip() for line in strategy.ai_briefing.split('\n') if line.strip()][:3]
+            for line in brief_lines:
+                buf.write("\033[1;95m" + align_kr(f" {line}", tw) + "\033[0m\n")
+            for _ in range(3 - len(brief_lines)): buf.write("\n")
+        else:
+            buf.write("\n" * 2) 
+        
         buf.write("=" * tw + "\n")
 
         asset = _cached_asset; p_c = "\033[91m" if asset['pnl'] >= 0 else "\033[94m"
@@ -383,6 +425,12 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         
         bear_line = f" BEAR   | 물타기: 트리거 {b_cfg.get('min_loss_to_buy'):+.1f}% | 회당 {b_cfg.get('average_down_amount'):,}원 | 종목한도 {b_cfg.get('max_investment_per_stock'):,}원 | 자동: {auto_st} | 로직: PnL기준 & 현재가<평단"
         buf.write(align_kr(bear_line, tw) + "\n")
+        
+        a_cfg = strategy.ai_config
+        ai_st = "ON" if a_cfg.get("auto_mode") else "OFF"
+        algo_line = f" ALGO   | 추천매매: 회당 {a_cfg.get('amount_per_trade'):,}원 | 종목한도 {a_cfg.get('max_investment_per_stock'):,}원 | 자동: {ai_st} | 로직: 테마뉴스모멘텀 & 보합선취매"
+        buf.write(align_kr(algo_line, tw) + "\n")
+        
         buf.write("-" * tw + "\n")
 
         # 컬럼 정의 (터미널 너비 tw에 맞춰 유연하게 배분)
@@ -402,11 +450,30 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         header = align_kr("NO",w[0])+align_kr("MKT",w[1])+align_kr("SYMBOL",w[2])+align_kr("CURR",w[3],'right')+align_kr("DAY",w[4],'right')+align_kr("AVG",w[5],'right')+align_kr("QTY",w[6],'right')+align_kr("EVAL",w[7],'right')+align_kr("PnL",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')
         buf.write("\033[1m" + align_kr(header, tw) + "\033[0m\n")
         f_h = _cached_holdings if _ranking_filter == "ALL" else [h for h in _cached_holdings if get_market_name(h.get('pdno','')) == _ranking_filter]
-        if not f_h: buf.write(align_kr(f"No active {_ranking_filter} holdings.", tw, 'center') + "\n")
+        
+        # --- 레이아웃 동적 계산 (자산 리스트 우선) ---
+        # 상단(10)+브리핑(3)+자산/전략(5)+테마/추천(8)+하단(5) = 약 31줄
+        fixed_h = 31
+        available_h = max(5, th - fixed_h)
+        
+        asset_count = len(f_h)
+        if asset_count == 0:
+            max_h_display = 1
+            ranking_items_count = min(10, available_h)
         else:
-            # 하단 로그 공간 확보를 위해 리스트 제한
-            max_h_display = th - 30 # 네이버 랭킹 10줄 추가로 인해 더 많은 공간 필요
-            display_h = f_h[:max_h_display] if len(f_h) > max_h_display else f_h
+            # 1. 자산 리스트에 우선 배분 (최소 5줄 확보 시도)
+            max_h_display = min(asset_count, available_h)
+            if max_h_display < 5 and asset_count > 0:
+                max_h_display = min(asset_count, 5)
+            
+            # 2. 남은 공간을 랭킹에 배분
+            ranking_items_count = max(0, th - (fixed_h + max_h_display))
+            ranking_items_count = min(10, ranking_items_count)
+
+        if not f_h: 
+            buf.write(align_kr(f"No active {_ranking_filter} holdings found.", tw, 'center') + "\n")
+        else:
+            display_h = f_h[:max_h_display]
             
             for idx, h in enumerate(display_h, 1):
                 code, name = h.get("pdno", ""), h.get("prdt_name", "Unknown")
@@ -438,22 +505,66 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
             
             if len(f_h) > max_h_display:
                 buf.write(align_kr(f"... 외 {len(f_h) - max_h_display}종목 생략됨", tw, 'center') + "\n")
-        buf.write("=" * tw + "\n")
+        
+        # --- 인기 테마 섹션 (자산 아래, HOT SEARCH 위) ---
+        buf.write("-" * tw + "\n")
+        if _cached_themes:
+            theme_str = " 🔥 인기테마: "
+            for theme in _cached_themes[:8]: # 상위 8개만 표시
+                theme_str += f"{theme['name']}({theme['count']}) | "
+            buf.write("\033[93m" + align_kr(theme_str.rstrip(" | "), tw) + "\033[0m\n")
+        else:
+            buf.write("\n")
+        buf.write("-" * tw + "\n")
+        
+        # --- AI 추천 종목 섹션 (3줄 확장, 총 9개) ---
+        ai_mode = "[\033[91mAUTO\033[0m]" if strategy.auto_ai_trade else "[\033[93mMANUAL\033[0m]"
+        buf.write("\033[1;92m" + align_kr(f" ✨ AI 추천 {ai_mode} (오르기 전 선취매): 현재 주도 테마 내 보합/저평가 종목 발굴", tw) + "\033[0m\n")
+        
+        recs = strategy.ai_recommendations
+        if not recs:
+            buf.write(align_kr(" ... 유망 종목 분석 중 ...", tw) + "\n")
+            buf.write("\n" * 2)
+        else:
+            # 3줄 출력 (한 줄에 최대 3개)
+            col_w = (tw - 4) // 3
+            # 리스트 슬라이싱을 통해 중복 원천 차단
+            for i in range(3):
+                row_str = " "
+                for j in range(3):
+                    # 전체 리스트에서 0~8번까지 순차 접근
+                    cur_idx = i * 3 + j
+                    if cur_idx < len(recs):
+                        r = recs[cur_idx]
+                        rate = float(r['rate'])
+                        color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
+                        rate_str = f"{color}{rate:+.1f}%\033[0m"
+                        
+                        # 숨겨진 보석이면 💎 아이콘 추가
+                        gem_icon = "💎" if r.get('is_gem') else ""
+                        # 형식: (테마) [코드] 💎이름(률%)
+                        item_txt = f"({r['theme'][:3]}) [{r['code']}] {gem_icon}{r['name'][:8]} ({rate_str})"
+                        row_str += align_kr(item_txt, col_w) + " "
+                    else:
+                        row_str += " " * (col_w + 1)
+                buf.write(row_str.rstrip() + "\n")
+            
+        buf.write("-" * tw + "\n")
 
         left_w, right_w = (tw - 3) // 2, tw - 3 - (tw - 3) // 2
         
-        # 네이버 랭킹 필터링 및 슬라이싱 (10개)
+        # 네이버 랭킹 필터링 및 슬라이싱
         if _ranking_filter == "ALL":
-            hot_list = _cached_hot_raw[:10]
-            vol_list = _cached_vol_raw[:10]
+            hot_list = _cached_hot_raw[:ranking_items_count]
+            vol_list = _cached_vol_raw[:ranking_items_count]
         else:
-            hot_list = [g for g in _cached_hot_raw if str(g.get('mkt','')).strip().upper() == _ranking_filter.strip().upper() or _ranking_filter == "ALL"][:10]
-            vol_list = [l for l in _cached_vol_raw if str(l.get('mkt','')).strip().upper() == _ranking_filter.strip().upper() or _ranking_filter == "ALL"][:10]
+            hot_list = [g for g in _cached_hot_raw if str(g.get('mkt','')).strip().upper() == _ranking_filter.strip().upper() or _ranking_filter == "ALL"][:ranking_items_count]
+            vol_list = [l for l in _cached_vol_raw if str(l.get('mkt','')).strip().upper() == _ranking_filter.strip().upper() or _ranking_filter == "ALL"][:ranking_items_count]
 
         # Fallback: 인기검색어가 비어있을 경우 거래량 상위 종목 중 등락률 높은 순으로 대체
         if not hot_list and _cached_vol_raw:
             fallback_hot = sorted(_cached_vol_raw, key=lambda x: abs(x.get('rate', 0)), reverse=True)
-            hot_list = fallback_hot[:10]
+            hot_list = fallback_hot[:ranking_items_count]
 
         def format_rank(item, is_hot=True, width=left_w):
             if not item: return " " * width
@@ -467,16 +578,15 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         
         if not hot_list and not vol_list:
             buf.write(align_kr("네이버 랭킹 데이터 수집 중...", tw, 'center') + "\n")
-            buf.write("\n" * 9)
+            if ranking_items_count > 1:
+                buf.write("\n" * (ranking_items_count - 1))
         else:
-            for i in range(10): 
+            for i in range(ranking_items_count): 
                 buf.write(f"{format_rank(hot_list[i] if i < len(hot_list) else None, True, left_w)} │ {format_rank(vol_list[i] if i < len(vol_list) else None, False, right_w)}\n")
     
-    # --- 하단 로그 및 상태창 배분 ---
-    output_lines = buf.getvalue().split('\n')
-    current_count = len(output_lines)
+    # --- 하단 로그 및 상태창 배분 (로그 축약 로직 강화) ---
     sys.stdout.write(buf.getvalue())
-    remaining = th - current_count
+    remaining = th - len(buf.getvalue().split('\n')) + 1
     
     if remaining > 0:
         if _status_msg and (time.time() - _status_time < 60): sys.stdout.write(f"\033[K {_status_msg}\n")
@@ -486,16 +596,29 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         if _last_log_msg and (time.time() - _last_log_time < 60): sys.stdout.write(f"\033[K {_last_log_msg}\n")
         else: sys.stdout.write("\033[K \n")
         remaining -= 1
+
+    # 트레이딩 로그 출력 (공간 부족 시 축약)
     if remaining > 0:
-        display_logs = _trading_logs[-remaining:] if len(_trading_logs) > remaining else _trading_logs
+        if len(_trading_logs) > remaining:
+            # 공간이 부족하면 상단을 생략하고 "외 X건" 표시
+            skip_count = len(_trading_logs) - (remaining - 1)
+            sys.stdout.write(f"\033[K \033[90m... 외 {skip_count}건의 로그 생략됨\033[0m\n")
+            display_logs = _trading_logs[-(remaining - 1):]
+            remaining -= 1
+        else:
+            display_logs = _trading_logs
+            
         for i, tl in enumerate(display_logs):
+            if remaining <= 0: break
             if i == len(display_logs) - 1 and remaining == 1: sys.stdout.write(f"\033[K {tl}")
             else: sys.stdout.write(f"\033[K {tl}\n")
             remaining -= 1
+
     while remaining > 0:
         if remaining == 1: sys.stdout.write("\033[K")
         else: sys.stdout.write("\033[K\n")
         remaining -= 1
+    sys.stdout.flush(); buf.close()
     sys.stdout.flush(); buf.close()
 
 # --- 입력 처리 (생략 없이 유지) ---
@@ -538,10 +661,56 @@ def input_with_esc(prompt, tw):
             sys.stdout.flush()
         time.sleep(0.01)
 
+def draw_ai_detail(strategy, tw, th):
+    """AI 추천 종목의 상세 분석 정보를 전체 화면으로 출력"""
+    buf = io.StringIO()
+    buf.write("\033[H\033[2J") # 화면 전체 삭제
+    header = " [AI DETAILED STRATEGY REPORT] "
+    buf.write("\033[42;30m" + align_kr(header, tw, 'center') + "\033[0m\n\n")
+    
+    recs = strategy.ai_recommendations
+    if not recs:
+        buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. 'A'를 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
+    else:
+        # 표 헤더
+        h = f"{align_kr('테마', 12)} | {align_kr('코드', 8)} | {align_kr('종목명', 16)} | {align_kr('현재가', 10)} | {align_kr('등락', 8)} | {align_kr('AI점수', 8)} | 발굴 근거"
+        buf.write("\033[1m" + h + "\033[0m\n")
+        buf.write("-" * tw + "\n")
+        
+        for r in recs:
+            rate = float(r['rate'])
+            color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
+            rate_txt = f"{color}{rate:+.1f}%\033[0m"
+            gem_mark = "💎" if r.get('is_gem') else "  "
+            row = f"{align_kr(r['theme'], 10)} | {align_kr(r['code'], 8)} | {align_kr(gem_mark + r['name'], 16)} | {align_kr(f'{int(float(r.get('price',0))):,}', 10, 'right')} | {align_kr(rate_txt, 8, 'right')} | {align_kr(f'{r['score']:.1f}', 8, 'right')} | {r['reason']}"
+            buf.write(row + "\n")
+            
+    # --- AI 심층 투자 의견 (공간 최적화 출력) ---
+    buf.write("-" * tw + "\n")
+    buf.write("\033[1;92m[AI 수석 전략가 심층 투자 의견]\033[0m\n")
+    
+    if strategy.ai_detailed_opinion:
+        opinion_lines = [l.strip() for l in strategy.ai_detailed_opinion.split('\n') if l.strip()]
+        for line in opinion_lines[:8]: # 최대 8줄로 제한하여 하단 잘림 방지
+            buf.write(f" > {line}\n")
+    else:
+        buf.write(" ⚠️ 아직 생성된 심층 의견이 없습니다. 'A'를 눌러 분석을 먼저 수행하세요.\n")
+            
+    buf.write("-" * tw + "\n")
+    buf.write(align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
+    sys.stdout.write(buf.getvalue())
+    sys.stdout.flush()
+    # 키 대기
+    while not get_key_immediate(): time.sleep(0.1)
+    buf.close()
+
 def perform_interaction(key, api, strategy, cycle):
     global _ranking_filter, _status_msg, _last_log_msg, _cached_recommendations
-    mode = key[-1] if 'alt+' in key else key
-    if mode not in ['1', '2', '3', '4', '5', '6', '9', 'q', 's']: return
+    # 키 입력을 소문자로 통일하여 처리
+    mode = (key[-1] if 'alt+' in key else key).lower()
+    
+    # 유효한 키 리스트에 'a', 'd' 확실히 포함
+    if mode not in ['1', '2', '3', '4', '5', '6', '9', 'a', 'd', 'q', 's']: return
     
     if mode == 'q':
         show_status("🛑 프로그램을 종료합니다. 잠시만 기다려주세요...")
@@ -551,6 +720,13 @@ def perform_interaction(key, api, strategy, cycle):
         exit_alt_screen()
         print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다.")
         os._exit(0)
+
+    if mode == 'd':
+        restore_terminal_settings()
+        draw_ai_detail(strategy, os.get_terminal_size().columns, os.get_terminal_size().lines)
+        enter_alt_screen()
+        set_terminal_raw()
+        return
 
     if mode == 's':
         show_status("⚙️ 환경 설정 모드로 전환합니다. 잠시만 기다려주세요...")
@@ -580,10 +756,16 @@ def perform_interaction(key, api, strategy, cycle):
     except: tw = 110
 
     try:
-        m_label = '매도' if mode=='1' else '매수' if mode=='2' else '전략수정' if mode=='3' else 'AI전략' if mode=='4' else '물타기설정' if mode=='5' else '물타기실행' if mode=='6' else '필터' if mode=='9' else '셋업'
-        draw_tui(strategy, cycle, prompt_mode=m_label)
-        sys.stdout.write("\033[5;1H\033[K")
+        m_label = '매도' if mode=='1' else '매수' if mode=='2' else '자동매매' if mode=='3' else '추천매매' if mode=='4' else '물타기설정' if mode=='5' else '물타기실행' if mode=='6' else '필터' if mode=='9' else 'AI도움' if mode=='a' else '리포트' if mode=='d' else '셋업'
+        
+        # AI도움(A)이나 리포트(D)는 즉시 실행형이므로 프롬프트 모드 표시 최소화
+        if mode not in ['a', 'd']:
+            draw_tui(strategy, cycle, prompt_mode=m_label)
+        
+        # 커서 위치 제어 (COMMAND 가이드 라인 직후)
+        sys.stdout.write("\033[5;1H\033[K") 
         sys.stdout.flush()
+        
         f_h = _cached_holdings if _ranking_filter == "ALL" else [h for h in _cached_holdings if get_market_name(h.get('pdno','')) == _ranking_filter]
         
         if mode == '1':
@@ -613,6 +795,43 @@ def perform_interaction(key, api, strategy, cycle):
                         add_trading_log(f"수동매수: {code} {qty}주 @ {price if price else '시장가'}")
                         update_all_data(api, strategy, True, force=True)
                     else: show_status(f"❌ 매수 실패: {msg}", True)
+        elif mode == '4':
+            res = input_with_esc("> 추천매매설정 [금액 한도 자동(y/n)]: ", tw)
+            if res:
+                inp = res.strip().split()
+                if len(inp) >= 3:
+                    try:
+                        amt, lim = int(inp[0]), int(inp[1])
+                        auto = inp[2].lower() == 'y'
+                        strategy.ai_config.update({"amount_per_trade": amt, "max_investment_per_stock": lim, "auto_mode": auto})
+                        strategy._save_all_states(); show_status(f"✨ AI 추천매매 설정 완료 (자동:{'ON' if auto else 'OFF'})")
+                    except Exception as e: show_status(f"❌ 입력 오류: {e}", True)
+                else: show_status("⚠️ 입력값이 부족합니다. [금액 한도 y/n] 순으로 입력하세요.", True)
+        elif mode == 'a':
+            if not os.getenv("GOOGLE_API_KEY"):
+                show_status("⚠️ Gemini API Key가 없습니다. [S:셋업]에서 입력하세요.", True)
+            else:
+                show_status("🧠 Gemini AI가 시장 상황을 분석 중입니다. 잠시만 기다려주세요...")
+                draw_tui(strategy, cycle)
+                advice = strategy.get_ai_advice()
+                if advice and "⚠️" not in advice:
+                    show_status("✅ AI 분석 완료. 하단 브리핑을 확인하세요.")
+                    draw_tui(strategy, cycle) # 브리핑 출력
+                    
+                    # 수치 파싱 시도 및 반영 여부 확인
+                    if strategy.parse_and_apply_ai_strategy():
+                        # 파싱 성공 시 확인 절차 (수동 확인용 메시지)
+                        show_status("💡 AI가 새로운 전략 수치를 도출했습니다. 반영할까요?")
+                        res_a = input_with_esc("> AI 제안 수치를 시스템에 즉시 반영할까요? (y/n): ", tw)
+                        if res_a and res_a.strip().lower() == 'y':
+                            show_status("🚀 AI 전략이 시스템에 완벽히 반영되었습니다.")
+                            update_all_data(api, strategy, True, force=True)
+                        else:
+                            show_status("⚠️ AI 전략 반영이 취소되었습니다. (기존 설정 유지)")
+                    else:
+                        show_status("❌ AI 전략 파싱 실패 (수치 형식이 올바르지 않음)", True)
+                else:
+                    show_status(f"❌ AI 분석 실패: {advice if advice else '알 수 없는 오류'}", True)
         elif mode == '3':
             res = input_with_esc("> 수정 [번호 TP SL] 입력 (초기화는 '번호 r'): ", tw)
             if res:
@@ -644,7 +863,7 @@ def perform_interaction(key, api, strategy, cycle):
         elif mode == '6':
             if _cached_recommendations:
                 r = _cached_recommendations[0]
-                res_c = input_with_esc(f"> {r['name']} {r['suggested_amt']:,}원 물타기할까요? (y/n): ", tw)
+                res_c = input_with_esc(f("> {r['name']} {r['suggested_amt']:,}원 물타기할까요? (y/n): "), tw)
                 if res_c and res_c.strip().lower() == 'y':
                     p = api.get_inquire_price(r['code'])
                     if p:
@@ -653,9 +872,12 @@ def perform_interaction(key, api, strategy, cycle):
                             success, msg = api.order_market(r['code'], qty, True)
                             if success:
                                 strategy.last_avg_down_msg = f"[{datetime.now().strftime('%H:%M')}] 수동물타기: {r['name']} {qty}주"
-                                strategy._save_state(r['code']); show_status(f"✅ {r['name']} 매수 완료")
+                                strategy.record_buy(r['code'], p['price'])
+                                show_status(f"✅ {r['name']} 매수 완료")
                                 update_all_data(api, strategy, True, force=True)
                             else: show_status(f"❌ {msg}", True)
+            else:
+                show_status("⚠️ 현재 물타기 추천 종목이 없습니다.")
         elif mode == '9':
             res = input_with_esc("> 필터 [1:ALL, 2:KSP, 3:KDQ]: ", tw)
             if res:
@@ -664,16 +886,19 @@ def perform_interaction(key, api, strategy, cycle):
                 elif sel == '2': _ranking_filter = "KSP"
                 elif sel == '3': _ranking_filter = "KDQ"
     except Exception as e:
+        from src.logger import log_error
         log_error(f"Interaction Error: {e}"); show_status(f"오류: {e}", True)
     finally:
-        sys.stdout.write("\033[2J"); sys.stdout.flush()
+        # 종료/취소 시 입력하던 2줄만 정밀하게 지우기 (화면 전체 삭제 \033[2J 제거)
+        sys.stdout.write("\033[5;1H\033[K\033[6;1H\033[K")
+        sys.stdout.flush()
         set_terminal_raw(); flush_input()
 
 def main():
     ensure_env(); load_dotenv(); config = load_config(); init_terminal()
     auth = KISAuth(); api = KISAPI(auth); strategy = VibeStrategy(api, config)
     enter_alt_screen()
-    threading.Thread(target=index_update_worker, args=(strategy,), daemon=True).start()
+    threading.Thread(target=index_update_worker, args=(api, strategy), daemon=True).start()
     threading.Thread(target=data_update_worker, args=(api, strategy, auth.is_virtual), daemon=True).start()
     set_terminal_raw()
     try:
