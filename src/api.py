@@ -3,6 +3,10 @@ import json
 import time
 from typing import List, Tuple, Optional
 from src.auth import KISAuth
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
 
 class KISAPI:
     def __init__(self, auth: KISAuth):
@@ -14,8 +18,9 @@ class KISAPI:
         }
         self._hot_cache, self._last_hot_time = [], 0
         self._vol_cache, self._last_vol_time = [], 0
-        self._cache_duration = 60 
-
+        self._detail_cache = {} # {code: (timestamp, data)}
+        self._cache_duration = 60
+        self._detail_cache_duration = 3600 # 펀더멘털 데이터는 1시간 캐시
     def _safe_float(self, val):
         try:
             if val is None or str(val).strip() == "": return 0.0
@@ -109,6 +114,55 @@ class KISAPI:
         except: pass
         return None
 
+    def get_naver_stock_detail(self, code: str) -> dict:
+        """네이버 금융 상세 페이지에서 펀더멘털 지표 수집 (캐시 적용)"""
+        curr_t = time.time()
+        if code in self._detail_cache:
+            ts, data = self._detail_cache[code]
+            if curr_t - ts < self._detail_cache_duration: return data
+
+        try:
+            url = f"https://finance.naver.com/item/main.naver?code={code}"
+            res = requests.get(url, headers=self.headers, timeout=5)
+            res.encoding = 'euc-kr'
+            if not BeautifulSoup: return {}
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            detail = {"per": "N/A", "pbr": "N/A", "yield": "N/A", "sector_per": "N/A"}
+            aside = soup.find('div', {'class': 'aside_invest_info'})
+            if aside:
+                per_tag = aside.find('em', {'id': '_per'})
+                if per_tag: detail["per"] = per_tag.text.strip()
+                pbr_tag = aside.find('em', {'id': '_pbr'})
+                if pbr_tag: detail["pbr"] = pbr_tag.text.strip()
+                yield_tag = aside.find('em', {'id': '_dvr'})
+                if yield_tag: detail["yield"] = yield_tag.text.strip()
+                s_per_tag = aside.find('em', {'id': '_cper'})
+                if s_per_tag: detail["sector_per"] = s_per_tag.text.strip()
+            
+            self._detail_cache[code] = (curr_t, detail)
+            return detail
+        except: return {"per": "N/A", "pbr": "N/A", "yield": "N/A", "sector_per": "N/A"}
+
+    def get_naver_stock_news(self, code: str) -> List[str]:
+        """네이버 금융 뉴스 섹션에서 최신 헤드라인 수집"""
+        try:
+            url = f"https://finance.naver.com/item/news.naver?code={code}"
+            res = requests.get(url, headers=self.headers, timeout=5)
+            res.encoding = 'euc-kr'
+            if not BeautifulSoup: return []
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            news_list = []
+            # 뉴스 목록 테이블 (type5 클래스 사용)
+            table = soup.find('table', {'class': 'type5'})
+            if table:
+                titles = table.find_all('td', {'class': 'title'})
+                for t in titles[:3]: # 상위 3개만
+                    news_list.append(t.text.strip())
+            return news_list
+        except: return []
+
     def get_naver_hot_stocks(self) -> List[dict]:
         curr_t = time.time()
         if self._hot_cache and (curr_t - self._last_hot_time < 60): return self._hot_cache
@@ -116,7 +170,8 @@ class KISAPI:
         try:
             url = "https://finance.naver.com/sise/lastsearch2.naver"
             res = requests.get(url, headers=self.headers, timeout=5)
-            from bs4 import BeautifulSoup
+            res.encoding = 'euc-kr'
+            if not BeautifulSoup: return []
             soup = BeautifulSoup(res.text, 'html.parser')
             table = soup.find('table', {'class': 'type_5'})
             if table:
@@ -145,7 +200,8 @@ class KISAPI:
             for sosok in ["0", "1"]:
                 url = f"https://finance.naver.com/sise/sise_quant.naver?sosok={sosok}"
                 res = requests.get(url, headers=self.headers, timeout=5)
-                from bs4 import BeautifulSoup
+                res.encoding = 'euc-kr'
+                if not BeautifulSoup: return []
                 soup = BeautifulSoup(res.text, 'html.parser')
                 table = soup.find('table', {'class': 'type_2'})
                 if table:

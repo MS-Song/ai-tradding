@@ -4,7 +4,8 @@ import math
 import time
 import requests
 import re
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Callable
+from concurrent.futures import ThreadPoolExecutor
 from src.logger import logger, log_error
 
 # --- 1. MarketAnalyzer: 시장 분석 엔진 ---
@@ -68,31 +69,40 @@ class ExitManager:
         self.manual_thresholds: Dict[str, List[float]] = {}
 
     def get_vibe_modifiers(self, vibe: str) -> Tuple[float, float]:
-        """현재 Vibe에 따른 TP/SL 보정치 반환"""
-        tp_mod, sl_delta = 0.0, 0.0
-        if vibe.upper() == "DEFENSIVE":
-            tp_mod, sl_delta = -2.0, 2.0
-        elif vibe.lower() == "bull":
-            tp_mod = 3.0
-        return tp_mod, sl_delta
+        """현재 Vibe에 따른 TP/SL 보정치 반환 (Vibe에 따른 실시간 대응)"""
+        tp_mod, sl_mod = 0.0, 0.0
+        v = vibe.upper()
+        if v == "BULL":
+            tp_mod = 3.0    # 상승장: 수익 극대화 (익절가 상향)
+            sl_mod = 1.0    # 상승장: 손절선 소폭 완화
+        elif v == "BEAR":
+            tp_mod = -2.0   # 하락장: 짧은 익절 (보수적)
+            sl_mod = -2.0   # 하락장: 손절선 타이트하게 관리
+        elif v == "DEFENSIVE":
+            tp_mod, sl_mod = -3.0, -3.0 # 방어모드: 극도로 보수적
+        return tp_mod, sl_mod
 
     def get_thresholds(self, code: str, kr_vibe: str, price_data: Optional[dict] = None) -> Tuple[float, float, bool]:
+        # 1. 특정 종목 수동 설정(Manual)이 있으면 최우선 적용 (보정 없음)
         if code in self.manual_thresholds:
             vals = self.manual_thresholds[code]
             return float(vals[0]), float(vals[1]), True
             
+        # 2. 기본값(AI가 설정한 값 포함) 가져오기
         target_tp, target_sl = self.base_tp, self.base_sl
-        tp_mod, sl_mod = self.get_vibe_modifiers(kr_vibe)
         
+        # 3. 시장 분위기(Vibe)에 따른 실시간 보정 적용
+        tp_mod, sl_mod = self.get_vibe_modifiers(kr_vibe)
         target_tp += tp_mod
         target_sl += sl_mod
             
+        # 4. 개별 종목 변동성(거래량 등)에 따른 추가 보정
         is_vol_spike = False
         if price_data and price_data.get('prev_vol', 0) > 0:
             if price_data['vol'] / price_data['prev_vol'] >= 1.5:
-                target_tp += 3.0; is_vol_spike = True
+                target_tp += 2.0; is_vol_spike = True # 거래량 폭발 시 익절가 상향
                 
-        return target_tp, target_sl, is_vol_spike
+        return round(target_tp, 1), round(target_sl, 1), is_vol_spike
 
 # --- 3. TradingEngines: 물타기 & 불타기 ---
 class RecoveryEngine:
@@ -152,39 +162,107 @@ class VibeAlphaEngine:
     def __init__(self, api):
         self.api = api
 
-    def analyze(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], min_score: float = 60.0) -> List[dict]:
+    def analyze(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], min_score: float = 60.0, progress_cb: Optional[Callable] = None) -> List[dict]:
+        """주도 테마 및 랭킹 데이터를 분석하여 국내 종목과 ETF 분리 추출 (병렬 처리)"""
         from main import THEME_KEYWORDS
-        all_stocks = {s['code']: s for s in hot_raw + vol_raw}
-        hot_codes = {s['code'] for s in hot_raw[:15]}
-        standard_recs, hidden_gems = [], []
-        for theme in themes[:5]:
-            keywords = THEME_KEYWORDS.get(theme['name'], [])
-            for code, s in all_stocks.items():
-                if any(kw.lower() in s.get('name','').lower() for kw in keywords):
-                    rate = float(s.get('rate', 0))
-                    if -1.5 <= rate <= 4.0:
-                        score = self._calculate_ai_score(s, theme, False)
-                        if score >= min_score:
-                            standard_recs.append({"code": code, "name": s['name'], "theme": theme['name'], "rate": rate, "score": score, "is_gem": False, "price": s.get('price', '0'), "reason": f"{theme['name']} 주도주 매수세 유입"})
-                    elif -3.0 <= rate <= 1.5 and code not in hot_codes:
-                        score = self._calculate_ai_score(s, theme, True)
-                        if score >= 45.0:
-                            hidden_gems.append({"code": code, "name": s['name'], "theme": theme['name'], "rate": rate, "score": score, "is_gem": True, "price": s.get('price', '0'), "reason": f"💎 {theme['name']} 소외 저평가"})
-        final_recs = sorted(standard_recs, key=lambda x: x['score'], reverse=True)[:6]
-        final_recs.extend(sorted(hidden_gems, key=lambda x: x['score'], reverse=True)[:3])
-        return final_recs
+        import threading
+        combined = hot_raw + vol_raw
+        candidates = []
+        seen = set()
+
+        for item in combined:
+            code = item['code']
+            if code in seen: continue
+            seen.add(code)
+            if not (len(code) == 6 and code.isdigit()): continue
+            
+            my_theme = {"name": "기타", "count": 1}
+            for t in themes:
+                keywords = THEME_KEYWORDS.get(t['name'], [])
+                if any(kw.lower() in item.get('name','').lower() for kw in keywords):
+                    my_theme = t; break
+            
+            candidates.append((item, my_theme))
+
+        # 펀더멘털 데이터 병렬 수집 (속도 개선 핵심)
+        current = 0
+        total = len(candidates)
+        lock = threading.Lock()
+        def fetch_detail(cand):
+            nonlocal current
+            item, theme = cand
+            # get_naver_stock_detail 내부에서 캐시 처리됨
+            self.api.get_naver_stock_detail(item['code'])
+            with lock:
+                current += 1
+                if progress_cb:
+                    progress_cb(current, total)
+            return cand
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            list(executor.map(fetch_detail, candidates))
+
+        stocks, etfs = [], []
+        for item, my_theme in candidates:
+            score = self._calculate_ai_score(item, my_theme, False)
+            if score < min_score: continue
+            
+            res = {**item, "score": score, "theme": my_theme['name'], "is_gem": False, "reason": f"{my_theme['name']} 주도주 매수세 유입"}
+            is_etf = any(ex in item['name'].upper() for ex in ["KODEX", "TIGER", "KBSTAR", "ACE", "RISE", "SOL", "HANARO"])
+            if is_etf:
+                etfs.append(res)
+            else:
+                rate = float(item.get('rate', 0))
+                if rate > 10.0: continue 
+                stocks.append(res)
+
+        # 개별 종목 상위 6개, ETF 상위 3개 선정
+        final_stocks = sorted(stocks, key=lambda x: x['score'], reverse=True)[:6]
+        final_etfs = sorted(etfs, key=lambda x: x['score'], reverse=True)[:3]
+        for s in final_stocks: s['is_etf'] = False
+        for e in final_etfs: e['is_etf'] = True
+        
+        return final_stocks + final_etfs
 
     def _calculate_ai_score(self, stock: dict, theme: dict, is_gem: bool) -> float:
-        score = 50.0
+        """종목별 입체 점수 산정 (테마 + 등락률 + 펀더멘털)"""
+        score = 40.0 # 기본 베이스 점수
         rate = abs(float(stock.get('rate', 0)))
-        score += (5.0 - min(5.0, rate)) * 5
-        score += min(20, theme['count'] * 2)
-        if is_gem: score += 15.0
-        return score
+        
+        # 1. 등락률/테마 점수 (기본 모멘텀 - 30점 만점)
+        # 0%에 가까울수록 선취매 매력도 상승
+        score += (5.0 - min(5.0, rate)) * 3
+        # 테마 내 밀집도 반영
+        score += min(15, theme['count'] * 1.5)
+        
+        # 2. 펀더멘털 지표 보정 (실적 및 가치 - 30점 만점)
+        # 네이버 금융에서 지표 데이터 수집 (캐시를 활용하므로 성능 저하 최소화)
+        code = stock['code']
+        detail = self.api.get_naver_stock_detail(code)
+        
+        try:
+            # PBR 보정 (PBR 1.0 이하 선호, 20.0 이상 감점)
+            pbr_val = float(detail.get('pbr', '0').replace(',', '')) if detail.get('pbr') != 'N/A' else 1.0
+            if pbr_val <= 1.0: score += 15.0
+            elif pbr_val <= 3.0: score += 8.0
+            elif pbr_val >= 10.0: score -= 15.0 # 극심한 고평가 감점 (삼천당제약 케이스 대비)
+            
+            # PER 보정 (PER 10 이하 선호, 50 이상 감점)
+            per_val = float(detail.get('per', '0').replace(',', '')) if detail.get('per') != 'N/A' else 20.0
+            if per_val <= 10.0: score += 10.0
+            elif per_val <= 20.0: score += 5.0
+            elif per_val >= 50.0: score -= 10.0
+        except: pass
+        
+        # 3. 소외주 및 테마 집중도 보너스 (10점)
+        if is_gem: score += 10.0
+        
+        return round(score, 1)
 
 # --- 5. GeminiAdvisor: 생성형 AI 전략 보좌관 ---
 class GeminiAdvisor:
-    def __init__(self):
+    def __init__(self, api):
+        self.api = api
         self.model_id = "gemini-3.1-flash-lite-preview"
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
@@ -214,6 +292,7 @@ class GeminiAdvisor:
         AI[시장]: 요약
         AI[전략]: (위 답변 양식대로 수치만 명확히 기재)
         AI[액션]: 매수 지시 및 포트폴리오 조정
+        AI[추천]: 신규 추천 종목 및 매수가격 요약
         한국어로 대답하세요.
         """
         payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
@@ -225,18 +304,64 @@ class GeminiAdvisor:
             return f"⚠️ AI 엔진 응답 오류 ({res.status_code})"
         except: return f"⚠️ 분석 엔진 기동 실패"
 
-    def get_detailed_report_advice(self, recs: List[dict], vibe: str) -> Optional[str]:
+    def get_detailed_report_advice(self, recs: List[dict], vibe: str, progress_cb: Optional[Callable] = None) -> Optional[str]:
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key or not recs: return "분석할 종목이 없습니다."
-        recs_txt = "\n".join([f"- {r['theme']}: {r['name']}({r['code']})" for r in recs])
-        prompt = f"""수석 투자 전략가로서 평가하세요. [현재장세] {vibe} [추천] {recs_txt}. 전문가 어조로 5~8줄 한국어로 작성하세요. 물타기선이 손절선보다 높아야 함을 유의하세요."""
+        
+        # 각 종목별 입체 데이터 병렬 수집 (현재가, 펀더멘털, 뉴스)
+        import threading
+        current = 0
+        total = len(recs)
+        lock = threading.Lock()
+        def fetch_enriched_data(r):
+            nonlocal current
+            code = r['code']
+            detail = self.api.get_naver_stock_detail(code)
+            news = self.api.get_naver_stock_news(code)
+            with lock:
+                current += 1
+                if progress_cb:
+                    progress_cb(current, total)
+            return f"""
+            - {r['name']}({code}) | {r['theme']}
+              * 현재가: {int(float(r.get('price',0))):,}원 | 등락률: {r.get('rate',0):+.2f}%
+              * 지표: PER {detail.get('per')}, PBR {detail.get('pbr')}, 배당수익률 {detail.get('yield')}, 업종PER {detail.get('sector_per')}
+              * 뉴스: {', '.join(news) if news else '최근 뉴스 없음'}
+            """.strip()
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            enriched_recs = list(executor.map(fetch_enriched_data, recs))
+
+        recs_txt = "\n".join(enriched_recs)
+        
+        prompt = f"""
+        당신은 월스트리트의 수석 투자 전략가이자 퀀트 분석가입니다. 
+        제공된 실시간 데이터(현재가, 펀더멘털, 실시간 뉴스)를 기반으로 입체적인 종목 분석 리포트를 작성하세요.
+        
+        [시장 장세] {vibe}
+        [실시간 추천 종목 상세 데이터]
+        {recs_txt}
+        
+        [분석 가이드라인 및 절대 규칙]
+        1. 입체적 접근: 제공된 [지표]와 [뉴스]를 반드시 연계하여 분석하십시오.
+           - (예: PER가 업종 평균 대비 낮음(저평가) + 최근 수주 뉴스(모멘텀) 발생 등)
+        2. 가격 논리 준수: 모든 제안 가격(매수/목표/손절)은 실시간 [현재가]를 기준으로 산출하십시오.
+           - 매수 타점: 현재가 부근의 현실적인 가격.
+           - 목표가: 매수 타점 대비 +5% ~ +20% (성장 가능성 및 모멘텀 반영).
+           - 손절가: 매수 타점 대비 -3% ~ -7% (리스크 관리).
+        3. 종목별 섹션화: 각 종목별로 [투자 근거], [매매 전략(가격)], [성장 가능성 진단]을 명확히 구분하여 작성하세요.
+        4. 종합 비중 조절: 현재 장세({vibe})를 고려하여 포트폴리오 비중 조절 조언을 덧붙이세요.
+        5. 경고: 임의의 데이터를 생성하지 마십시오. 오직 제공된 [현재가], [지표], [뉴스]만 근거로 삼으십시오.
+        
+        전문가 어조로 한국어로 12~15줄 내외로 작성하세요.
+        """
         try:
             payload = {"contents": [{"parts": [{"text": prompt}]}]}
             endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
             res = requests.post(endpoint, json=payload, timeout=25)
             if res.status_code == 200: return res.json()['candidates'][0]['content']['parts'][0]['text']
         except: pass
-        return "상세 분석 의견을 가져오지 못했습니다."
+        return "종목별 입체 분석 의견을 가져오지 못했습니다."
 
 # --- VibeStrategy Facade ---
 class VibeStrategy:
@@ -248,7 +373,7 @@ class VibeStrategy:
         self.recovery_eng = RecoveryEngine(v_cfg.get("bear_market", {}))
         self.pyramid_eng = PyramidingEngine(v_cfg.get("bear_market", {}))
         self.alpha_eng = VibeAlphaEngine(api)
-        self.ai_advisor = GeminiAdvisor()
+        self.ai_advisor = GeminiAdvisor(api)
         self.state_file = "trading_state.json"
         self.last_avg_down_msg = "없음"
         self.last_sell_times: Dict[str, float] = {}
@@ -261,16 +386,31 @@ class VibeStrategy:
         if os.path.exists(self.state_file):
             try:
                 with open(self.state_file, "r") as f:
-                    d = json.load(f); self.exit_mgr.manual_thresholds = d.get("manual_thresholds", {})
+                    d = json.load(f)
+                    if "base_tp" in d: self.exit_mgr.base_tp = d["base_tp"]
+                    if "base_sl" in d: self.exit_mgr.base_sl = d["base_sl"]
+                    self.exit_mgr.manual_thresholds = d.get("manual_thresholds", {})
                     self.recovery_eng.last_avg_down_prices = d.get("last_avg_down_prices", {})
                     self.pyramid_eng.last_buy_prices = d.get("last_buy_prices", {})
-                    self.last_sell_times = d.get("last_sell_times", {}); self.last_avg_down_msg = d.get("last_avg_down_msg", "없음")
+                    self.last_sell_times = d.get("last_sell_times", {})
+                    self.last_avg_down_msg = d.get("last_avg_down_msg", "없음")
                     if "ai_config" in d: self.ai_config.update(d["ai_config"])
+                    if "bear_config" in d: self.recovery_eng.config.update(d["bear_config"])
             except: pass
 
     def _save_all_states(self):
         try:
-            data = {"manual_thresholds": self.exit_mgr.manual_thresholds, "last_avg_down_prices": self.recovery_eng.last_avg_down_prices, "last_buy_prices": self.pyramid_eng.last_buy_prices, "last_sell_times": self.last_sell_times, "last_avg_down_msg": self.last_avg_down_msg, "ai_config": self.ai_config}
+            data = {
+                "base_tp": self.exit_mgr.base_tp,
+                "base_sl": self.exit_mgr.base_sl,
+                "manual_thresholds": self.exit_mgr.manual_thresholds,
+                "last_avg_down_prices": self.recovery_eng.last_avg_down_prices,
+                "last_buy_prices": self.pyramid_eng.last_buy_prices,
+                "last_sell_times": self.last_sell_times,
+                "last_avg_down_msg": self.last_avg_down_msg,
+                "ai_config": self.ai_config,
+                "bear_config": self.recovery_eng.config
+            }
             with open(self.state_file, "w") as f: json.dump(data, f, indent=4)
         except Exception as e: log_error(f"상태 저장 실패: {e}")
 
@@ -301,17 +441,17 @@ class VibeStrategy:
         self.pyramid_eng.last_buy_prices[code] = price
         self._save_all_states()
 
-    def update_ai_recommendations(self, themes, hot_raw, vol_raw):
-        try: self.ai_recommendations = self.alpha_eng.analyze(themes, hot_raw, vol_raw, self.ai_config.get("min_score", 60.0))
+    def update_ai_recommendations(self, themes, hot_raw, vol_raw, progress_cb: Optional[Callable] = None):
+        try: self.ai_recommendations = self.alpha_eng.analyze(themes, hot_raw, vol_raw, self.ai_config.get("min_score", 60.0), progress_cb=progress_cb)
         except: pass
 
-    def get_ai_advice(self):
+    def get_ai_advice(self, progress_cb: Optional[Callable] = None):
         holdings = self.api.get_balance()
         base_sl = self.exit_mgr.base_sl
         if self.analyzer.kr_vibe.upper() == "DEFENSIVE": base_sl = -3.0
         current_cfg = {"base_tp": self.exit_mgr.base_tp, "base_sl": base_sl, "bear_trig": max(self.recovery_eng.config.get("min_loss_to_buy"), base_sl + 1.0), "ai_amt": self.ai_config["amount_per_trade"]}
         self.ai_briefing = self.ai_advisor.get_advice(self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg)
-        self.ai_detailed_opinion = self.ai_advisor.get_detailed_report_advice(self.ai_recommendations, self.analyzer.kr_vibe)
+        self.ai_detailed_opinion = self.ai_advisor.get_detailed_report_advice(self.ai_recommendations, self.analyzer.kr_vibe, progress_cb=progress_cb)
         return self.ai_briefing
 
     def parse_and_apply_ai_strategy(self) -> bool:
