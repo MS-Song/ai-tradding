@@ -9,14 +9,14 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch
 import re
 
-# 1. 한글 폰트 등록 (OS별 대응)
-# Windows: 맑은 고딕 / Linux: 나눔고딕 등 시스템 폰트 탐색
+# OS별 폰트 경로 탐색
 FONT_PATHS = [
-    "C:/Windows/Fonts/malgun.ttf", # Windows
-    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf", # Ubuntu Nanum
-    "/usr/share/fonts/nanum/NanumGothic.ttf", # CentOS Nanum
-    "/usr/share/fonts/truetype/baekmuk/dotum.ttf", # Fallback 1
+    "C:/Windows/Fonts/malgun.ttf", # Windows: 맑은 고딕
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf", # Ubuntu: 나눔고딕
+    "/usr/share/fonts/nanum/NanumGothic.ttf", # CentOS: 나눔고딕
+    "/usr/share/fonts/truetype/baekmuk/dotum.ttf", # Fallback: 백묵 돋움
 ]
+
 FONT_NAME = "KoreanFont"
 
 def register_font():
@@ -25,27 +25,32 @@ def register_font():
         if os.path.exists(path):
             try:
                 pdfmetrics.registerFont(TTFont(FONT_NAME, path))
-                print(f"Font registered: {path}")
+                print(f"[*] Font registered: {path}")
                 return True
-            except:
+            except Exception as e:
+                print(f"[!] Failed to register font {path}: {e}")
                 continue
+    
     FONT_NAME = "Helvetica"
-    print("Warning: No Korean font found. Using Helvetica.")
+    print("[!] Warning: No Korean font found. Using Helvetica.")
     return False
 
 register_font()
 
 def create_pdf_from_md(input_md, output_pdf):
     if not os.path.exists(input_md):
-        print(f"Error: {input_md} not found.")
+        print(f"[!] Error: {input_md} not found.")
         return
 
     with open(input_md, 'r', encoding='utf-8') as f:
         text = f.read()
 
+    # 타겟 폴더 생성
+    os.makedirs(os.path.dirname(output_pdf), exist_ok=True)
+
     doc = SimpleDocTemplate(output_pdf, pagesize=A4, 
-                            rightMargin=72, leftMargin=72, 
-                            topMargin=72, bottomMargin=72)
+                            rightMargin=50, leftMargin=50, 
+                            topMargin=50, bottomMargin=50)
     
     styles = getSampleStyleSheet()
     
@@ -96,7 +101,7 @@ def create_pdf_from_md(input_md, output_pdf):
 
     story = []
 
-    # Markdown 파싱 (단순화된 파서)
+    # Markdown 파싱 및 렌더링
     lines = text.split('\n')
     in_table = False
     table_data = []
@@ -104,7 +109,7 @@ def create_pdf_from_md(input_md, output_pdf):
     for line in lines:
         line = line.strip()
         
-        # 테이블 처리
+        # 테이블 처리 로직
         if '|' in line:
             if '---' in line: continue
             cells = [c.strip() for c in line.split('|') if c.strip()]
@@ -113,7 +118,6 @@ def create_pdf_from_md(input_md, output_pdf):
                 in_table = True
                 continue
         elif in_table:
-            # 테이블 종료 및 생성
             if table_data:
                 t = Table(table_data, hAlign='LEFT')
                 t.setStyle(TableStyle([
@@ -121,12 +125,9 @@ def create_pdf_from_md(input_md, output_pdf):
                     ('FONTSIZE', (0,0), (-1,-1), 9),
                     ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
                     ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-                    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                    ('LEFTPADDING', (0,0), (-1,-1), 5),
-                    ('RIGHTPADDING', (0,0), (-1,-1), 5),
                 ]))
                 story.append(t)
-                story.append(Spacer(1, 0.2*inch))
+                story.append(Spacer(1, 0.1*inch))
                 table_data = []
             in_table = False
 
@@ -134,7 +135,7 @@ def create_pdf_from_md(input_md, output_pdf):
             story.append(Spacer(1, 0.1*inch))
             continue
 
-        # 제목 처리
+        # 헤더 처리
         if line.startswith('# '):
             story.append(Paragraph(line[2:], h1_style))
         elif line.startswith('## '):
@@ -147,6 +148,12 @@ def create_pdf_from_md(input_md, output_pdf):
             match = re.search(r'\((.*?)\)', line)
             if match:
                 img_path = match.group(1)
+                # 상대 경로를 현재 파일 기준으로 보정
+                if not os.path.isabs(img_path):
+                    # docs/ 내부에 있으면 한 단계 위로
+                    test_path = os.path.join(os.getcwd(), img_path)
+                    if os.path.exists(test_path): img_path = test_path
+
                 if os.path.exists(img_path):
                     try:
                         img = Image(img_path, width=5.5*inch, height=3*inch, kind='proportional')
@@ -154,28 +161,22 @@ def create_pdf_from_md(input_md, output_pdf):
                         story.append(Spacer(1, 0.1*inch))
                     except: pass
         
-        # 일반 텍스트 및 목록
+        # 본문 및 리스트
         else:
-            # 굵게 처리 (**text**)
             line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
-            # 글 머리 기호
             if line.startswith('* ') or line.startswith('- '):
                 story.append(Paragraph(f"• {line[2:]}", normal_style))
             else:
                 story.append(Paragraph(line, normal_style))
 
-    # 마지막 테이블 처리
+    # 마무리 테이블 처리
     if table_data:
         t = Table(table_data, hAlign='LEFT')
-        t.setStyle(TableStyle([
-            ('FONTNAME', (0,0), (-1,-1), FONT_NAME),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ]))
+        t.setStyle(TableStyle([('FONTNAME', (0,0), (-1,-1), FONT_NAME), ('GRID', (0,0), (-1,-1), 0.5, colors.grey)]))
         story.append(t)
 
     doc.build(story)
-    print(f"Success: {output_pdf}")
+    print(f"[*] Success: {output_pdf}")
 
 if __name__ == "__main__":
-    if not os.path.exists("target"): os.makedirs("target")
     create_pdf_from_md("docs/USER_MANUAL.md", "target/USER_MANUAL.pdf")
