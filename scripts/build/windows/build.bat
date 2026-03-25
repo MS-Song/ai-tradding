@@ -1,22 +1,22 @@
 @echo off
 echo [*] Starting Windows Build Process...
 
-REM 1. 프로젝트 루트로 이동
+REM 1. Move to project root
 cd /d "%~dp0..\..\.."
 
-REM 2. 가상환경(.venv) 또는 시스템 파이썬(python) 경로 설정
+REM 2. Set Python paths
 set PYTHON_EXE=python
 set PYINSTALLER_EXE=pyinstaller
 
 if exist .venv (
-    echo [*] Local virtual environment (.venv) found. Using it...
+    echo [*] Local virtual environment found. Using .venv...
     set PYTHON_EXE=.\.venv\Scripts\python
     set PYINSTALLER_EXE=.\.venv\Scripts\pyinstaller
 ) else (
-    echo [*] No .venv found. Using system environment (CI/GitHub Actions Mode).
+    echo [*] No .venv found. Using system environment.
 )
 
-REM 3. PyInstaller 실행 (EXE 패키징)
+REM 3. Run PyInstaller
 echo [*] Packaging KIS-Vibe-Trader into a single EXE...
 %PYINSTALLER_EXE% --onefile --clean ^
     --name KIS-Vibe-Trader ^
@@ -33,19 +33,23 @@ if %ERRORLEVEL% neq 0 (
     exit /b %ERRORLEVEL%
 )
 
-REM 4. 결과물 이동
+REM 4. Move output
 echo [*] Moving executable to target folder...
 if not exist target mkdir target
 move /y dist\KIS-Vibe-Trader.exe target\
 
-REM 5. PDF 매뉴얼 생성
+REM 5. Generate PDF
 echo [*] Generating PDF User Manual...
 %PYTHON_EXE% scripts/build/gen_pdf.py
 
-REM 6. 정리
-echo [*] Cleaning up temporary files...
+if %ERRORLEVEL% neq 0 (
+    echo [!] PDF Generation failed.
+)
+
+REM 6. Cleanup
+echo [*] Cleaning up...
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 if exist KIS-Vibe-Trader.spec del /f /q KIS-Vibe-Trader.spec
 
-echo [V] Build Complete! Check target/ directory
+echo [V] Build Complete! Check target directory.
