@@ -1,0 +1,117 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller xhtml2pdf markdown2 reportlab pillow
+          
+      - name: Build Windows EXE
+        run: scripts/build/windows/build.bat
+        
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifact
+          path: target/
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller xhtml2pdf markdown2 reportlab pillow
+          
+      - name: Build Linux Binary
+        run: |
+          chmod +x scripts/build/linux/build.sh
+          ./scripts/build/linux/build.sh
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifact
+          path: target/
+
+  create-release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # 만약 GITHUB_TOKEN이 아닌 다른 인증 수단이 필요하다면 아래 token에 등록된 시크릿을 사용하세요.
+          # token: ${{ secrets.GH_PAT }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Set Release Version
+        id: version
+        run: |
+          BASE_VER=$(cat VERSION)
+          BUILD_NUM=${{ github.run_number }}
+          FULL_VER="v${BASE_VER}.${BUILD_NUM}"
+          echo "tag_name=${FULL_VER}" >> $GITHUB_OUTPUT
+          echo "version=${FULL_VER}" >> $GITHUB_OUTPUT
+
+      - name: Prepare Release Files
+        run: |
+          mkdir -p final-assets
+          cp release-artifacts/windows-artifact/KIS-Vibe-Trader.exe final-assets/KIS-Vibe-Trader.exe
+          cp release-artifacts/windows-artifact/USER_MANUAL.pdf final-assets/USER_MANUAL.pdf
+          cp release-artifacts/linux-artifact/KIS-Vibe-Trader-Linux final-assets/KIS-Vibe-Trader-Linux
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## KIS-Vibe-Trader 자동 빌드 릴리즈
+            - 버전: ${{ steps.version.outputs.version }}
+            - 빌드 시각: ${{ github.event.head_commit.timestamp }}
+            
+            ### 첨부 파일 설명
+            1. **KIS-Vibe-Trader.exe**: 윈도우용 실행 파일
+            2. **KIS-Vibe-Trader-Linux**: 리눅스용 실행 파일
+            3. **USER_MANUAL.pdf**: PDF 사용자 매뉴얼 (한글)
+          draft: false
+          prerelease: false
+          files: |
+            final-assets/KIS-Vibe-Trader.exe
+            final-assets/KIS-Vibe-Trader-Linux
+            final-assets/USER_MANUAL.pdf
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 혹은 ${{ secrets.GH_PAT }}

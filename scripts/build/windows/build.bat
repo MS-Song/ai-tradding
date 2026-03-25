@@ -27,11 +27,15 @@ echo [*] Moving executable to target folder...
 if not exist target mkdir target
 move /y dist\KIS-Vibe-Trader.exe target\
 
-REM 5. Cleanup
+REM 5. Generate PDF Manual
+echo [*] Generating PDF User Manual...
+.\.venv\Scripts\python scripts/build/gen_pdf.py
+
+REM 6. Cleanup
 echo [*] Cleaning up temporary files...
 rmdir /s /q build
 rmdir /s /q dist
 del /f /q KIS-Vibe-Trader.spec
 
-echo [V] Build Complete! Check target/KIS-Vibe-Trader.exe
-pause
+echo [V] Build Complete! Check target/ directory
+REM pause 제거 (CI 환경 대응)
