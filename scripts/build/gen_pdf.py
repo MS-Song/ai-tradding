@@ -9,14 +9,31 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch
 import re
 
-# 1. 한글 폰트 등록
-FONT_PATH = "C:/Windows/Fonts/malgun.ttf"
-FONT_NAME = "MalgunGothic"
+# 1. 한글 폰트 등록 (OS별 대응)
+# Windows: 맑은 고딕 / Linux: 나눔고딕 등 시스템 폰트 탐색
+FONT_PATHS = [
+    "C:/Windows/Fonts/malgun.ttf", # Windows
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf", # Ubuntu Nanum
+    "/usr/share/fonts/nanum/NanumGothic.ttf", # CentOS Nanum
+    "/usr/share/fonts/truetype/baekmuk/dotum.ttf", # Fallback 1
+]
+FONT_NAME = "KoreanFont"
 
-if os.path.exists(FONT_PATH):
-    pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
-else:
+def register_font():
+    global FONT_NAME
+    for path in FONT_PATHS:
+        if os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont(FONT_NAME, path))
+                print(f"Font registered: {path}")
+                return True
+            except:
+                continue
     FONT_NAME = "Helvetica"
+    print("Warning: No Korean font found. Using Helvetica.")
+    return False
+
+register_font()
 
 def create_pdf_from_md(input_md, output_pdf):
     if not os.path.exists(input_md):
