@@ -9,17 +9,11 @@ from dotenv import load_dotenv
 from src.logger import logger
 from src.auth import KISAuth
 from src.api import KISAPI
-
-def load_config():
-    # 상위 폴더의 config.yaml 참조
-    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.yaml")
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+from src.config_init import get_config
 
 def run_starter_kit():
     # 1. 초기화 및 설정 로드
-    load_dotenv()
-    config = load_config()
+    config = get_config()
     kit_config = config.get("vibe_strategy", {}).get("starter_kit", {})
     
     budget = kit_config.get("budget_per_stock", 1000000)

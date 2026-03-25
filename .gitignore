@@ -1,8 +1,10 @@
 .env
+.env.bak
 .venv/
 __pycache__/
 *.pyc
 .vscode/
+target/
 .token_cache.json
 .trading_state.json
 trading_state.json

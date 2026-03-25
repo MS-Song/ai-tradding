@@ -22,7 +22,7 @@ from src.logger import logger
 from src.auth import KISAuth
 from src.api import KISAPI
 from src.strategy import VibeStrategy
-from src.config_init import ensure_env
+from src.config_init import ensure_env, get_config
 
 # --- OS/Terminal 설정 ---
 IS_WINDOWS = os.name == 'nt'
@@ -69,11 +69,6 @@ def flush_input():
         except: pass
 
 # --- 유틸리티 함수 ---
-def load_config():
-    try:
-        with open("config.yaml", "r", encoding="utf-8") as f: return yaml.safe_load(f)
-    except: return {}
-
 def is_market_open():
     now = datetime.now()
     if now.weekday() >= 5: return False
@@ -421,17 +416,19 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         
         # 전략 라인 추가 (BASE 전략 표시용은 주입 없이 호출 가능)
         tp_cur, sl_cur, _ = strategy.get_dynamic_thresholds("BASE", _cached_vibe.lower())
-        strat_line = f" STRAT  | 매입/수: 익절 {strategy.base_tp:+.1f}% (현재 {tp_cur:+.1f}%) | 손절 {strategy.base_sl:+.1f}% (현재 {sl_cur:+.1f}%)"
+        strat_title = "* STRAT" if strategy.is_modified("STRAT") else " STRAT "
+        strat_line = f"{strat_title} | 매입/수: 익절 {strategy.base_tp:+.1f}% (현재 {tp_cur:+.1f}%) | 손절 {strategy.base_sl:+.1f}% (현재 {sl_cur:+.1f}%)"
         buf.write(align_kr(strat_line, tw) + "\n")
-        
-        bear_line = f" BEAR   | 물타기: 트리거 {b_cfg.get('min_loss_to_buy'):+.1f}% | 회당 {b_cfg.get('average_down_amount'):,}원 | 종목한도 {b_cfg.get('max_investment_per_stock'):,}원 | 자동: {auto_st} | 로직: PnL기준 & 현재가<평단"
+
+        bear_title = "* BEAR " if strategy.is_modified("BEAR") else " BEAR  "
+        bear_line = f"{bear_title} | 물타기: 트리거 {b_cfg.get('min_loss_to_buy'):+.1f}% | 회당 {b_cfg.get('average_down_amount'):,}원 | 종목한도 {b_cfg.get('max_investment_per_stock'):,}원 | 자동: {auto_st} | 로직: PnL기준 & 현재가<평단"
         buf.write(align_kr(bear_line, tw) + "\n")
-        
+
         a_cfg = strategy.ai_config
         ai_st = "ON" if a_cfg.get("auto_mode") else "OFF"
-        algo_line = f" ALGO   | 추천매매: 회당 {a_cfg.get('amount_per_trade'):,}원 | 종목한도 {a_cfg.get('max_investment_per_stock'):,}원 | 자동: {ai_st} | 로직: 테마뉴스모멘텀 & 보합선취매"
+        algo_title = "* ALGO " if strategy.is_modified("ALGO") else " ALGO  "
+        algo_line = f"{algo_title} | 추천매매: 회당 {a_cfg.get('amount_per_trade'):,}원 | 종목한도 {a_cfg.get('max_investment_per_stock'):,}원 | 자동: {ai_st} | 로직: 테마뉴스모멘텀 & 보합선취매"
         buf.write(align_kr(algo_line, tw) + "\n")
-        
         buf.write("-" * tw + "\n")
 
         # 컬럼 정의 (터미널 너비 tw에 맞춰 유연하게 배분)
@@ -783,7 +780,7 @@ def perform_interaction(key, api, strategy, cycle):
         flush_input()
         ensure_env(force=True)
         load_dotenv(override=True)
-        config = load_config()
+        config = get_config()
         new_auth = KISAuth()
         api.auth = new_auth
         api.domain = new_auth.domain
@@ -916,7 +913,7 @@ def perform_interaction(key, api, strategy, cycle):
         elif mode == '6':
             if _cached_recommendations:
                 r = _cached_recommendations[0]
-                res_c = input_with_esc(f("> {r['name']} {r['suggested_amt']:,}원 물타기할까요? (y/n): "), tw)
+                res_c = input_with_esc(f"> {r['name']} {r['suggested_amt']:,}원 물타기할까요? (y/n): ", tw)
                 if res_c and res_c.strip().lower() == 'y':
                     p = api.get_inquire_price(r['code'])
                     if p:
@@ -948,7 +945,7 @@ def perform_interaction(key, api, strategy, cycle):
         set_terminal_raw(); flush_input()
 
 def main():
-    ensure_env(); load_dotenv(); config = load_config(); init_terminal()
+    ensure_env(); load_dotenv(); config = get_config(); init_terminal()
     auth = KISAuth(); api = KISAPI(auth); strategy = VibeStrategy(api, config)
     enter_alt_screen()
     threading.Thread(target=index_update_worker, args=(api, strategy), daemon=True).start()

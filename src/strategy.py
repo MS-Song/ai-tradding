@@ -367,7 +367,10 @@ class GeminiAdvisor:
 class VibeStrategy:
     def __init__(self, api, config):
         self.api = api
-        v_cfg = config.get("vibe_strategy", {})
+        # 1. .env 기반의 순수 기본 설정 보존 (변경 여부 판단용)
+        self.base_config = config.get("vibe_strategy", {})
+        
+        v_cfg = self.base_config
         self.analyzer = MarketAnalyzer(api)
         self.exit_mgr = ExitManager(v_cfg.get("take_profit_threshold", 5.0), v_cfg.get("stop_loss_threshold", -5.0))
         self.recovery_eng = RecoveryEngine(v_cfg.get("bear_market", {}))
@@ -379,8 +382,38 @@ class VibeStrategy:
         self.last_sell_times: Dict[str, float] = {}
         self.ai_recommendations: List[dict] = []
         self.ai_briefing, self.ai_detailed_opinion = "", ""
-        self.ai_config = {"amount_per_trade": 500000, "min_score": 60.0, "max_investment_per_stock": 2000000, "auto_mode": False}
+        
+        # AI 설정 초기화
+        self.ai_config = {
+            "amount_per_trade": v_cfg.get("ai_config", {}).get("amount_per_trade", 500000),
+            "min_score": v_cfg.get("ai_config", {}).get("min_score", 60.0),
+            "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
+            "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False)
+        }
+        
+        # 2. 영속 상태(state) 로드 (사용자 입력/AI 추천 결과 반영)
         self._load_all_states()
+
+    def is_modified(self, section: str) -> bool:
+        """기본값(.env)과 현재 상태를 비교하여 변경 여부 반환"""
+        if section == "STRAT":
+            return (self.exit_mgr.base_tp != self.base_config.get("take_profit_threshold") or 
+                    self.exit_mgr.base_sl != self.base_config.get("stop_loss_threshold"))
+        
+        if section == "BEAR":
+            bc = self.base_config.get("bear_market", {})
+            curr = self.recovery_eng.config
+            return (curr.get("average_down_amount") != bc.get("average_down_amount") or
+                    curr.get("min_loss_to_buy") != bc.get("min_loss_to_buy") or
+                    curr.get("auto_mode") != bc.get("auto_mode"))
+        
+        if section == "ALGO":
+            ac = self.base_config.get("ai_config", {})
+            curr = self.ai_config
+            return (curr.get("amount_per_trade") != ac.get("amount_per_trade") or
+                    curr.get("auto_mode") != ac.get("auto_mode") or
+                    curr.get("min_score") != ac.get("min_score"))
+        return False
 
     def _load_all_states(self):
         if os.path.exists(self.state_file):
