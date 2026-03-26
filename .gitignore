@@ -12,3 +12,4 @@ trading.log
 error.log
 activate_venv.sh
 run.sh
+.worktrees/
