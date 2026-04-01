@@ -58,11 +58,20 @@ class KISAPI:
                     "prpr": h.get("prpr"), "evlu_amt": h.get("evlu_amt"), "evlu_pfls_rt": h.get("evlu_pfls_rt")
                 })
             raw_summary = data.get("output2", [{}])[0]
+            # 실제 주식 앱 기준 매핑: 
+            # - stock_eval: 주식평가금액 합계
+            # - cash: D+2 예상예수금 (가용 현금)
+            # - total_asset: 주식평가액 + 예수금
+            # - pnl: 평가손익 합계
+            stock_eval = self._safe_float(raw_summary.get("evlu_amt_smtl_amt"))
+            cash = self._safe_float(raw_summary.get("dnca_tot_amt")) # D+2 예상예수금
+            pnl = self._safe_float(raw_summary.get("evlu_pfls_smtl_amt"))
+            
             asset_info = {
-                "total_asset": self._safe_float(raw_summary.get("tot_evlu_amt")),
-                "stock_eval": self._safe_float(raw_summary.get("evlu_amt_smtl_amt")),
-                "cash": self._safe_float(raw_summary.get("dnca_tot_amt")),
-                "pnl": self._safe_float(raw_summary.get("evlu_pfls_smtl_amt")),
+                "total_asset": stock_eval + cash,
+                "stock_eval": stock_eval,
+                "cash": cash,
+                "pnl": pnl,
                 "deposit": self._safe_float(raw_summary.get("prvs_rcdl_exca_amt") or 0)
             }
             return holdings, asset_info
@@ -99,7 +108,8 @@ class KISAPI:
 
     def get_index_price(self, iscd="0001"):
         symbol_map = {"KOSPI": "^KS11", "KOSDAQ": "^KQ11", "KPI200": "069500.KS", "VOSPI": "^VIX", "FX_USDKRW": "USDKRW=X",
-                      "DOW": "^DJI", "NASDAQ": "^IXIC", "S&P500": "^GSPC", "NAS_FUT": "NQ=F", "SPX_FUT": "ES=F"}
+                      "DOW": "^DJI", "NASDAQ": "^IXIC", "S&P500": "^GSPC", "NAS_FUT": "NQ=F", "SPX_FUT": "ES=F",
+                      "BTC_USD": "BTC-USD", "BTC_KRW": "BTC-KRW"}
         symbol = symbol_map.get(iscd, iscd)
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
@@ -115,7 +125,7 @@ class KISAPI:
         return None
 
     def get_naver_stock_detail(self, code: str) -> dict:
-        """네이버 금융 상세 페이지에서 펀더멘털 지표 수집 (캐시 적용)"""
+        """네이버 금융 상세 페이지에서 핵심 시세 정보 및 펀더멘털 지표 수집 (캐시 적용)"""
         curr_t = time.time()
         if code in self._detail_cache:
             ts, data = self._detail_cache[code]
@@ -124,11 +134,36 @@ class KISAPI:
         try:
             url = f"https://finance.naver.com/item/main.naver?code={code}"
             res = requests.get(url, headers=self.headers, timeout=5)
-            res.encoding = 'euc-kr'
             if not BeautifulSoup: return {}
-            soup = BeautifulSoup(res.text, 'html.parser')
+            # euc-kr보다 호환성이 높은 cp949로 바이너리 직접 디코딩
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             
-            detail = {"per": "N/A", "pbr": "N/A", "yield": "N/A", "sector_per": "N/A"}
+            detail = {"name": "Unknown", "price": "0", "rate": 0.0, "per": "N/A", "pbr": "N/A", "yield": "N/A", "sector_per": "N/A", "market_cap": "N/A"}
+            
+            # 1. 종목명 수집
+            wrap = soup.find('div', {'class': 'wrap_company'})
+            if wrap and wrap.h2: detail["name"] = wrap.h2.text.strip()
+            
+            # 2. 실시간 시세 및 등락률 수집
+            today = soup.find('div', {'class': 'today'})
+            if today:
+                p_tag = today.find('em', {'class': 'no_up'}) or today.find('em', {'class': 'no_down'}) or today.find('em', {'class': 'no_none'})
+                if p_tag: detail["price"] = p_tag.text.strip().replace(',', '').split()[0]
+                
+                # 등락률 파싱 (상승/하락/보합 케이스 대응)
+                rate_area = today.find('p', {'class': 'no_up'}) or today.find('p', {'class': 'no_down'}) or today.find('p', {'class': 'no_none'})
+                if rate_area:
+                    rate_val = rate_area.find('span', {'class': 'blind'})
+                    if rate_val:
+                        r_txt = rate_val.text.strip()
+                        try:
+                            val_match = re.search(r'\d+\.\d+', r_txt)
+                            if val_match:
+                                val = float(val_match.group())
+                                detail["rate"] = val if "플러스" in r_txt else -val if "마이너스" in r_txt else 0.0
+                        except: pass
+
+            # 3. 펀더멘털 지표 및 시가총액 수집
             aside = soup.find('div', {'class': 'aside_invest_info'})
             if aside:
                 per_tag = aside.find('em', {'id': '_per'})
@@ -139,26 +174,29 @@ class KISAPI:
                 if yield_tag: detail["yield"] = yield_tag.text.strip()
                 s_per_tag = aside.find('em', {'id': '_cper'})
                 if s_per_tag: detail["sector_per"] = s_per_tag.text.strip()
+                
+                # 시가총액
+                cap_area = aside.find('th', string='시가총액')
+                if cap_area and cap_area.find_next_sibling('td'):
+                    detail["market_cap"] = cap_area.find_next_sibling('td').text.strip().replace('\t','').replace('\n','')
             
             self._detail_cache[code] = (curr_t, detail)
             return detail
-        except: return {"per": "N/A", "pbr": "N/A", "yield": "N/A", "sector_per": "N/A"}
+        except: return {"name": "Error", "price": "0", "rate": 0.0, "per": "N/A", "pbr": "N/A", "yield": "N/A", "sector_per": "N/A", "market_cap": "N/A"}
 
     def get_naver_stock_news(self, code: str) -> List[str]:
         """네이버 금융 뉴스 섹션에서 최신 헤드라인 수집"""
         try:
             url = f"https://finance.naver.com/item/news.naver?code={code}"
             res = requests.get(url, headers=self.headers, timeout=5)
-            res.encoding = 'euc-kr'
             if not BeautifulSoup: return []
-            soup = BeautifulSoup(res.text, 'html.parser')
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             
             news_list = []
-            # 뉴스 목록 테이블 (type5 클래스 사용)
             table = soup.find('table', {'class': 'type5'})
             if table:
                 titles = table.find_all('td', {'class': 'title'})
-                for t in titles[:3]: # 상위 3개만
+                for t in titles[:3]:
                     news_list.append(t.text.strip())
             return news_list
         except: return []
@@ -170,9 +208,8 @@ class KISAPI:
         try:
             url = "https://finance.naver.com/sise/lastsearch2.naver"
             res = requests.get(url, headers=self.headers, timeout=5)
-            res.encoding = 'euc-kr'
             if not BeautifulSoup: return []
-            soup = BeautifulSoup(res.text, 'html.parser')
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             table = soup.find('table', {'class': 'type_5'})
             if table:
                 for row in table.find_all('tr'):
@@ -196,13 +233,11 @@ class KISAPI:
         if self._vol_cache and (curr_t - self._last_vol_time < 60): return self._vol_cache
         results = []
         try:
-            # sosok=0(코스피), sosok=1(코스닥) 통합 수집
             for sosok in ["0", "1"]:
                 url = f"https://finance.naver.com/sise/sise_quant.naver?sosok={sosok}"
                 res = requests.get(url, headers=self.headers, timeout=5)
-                res.encoding = 'euc-kr'
                 if not BeautifulSoup: return []
-                soup = BeautifulSoup(res.text, 'html.parser')
+                soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
                 table = soup.find('table', {'class': 'type_2'})
                 if table:
                     for row in table.find_all('tr'):
@@ -217,7 +252,6 @@ class KISAPI:
                                     if cols[3].find('img') and 'down' in cols[3].find('img')['src'].lower(): rate = -rate        
                                 except: rate = 0.0
                                 results.append({"code": code, "name": name, "price": cols[2].text.replace(',','').strip(), "rate": rate, "mkt": "KSP" if sosok == "0" else "KDQ"})
-            # 셔플 및 정렬 후 상위 40개 선정
             self._vol_cache = results[:40]; self._last_vol_time = curr_t
             return self._vol_cache
         except: return []

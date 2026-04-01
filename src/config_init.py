@@ -15,6 +15,10 @@ def get_config():
             "stop_loss_ratio": float(env_data.get("STOP_LOSS_RATIO", 1.0)),
             "bull_market": {
                 "take_profit_threshold": float(env_data.get("BULL_TAKE_PROFIT_THRESHOLD", 3.0)),
+                "min_profit_to_pyramid": float(env_data.get("MIN_PROFIT_TO_PYRAMID", 3.0)),
+                "average_down_amount": int(env_data.get("BULL_AVERAGE_DOWN_AMOUNT", 500000)),
+                "max_investment_per_stock": int(env_data.get("BULL_MAX_INVESTMENT", 25000000)),
+                "auto_mode": env_data.get("PYRAMID_AUTO_MODE", "FALSE") == "TRUE"
             },
             "bear_market": {
                 "average_down_amount": int(env_data.get("AVERAGE_DOWN_AMOUNT", 500000)),
