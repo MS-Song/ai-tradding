@@ -4,8 +4,10 @@ import math
 import time
 import requests
 import re
+import threading
+from datetime import datetime, timedelta, time as dtime
 from typing import Dict, List, Tuple, Optional, Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.logger import logger, log_error
 
 # --- KIS 프리셋 전략 카탈로그 (10개 공식 전략 + 표준) ---
@@ -51,15 +53,14 @@ class MarketAnalyzer:
         self.finalized_ai_vibe = None # 캐시된 마지막 AI 판정
 
     def update(self) -> Tuple[str, bool]:
-        import concurrent.futures
         symbol_map = {
             "KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KPI200": "KPI200", "VOSPI": "VOSPI",
             "FX_USDKRW": "FX_USDKRW", "DOW": "DOW", "NASDAQ": "NASDAQ", "S&P500": "S&P500",
             "NAS_FUT": "NAS_FUT", "SPX_FUT": "SPX_FUT", "BTC_USD": "BTC_USD", "BTC_KRW": "BTC_KRW"
         }
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(symbol_map)) as executor:
+        with ThreadPoolExecutor(max_workers=len(symbol_map)) as executor:
             future_to_symbol = {executor.submit(self.api.get_index_price, code): s for s, code in symbol_map.items()}
-            for future in concurrent.futures.as_completed(future_to_symbol):
+            for future in as_completed(future_to_symbol):
                 symbol = future_to_symbol[future]
                 try:
                     data = future.result()
@@ -191,7 +192,7 @@ class ExitManager:
             tp_mod, sl_mod = -3.0, -3.0 # 방어모드: 극도로 보수적
         return tp_mod, sl_mod
 
-    def get_thresholds(self, code: str, kr_vibe: str, price_data: Optional[dict] = None) -> Tuple[float, float, bool]:
+    def get_thresholds(self, code: str, kr_vibe: str, price_data: Optional[dict] = None, phase_cfg: dict = None) -> Tuple[float, float, bool]:
         # 1. 특정 종목 수동 설정(Manual)이 있으면 최우선 적용 (보정 없음)
         if code in self.manual_thresholds:
             vals = self.manual_thresholds[code]
@@ -202,6 +203,14 @@ class ExitManager:
         
         # 3. 시장 분위기(Vibe)에 따른 실시간 보정 적용
         tp_mod, sl_mod = self.get_vibe_modifiers(kr_vibe)
+        
+        # 시간 페이즈 보정 합산
+        if phase_cfg:
+            tp_mod += phase_cfg.get('tp_delta', 0)
+            # 하락장 예외: Bear/Defensive일 때는 P1의 SL 완화 적용 안 함
+            if not (kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg['id'] == "P1"):
+                sl_mod += phase_cfg.get('sl_delta', 0)
+        
         target_tp += tp_mod
         target_sl += sl_mod
             
@@ -276,14 +285,11 @@ class VibeAlphaEngine:
     def __init__(self, api):
         self.api = api
         self.ai_advisor = None # To be injected by strategy for Gemini sentiment
-        import threading
         self._lock = threading.Lock()
 
     def analyze(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], min_score: float = 60.0, progress_cb: Optional[Callable] = None, kr_vibe: str = "Neutral", market_data: dict = None, on_item_found: Optional[Callable] = None) -> List[dict]:
         """주도 테마 및 랭킹 데이터를 분석하여 국내 종목과 ETF 분리 추출 (병렬 처리)"""
         from main import THEME_KEYWORDS
-        from concurrent.futures import ThreadPoolExecutor
-        import threading
         
         combined = hot_raw + vol_raw
         candidates = []
@@ -472,8 +478,6 @@ class GeminiAdvisor:
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
     def get_advice(self, market_data: dict, vibe: str, holdings: List[dict], current_config: dict) -> Optional[str]:
-        from dotenv import load_dotenv
-        load_dotenv(override=True)
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key: return "⚠️ GOOGLE_API_KEY가 없습니다."
         
@@ -515,7 +519,6 @@ class GeminiAdvisor:
         if not api_key or not recs: return "분석할 종목이 없습니다."
         
         # 각 종목별 입체 데이터 병렬 수집 (현재가, 펀더멘털, 뉴스)
-        import threading
         current = 0
         total = len(recs)
         lock = threading.Lock()
@@ -603,7 +606,6 @@ class GeminiAdvisor:
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key or not holdings: return "보유 중인 종목이 없습니다."
         
-        import threading
         current = 0
         total = len(holdings)
         lock = threading.Lock()
@@ -625,7 +627,6 @@ class GeminiAdvisor:
               * 최근 뉴스: {', '.join(news[:2]) if news else '소식 없음'}
             """.strip()
 
-        from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=5) as executor:
             enriched_holdings = list(executor.map(fetch_enriched_holding, holdings))
 
@@ -661,7 +662,6 @@ class GeminiAdvisor:
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key or not hot_stocks: return "인기 종목 데이터가 없습니다."
         
-        import threading
         current = 0
         total = min(10, len(hot_stocks))
         lock = threading.Lock()
@@ -674,16 +674,14 @@ class GeminiAdvisor:
             with lock:
                 current += 1
                 if progress_cb: progress_cb(current, total)
-            
             return f"""
             - {item.get('name','')}({code}) | 등락률: {float(item.get('rate',0)):+.2f}% | 현재가: {int(float(item.get('price',0))):,}원
               * 지표: PER {detail.get('per')}, PBR {detail.get('pbr')}, 배당 {detail.get('yield')}
               * 최근 뉴스: {', '.join(news[:2]) if news else '소식 없음'}
             """.strip()
 
-        from concurrent.futures import ThreadPoolExecutor
-        top_stocks = hot_stocks[:10]
-        with ThreadPoolExecutor(max_workers=5) as executor:
+            top_stocks = hot_stocks[:10]
+            with ThreadPoolExecutor(max_workers=5) as executor:
             enriched = list(executor.map(fetch_enriched_hot, top_stocks))
 
         stocks_txt = "\n".join(enriched)
@@ -866,7 +864,6 @@ class VibeStrategy:
 
     def update_yesterday_recs(self):
         """저장된 이력 중 오늘 이전의 가장 최신 추천 목록을 로드"""
-        from datetime import datetime
         today = datetime.now().strftime('%Y-%m-%d')
         dates = sorted([d for d in self.recommendation_history.keys() if d < today])
         if dates:
@@ -939,11 +936,13 @@ class VibeStrategy:
                     if "ai_config" in d: self.ai_config.update(d["ai_config"])
                     if "bear_config" in d: self.recovery_eng.config.update(d["bear_config"])
                     if "bull_config" in d: self.bull_config.update(d["bull_config"])
-            except: pass
+                    except Exception as e:
+                    log_error(f"상태 파일 로드 실패: {e}")
+                    pass
+                log_error(f"상태 로드 중 예외 발생: {e}")
 
     def _save_all_states(self):
         try:
-            from datetime import datetime
             today = datetime.now().strftime('%Y-%m-%d')
             # 현재 추천 목록이 있으면 오늘 날짜로 히스토리 업데이트
             if self.ai_recommendations:
@@ -995,14 +994,31 @@ class VibeStrategy:
     def determine_market_trend(self): return self.analyzer.update()
     def save_manual_thresholds(self): self._save_all_states()
     
+    def get_market_phase(self) -> dict:
+        now = datetime.now().time()
+        # Phase 1: 09:00~10:00 (공격)
+        if dtime(9, 0) <= now < dtime(10, 0):
+            return {"id": "P1", "name": "OFFENSIVE", "tp_delta": 2.0, "sl_delta": -1.0}
+        # Phase 3: 14:30~15:10 (결과확정)
+        elif dtime(14, 30) <= now < dtime(15, 10):
+            return {"id": "P3", "name": "CONCLUSION", "tp_delta": 0.0, "sl_delta": 0.0}
+        # Phase 4: 15:10~15:20 (익일준비)
+        elif dtime(15, 10) <= now < dtime(15, 20):
+            return {"id": "P4", "name": "PREPARATION", "tp_delta": 0.0, "sl_delta": 0.0}
+        # Phase 2: 그 외 (수렴/관리)
+        elif dtime(10, 0) <= now < dtime(14, 30):
+            return {"id": "P2", "name": "CONVERGENCE", "tp_delta": -1.0, "sl_delta": -1.0}
+        return {"id": "IDLE", "name": "IDLE", "tp_delta": 0.0, "sl_delta": 0.0}
+
     def get_dynamic_thresholds(self, code, vibe, p_data=None):
         """프리셋 전략이 할당된 종목은 프리셋 TP/SL을 최우선 적용"""
+        phase_cfg = self.get_market_phase()
         ps = self.preset_strategies.get(code)
         if ps and ps.get("preset_id") != "00":
             # 프리셋 전략의 동적 TP/SL을 직접 사용 (Vibe 보정 미적용 - 프리셋 자체가 완성형)
             return ps["tp"], ps["sl"], False
         # 프리셋이 '표준(00)'이거나 미설정 시 기존 로직
-        return self.exit_mgr.get_thresholds(code, vibe, p_data)
+        return self.exit_mgr.get_thresholds(code, vibe, p_data, phase_cfg)
     
     def get_preset_label(self, code: str) -> str:
         """종목에 할당된 프리셋 전략 이름 반환 (없으면 빈 문자열)"""
@@ -1013,12 +1029,17 @@ class VibeStrategy:
     
     def _calculate_deadline(self, start_time_str, lifetime_mins):
         if not start_time_str or not lifetime_mins: return None
-        from datetime import datetime, timedelta
         try:
+            # lifetime_mins가 0이거나 None이 아닌 경우에만 계산, 안전하게 int 변환
+            l_mins = int(lifetime_mins)
+            if l_mins <= 0: return None
+            
             start_dt = datetime.strptime(start_time_str, '%Y-%m-%d %H:%M:%S')
-            deadline_dt = start_dt + timedelta(minutes=lifetime_mins)
+            deadline_dt = start_dt + timedelta(minutes=l_mins)
             return deadline_dt.strftime('%Y-%m-%d %H:%M:%S')
-        except: return None
+        except Exception as e:
+            log_error(f"Deadline 계산 실패: {e}")
+            return None
     
     def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = "", lifetime_mins: int = None):
         """종목에 프리셋 전략 할당 (표준 선택 시 기존 설정으로 복귀)"""
@@ -1030,7 +1051,6 @@ class VibeStrategy:
             if code in self.preset_strategies:
                 del self.preset_strategies[code]
         else:
-            from datetime import datetime
             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             use_tp = tp if tp is not None else preset["default_tp"]
             use_sl = sl if sl is not None else preset["default_sl"]
@@ -1096,7 +1116,6 @@ class VibeStrategy:
             "ai_amt": self.ai_config["amount_per_trade"]
         }
         
-        from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=3) as executor:
             # 1. 시장 브리핑 및 전략 제안 (가장 중요)
             future_briefing = executor.submit(self.ai_advisor.get_advice, self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg)
