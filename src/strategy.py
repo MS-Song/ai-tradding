@@ -680,8 +680,8 @@ class GeminiAdvisor:
               * 최근 뉴스: {', '.join(news[:2]) if news else '소식 없음'}
             """.strip()
 
-            top_stocks = hot_stocks[:10]
-            with ThreadPoolExecutor(max_workers=5) as executor:
+        top_stocks = hot_stocks[:10]
+        with ThreadPoolExecutor(max_workers=5) as executor:
             enriched = list(executor.map(fetch_enriched_hot, top_stocks))
 
         stocks_txt = "\n".join(enriched)
@@ -853,6 +853,7 @@ class VibeStrategy:
         # 프리셋 전략 할당 상태 {종목코드: {"preset_id": "01", "name": "골든크로스", "tp": 8.0, "sl": -4.0, "reason": "..."}}
         self.preset_strategies: Dict[str, dict] = {}
         self.yesterday_recs_processed: List[dict] = []
+        self._last_closing_bet_date = None
         
         # AI 설정 초기화
         self.ai_config = {
@@ -940,10 +941,9 @@ class VibeStrategy:
                     if "ai_config" in d: self.ai_config.update(d["ai_config"])
                     if "bear_config" in d: self.recovery_eng.config.update(d["bear_config"])
                     if "bull_config" in d: self.bull_config.update(d["bull_config"])
-                    except Exception as e:
-                    log_error(f"상태 파일 로드 실패: {e}")
-                    pass
-                log_error(f"상태 로드 중 예외 발생: {e}")
+                    self._last_closing_bet_date = d.get("last_closing_bet_date")
+            except Exception as e:
+                log_error(f"상태 파일 로드 실패: {e}")
 
     def _save_all_states(self):
         try:
@@ -971,7 +971,8 @@ class VibeStrategy:
                 "ai_config": self.ai_config,
                 "bear_config": self.recovery_eng.config,
                 "bull_config": self.bull_config,
-                "preset_strategies": self.preset_strategies
+                "preset_strategies": self.preset_strategies,
+                "last_closing_bet_date": getattr(self, "_last_closing_bet_date", None)
             }
             with open(self.state_file, "w") as f: json.dump(data, f, indent=4)
         except Exception as e: log_error(f"상태 저장 실패: {e}")
@@ -1221,6 +1222,29 @@ class VibeStrategy:
         results, curr_t = [], time.time()
         phase = self.get_market_phase()
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        today = datetime.now().strftime('%Y-%m-%d')
+
+        # [Task 5] Phase 4 (PREPARATION) 종가 베팅 로직
+        if phase['id'] == "P4" and not self.global_panic and \
+           self.current_market_vibe.upper() in ["BULL", "NEUTRAL"] and \
+           self.auto_ai_trade:
+            
+            if getattr(self, "_last_closing_bet_date", None) != today:
+                if self.ai_recommendations:
+                    top_rec = self.ai_recommendations[0]
+                    code, name = top_rec['code'], top_rec['name']
+                    amt = self.ai_config["amount_per_trade"]
+                    
+                    if not skip_trade:
+                        price = float(top_rec.get('price', 0))
+                        qty = math.floor(amt / price) if price > 0 else 0
+                        if qty > 0:
+                            success, msg = self.api.order_market(code, qty, True)
+                            if success:
+                                self._last_closing_bet_date = today
+                                results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
+                                self.auto_assign_preset(code, name)
+                                self._save_all_states()
 
         for item in holdings:
             code = item.get("pdno")
