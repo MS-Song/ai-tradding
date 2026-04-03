@@ -1107,8 +1107,10 @@ class VibeStrategy:
 
     def update_ai_recommendations(self, themes, hot_raw, vol_raw, progress_cb: Optional[Callable] = None, on_item_found: Optional[Callable] = None):
         try: 
-            # 분석 전 기존 추천 목록을 항상 초기화 (이전 캐시 잔상 제거 및 실시간 업데이트 위함)
-            self.ai_recommendations = []
+            # 실시간 업데이트 콜백이 있을 때만 기존 목록을 초기화 (수동 분석 시)
+            # 그 외 배경 업데이트 시에는 결과가 나올 때까지 기존 캐시를 유지하여 깜빡임 방지
+            if on_item_found:
+                self.ai_recommendations = []
                 
             recs = self.alpha_eng.analyze(
                 themes, hot_raw, vol_raw, 
