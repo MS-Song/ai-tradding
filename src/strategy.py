@@ -1031,11 +1031,18 @@ class VibeStrategy:
             return ps.get("name", "")
         return ""
     
-    def _calculate_deadline(self, start_time_str, lifetime_mins):
+    def _calculate_deadline(self, preset_id, start_time_str, lifetime_mins):
         if not start_time_str or not lifetime_mins: return None
         try:
             # lifetime_mins가 0이거나 None이 아닌 경우에만 계산, 안전하게 int 변환
             l_mins = int(lifetime_mins)
+            
+            # [Task 3-1] 전략 그룹별 수명 상한선(Hard Cap) 적용
+            if preset_id in ["03", "08", "07"]: # G1: 돌파/폭발형
+                l_mins = min(l_mins, 180)
+            elif preset_id in ["05", "09", "06"]: # G3: 과매도/반등형
+                l_mins = min(l_mins, 240)
+            
             if l_mins <= 0: return None
             
             start_dt = datetime.strptime(start_time_str, '%Y-%m-%d %H:%M:%S')
@@ -1065,7 +1072,7 @@ class VibeStrategy:
                 "sl": use_sl,
                 "reason": reason or preset["desc"],
                 "buy_time": now_str,
-                "deadline": self._calculate_deadline(now_str, lifetime_mins),
+                "deadline": self._calculate_deadline(preset_id, now_str, lifetime_mins),
                 "is_p3_processed": False
             }
         self._save_all_states()
