@@ -477,34 +477,43 @@ class GeminiAdvisor:
         self.model_id = "gemini-3.1-flash-lite-preview"
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
-    def get_advice(self, market_data: dict, vibe: str, holdings: List[dict], current_config: dict) -> Optional[str]:
+    def get_advice(self, market_data: dict, vibe: str, holdings: List[dict], current_config: dict, recs: List[dict] = None) -> Optional[str]:
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key: return "⚠️ GOOGLE_API_KEY가 없습니다."
         
         holdings_txt = "\n".join([f"- {h['prdt_name']}({h['pdno']}): 수익률 {h['evlu_pfls_rt']}%" for h in holdings])
-        prompt_text = f"""
-        당신은 월스트리트 수석 퀀트 트레이더입니다. 아래 데이터를 분석해 실전 매매 전략을 3줄로 브리핑하세요.
         
-        [데이터]
-        - 시장Vibe: {vibe} / 지수: {json.dumps(market_data)}
-        - 포트폴리오: {holdings_txt if holdings else "보유 종목 없음"}
-        - 현재설정: 익절 {current_config.get('base_tp')}%, 손절 {current_config.get('base_sl')}%, 물타기 {current_config.get('bear_trig')}%, 불타기 {current_config.get('bull_trig')}%, 금액 {current_config.get('ai_amt'):,}원
-        
-        [필수 내용 및 절대 규칙]
-        1. 현재 시장 리스크 및 분위기 요약.
-        2. [익절/손절/물타기/불타기/금액] 통합 수치 제안.
-           - [논리 규칙] 추가매수(물타기) 지점은 반드시 손절선(SL)보다 높은(덜 손실인) 수치여야 합니다. 불타기지점은 익절선(TP)보다 낮은 수치여야 합니다.
-           - [답변 양식] AI[전략]: 익절 +X.X%, 손절 -Y.Y%, 물타기 -Z.Z%, 불타기 +W.W%, 금액 N원
-           - [금액 규칙] 금액은 가독성을 위해 천단위 콤마(,)를 포함하여 표기하세요 (예: 500,000원, 1,000,000원). 퍼센트, 비율, 텍스트 표현 절대 금지.
-           3. 신규 추천주 최우선 순위와 매수 권장 금액 (금액은 반드시 콤마 포함).
+        recs_txt = ""
+        if recs:
+            # 주당 가격을 명확히 인지하도록 '1주당 현재가'라고 명시
+            recs_txt = "\n".join([f"- {r['name']}({r['code']}): 1주당 현재가 {int(float(r.get('price',0))):,}원, 금일 등락 {r.get('rate',0):+.1f}%" for r in recs[:5]])
 
-           [답변 형식 엄수]
-           AI[시장]: 요약
-           AI[전략]: (위 답변 양식대로 수치만 명확히 기재. 금액은 반드시 콤마를 포함한 원화)
-           AI[액션]: 매수 지시 및 포트폴리오 조정
-           AI[추천]: 신규 추천 종목 및 매수가격 요약 (콤마 포함)
-           한국어로 대답하세요.
-           """
+        prompt_text = f"""
+        당신은 월스트리트 수석 퀀트 트레이더입니다. 아래의 **[실시간 데이터]**만을 근거로 전략을 브리핑하세요.
+        
+        [실시간 데이터]
+        - 시장Vibe: {vibe}
+        - 현재 지수 상태: {json.dumps(market_data)}
+        - 현재 포트폴리오: {holdings_txt if holdings else "보유 종목 없음"}
+        - **신규 추천 후보 및 1주당 시세**: 
+{recs_txt if recs_txt else "추천 후보 없음"}
+        - 시스템 매수 설정 금액: {current_config.get('ai_amt'):,}원
+        
+        [필수 내용 및 절대 규칙 - 위반 시 해고]
+        1. **가격 절대 준수**: 추천주의 매수가격은 반드시 위 리스트에 제공된 '1주당 현재가'의 ±3% 이내에서만 제안하세요. 리스트에 없는 가격을 상상해서 적지 마세요.
+        2. **매수 가능 여부 확인**: (매수 권장 금액)이 (추천주 1주당 현재가)보다 작으면 절대 추천하지 마세요. 최소 1주는 살 수 있어야 합니다.
+        3. **수치 논리**: 추가매수(물타기) 지점 > 손절선(SL), 불타기지점 < 익절선(TP) 공식을 반드시 지키세요.
+        4. **양식 준수**:
+           - AI[전략]: 익절 +X.X%, 손절 -Y.Y%, 물타기 -Z.Z%, 불타기 +W.W%, 금액 N원
+           - AI[추천]: 종목명(코드), 권장매수가 N원, 예상매수주수 M주
+        
+        [답변 형식]
+        AI[시장]: 요약
+        AI[전략]: 수치 (금액은 반드시 콤마 포함)
+        AI[액션]: 포트폴리오 조정 지시
+        AI[추천]: 위 리스트 중 가장 유망한 1종목 선정 (가격/금액/주수 명시. 데이터와 다를 경우 답변 금지)
+        한국어로 대답하세요.
+        """
         payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
         endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
         try:
@@ -1129,8 +1138,8 @@ class VibeStrategy:
         }
         
         with ThreadPoolExecutor(max_workers=3) as executor:
-            # 1. 시장 브리핑 및 전략 제안 (가장 중요)
-            future_briefing = executor.submit(self.ai_advisor.get_advice, self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg)
+            # 1. 시장 브리핑 및 전략 제안 (가장 중요) - 추천 종목 정보 추가 전달
+            future_briefing = executor.submit(self.ai_advisor.get_advice, self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg, self.ai_recommendations)
             
             # 2. 추천 종목 입체 분석 리포트
             future_detailed = executor.submit(self.ai_advisor.get_detailed_report_advice, self.ai_recommendations, self.analyzer.kr_vibe, progress_cb=progress_cb)

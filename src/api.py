@@ -82,6 +82,7 @@ class KISAPI:
                     "pdno": h.get("pdno"), "prdt_name": h.get("prdt_name"),
                     "hldg_qty": str(qty), "pchs_avg_pric": str(pchs_avg),
                     "prpr": str(prpr), "evlu_amt": str(evlu_amt), "evlu_pfls_rt": str(evlu_pfls_rt),
+                    "evlu_pfls_amt": h.get("evlu_pfls_amt", "0"),
                     "prdy_vrss": str(vrss), "prdy_ctrt": str(ctrt)
                 })
             raw_summary = data.get("output2", [{}])[0]

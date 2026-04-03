@@ -17,6 +17,7 @@
 - **✨ AI-Driven Decision Support**: Google Gemini API를 통해 월스트리트 수석 전략가 수준의 시장 브리핑과 종목별 입체 분석 보고서를 실시간으로 생성합니다.
 - **📋 Preset Strategy Engine**: KIS 공식 10대 매매 전략(골든크로스, 모멘텀, 52주신고가 등)을 내장하여 종목별로 최적의 전략을 AI가 시뮬레이션하고, 각 종목의 변동성/체력에 맞춰 **동적 TP/SL을 실시간 계산**하여 개별 최적화합니다.
 - **🛡️ 6-Pillar Architecture**: `ExitManager`, `MarketAnalyzer`, `RecoveryEngine`, `PyramidingEngine`, `VibeAlphaEngine`, `PresetStrategyEngine` 6대 핵심 모듈이 독립적이면서도 유기적으로 협력하여 자산을 안전하게 관리합니다.
+- **🕒 Time-based Market Phase**: 장 시작부터 마감까지 시간대별로 최적화된 매매 리듬(OFFENSIVE/CONVERGENCE 등 4단계)을 적용합니다. 익절/손절선을 시간대에 맞춰 자동으로 미세 보정합니다.
 - **🚀 Autonomous Trading (AUTO)**: AI가 발굴한 저평가/모멘텀 종목을 보합권 선취매 영역에서 스스로 매집하고, 동적 익절/손절 전략에 따라 자동으로 엑시트합니다.
 - **📊 Real-time TUI Interface**: 터미널 기반의 직관적인 UI(TUI)를 통해 국내/해외 지수, 포트폴리오 상태, AI 추천 종목을 한눈에 파악할 수 있습니다.
 
