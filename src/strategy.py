@@ -1233,18 +1233,23 @@ class VibeStrategy:
                 if self.ai_recommendations:
                     top_rec = self.ai_recommendations[0]
                     code, name = top_rec['code'], top_rec['name']
-                    amt = self.ai_config["amount_per_trade"]
                     
-                    if not skip_trade:
-                        price = float(top_rec.get('price', 0))
-                        qty = math.floor(amt / price) if price > 0 else 0
-                        if qty > 0:
-                            success, msg = self.api.order_market(code, qty, True)
-                            if success:
-                                self._last_closing_bet_date = today
-                                results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
-                                self.auto_assign_preset(code, name)
-                                self._save_all_states()
+                    # [Task 5-1] 중복 매수 방지: 이미 보유 중인 종목이면 건너뜀
+                    if any(h.get('pdno') == code for h in holdings):
+                        logger.info(f"P4 종가 베팅 건너뜀 (이미 보유 중): {name} ({code})")
+                        self._last_closing_bet_date = today # 오늘 이미 베팅 시도한 것으로 간주하여 반복 방지
+                    else:
+                        amt = self.ai_config["amount_per_trade"]
+                        if not skip_trade:
+                            price = float(top_rec.get('price', 0))
+                            qty = math.floor(amt / price) if price > 0 else 0
+                            if qty > 0:
+                                success, msg = self.api.order_market(code, qty, True)
+                                if success:
+                                    self._last_closing_bet_date = today
+                                    results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
+                                    self.auto_assign_preset(code, name)
+                                    self._save_all_states()
 
         for item in holdings:
             code = item.get("pdno")
