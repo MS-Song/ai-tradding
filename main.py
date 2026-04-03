@@ -436,6 +436,12 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         b_cfg = strategy.bear_config
         auto_st = "ON" if b_cfg.get("auto_mode") else "OFF"
         
+        # [Task 6] Market Phase 정보 및 아이콘 추가
+        phase = strategy.get_market_phase()
+        phase_icons = {"P1": "🔥", "P2": "🧘", "P3": "💰", "P4": "🛒", "IDLE": "💤"}
+        phase_icon = phase_icons.get(phase['id'], "💤")
+        phase_txt = f" [PHASE: {phase_icon}{phase['name']}]"
+
         if "Bear" in _cached_vibe:
             vibe_desc = f"(하락장: 물타기 [\033[94m{b_cfg.get('min_loss_to_buy')}% / {b_cfg.get('average_down_amount')/10000:,.0f}만 / 자동:{auto_st}\033[0m])"
         elif "Bull" in _cached_vibe:
@@ -453,7 +459,7 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         else:
             ai_msg_formatted = ""
             
-        buf.write(align_kr(f" VIBE: {v_c}{_cached_vibe.upper()}\033[0m {panic_txt} {vibe_desc}{ai_msg_formatted}", tw) + "\n")
+        buf.write(align_kr(f" VIBE: {v_c}{_cached_vibe.upper()}\033[0m{phase_txt} {panic_txt} {vibe_desc}{ai_msg_formatted}", tw) + "\n")
         
         # 3번 메뉴 명칭 변경: 전략 -> 자동
         buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 | S:셋업 | Q:종료", tw) + "\033[0m\n")
@@ -524,17 +530,18 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         w = [
             max(4, int(eff_w * 0.03)),  # NO
             max(5, int(eff_w * 0.04)),  # MKT
-            max(15, int(eff_w * 0.16)), # SYMBOL
+            max(15, int(eff_w * 0.15)), # SYMBOL
             max(10, int(eff_w * 0.09)), # CURR
-            max(14, int(eff_w * 0.13)), # DAY
-            max(10, int(eff_w * 0.09)), # AVG
+            max(14, int(eff_w * 0.12)), # DAY
+            max(10, int(eff_w * 0.08)), # AVG
             max(8, int(eff_w * 0.07)),  # QTY
-            max(10, int(eff_w * 0.09)), # EVAL
-            max(18, int(eff_w * 0.13)), # PnL
+            max(10, int(eff_w * 0.08)), # EVAL
+            max(18, int(eff_w * 0.12)), # PnL
             max(10, int(eff_w * 0.07)), # TP/SL
-            max(10, int(eff_w * 0.10))  # STGY
+            max(8, int(eff_w * 0.08)),  # STGY
+            max(6, int(eff_w * 0.07))   # REM
         ]
-        header = align_kr("NO",w[0])+align_kr("MKT",w[1])+align_kr("SYMBOL",w[2])+align_kr("CURR",w[3],'right')+align_kr("DAY",w[4],'right')+align_kr("AVG",w[5],'right')+align_kr("QTY",w[6],'right')+align_kr("EVAL",w[7],'right')+align_kr("PnL",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+align_kr("전략",w[10],'center')
+        header = align_kr("NO",w[0])+align_kr("MKT",w[1])+align_kr("SYMBOL",w[2])+align_kr("CURR",w[3],'right')+align_kr("DAY",w[4],'right')+align_kr("AVG",w[5],'right')+align_kr("QTY",w[6],'right')+align_kr("EVAL",w[7],'right')+align_kr("PnL",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+align_kr("전략",w[10],'center')+align_kr("남음",w[11],'right')
         buf.write("\033[1m" + align_kr(header, tw) + "\033[0m\n")
         f_h = _cached_holdings if _ranking_filter == "ALL" else [h for h in _cached_holdings if get_market_name(h.get('pdno','')) == _ranking_filter]
         
@@ -595,6 +602,17 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
                 preset_label = strategy.get_preset_label(code)
                 stgy_txt = preset_label if preset_label else "표준"
                 stgy_color = "\033[96m" if preset_label else "\033[90m"  # 시안색/회색
+
+                # [Task 6] 데드라인 남은 시간 계산
+                rem_txt = "-"
+                p_strat = strategy.preset_strategies.get(code)
+                if p_strat and p_strat.get('deadline'):
+                    try:
+                        deadline_dt = datetime.strptime(p_strat['deadline'], '%Y-%m-%d %H:%M:%S')
+                        diff = deadline_dt - datetime.now()
+                        rem_mins = int(diff.total_seconds() / 60)
+                        rem_txt = f"{rem_mins}M" if rem_mins > 0 else "EXP"
+                    except: rem_txt = "ERR"
                 
                 row = align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name_disp}" + (" *" if spike else ""), w[2]) + \
                       align_kr(f"{int(p_cu):,}", w[3], 'right') + \
@@ -604,7 +622,8 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
                       align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + \
                       color + align_kr(pnl_txt, w[8], 'right') + "\033[0m" + \
                       "  " + align_kr(f"{tp:+.1f}/{sl:+.1f}%", w[9], 'right') + \
-                      stgy_color + align_kr(stgy_txt, w[10], 'center') + "\033[0m"
+                      stgy_color + align_kr(stgy_txt, w[10], 'center') + "\033[0m" + \
+                      align_kr(rem_txt, w[11], 'right')
                 buf.write(align_kr(row, tw) + "\n")
             
             if len(f_h) > max_h_display:
