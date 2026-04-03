@@ -1217,9 +1217,42 @@ class VibeStrategy:
         return recs
 
     def run_cycle(self, market_trend="neutral", skip_trade=False):
-        holdings = self.api.get_balance(); results, curr_t = [], time.time()
+        holdings = self.api.get_balance()
+        results, curr_t = [], time.time()
+        phase = self.get_market_phase()
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
         for item in holdings:
             code = item.get("pdno")
+            p_strat = self.preset_strategies.get(code)
+            
+            # [Task 4] 시간 기반 자동 매매 액션 구현
+            if p_strat:
+                # 1. Time-Stop 체크: 데드라인 초과 시 TP 하향 (수익 보존)
+                if p_strat.get('deadline') and now_str > p_strat['deadline']:
+                    curr_rt = float(item.get("evlu_pfls_rt", 0.0))
+                    if curr_rt >= 0.5:
+                        p_strat['tp'] = max(0.5, curr_rt / 2.0)
+                        results.append(f"Time-Stop TP 하향: {item.get('prdt_name')} ({p_strat['tp']:.1f}%)")
+                    # 처리가 완료된 종목은 deadline을 None으로 설정하여 중복 실행 방지
+                    p_strat['deadline'] = None 
+                    self._save_all_states()
+
+                # 2. Phase 3 (CONCLUSION): 수익권 50% 분할 매도 및 SL 상향
+                if phase['id'] == "P3" and not p_strat.get('is_p3_processed'):
+                    curr_rt = float(item.get("evlu_pfls_rt", 0.0))
+                    if curr_rt >= 0.5:
+                        sell_qty = int(float(item.get('hldg_qty', 0))) // 2
+                        if sell_qty > 0 and not skip_trade:
+                            success, msg = self.api.order_market(code, sell_qty, False)
+                            if success:
+                                p_strat['is_p3_processed'] = True
+                                # 남은 수량의 SL을 +0.2%(본전 보호)로 상향
+                                p_strat['sl'] = 0.2 
+                                results.append(f"P3 수익확정(50%): {item.get('prdt_name')}")
+                                self._save_all_states()
+
+            # 3. 기존 TP/SL 체크 로직
             tp, sl, _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
             rt = float(item.get("evlu_pfls_rt", 0.0))
             action, sell_qty = None, 0
