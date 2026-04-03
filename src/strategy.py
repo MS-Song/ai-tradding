@@ -387,9 +387,9 @@ class VibeAlphaEngine:
             with ThreadPoolExecutor(max_workers=5) as executor:
                 list(executor.map(apply_sentiment, top_stocks))
 
-        # 최종 정렬 후 개별 종목 상위 5개, ETF 상위 1개 선정 (5+1 구조)
-        final_stocks = sorted(top_stocks, key=lambda x: x['score'], reverse=True)[:5]
-        final_etfs = sorted(top_etfs, key=lambda x: x['score'], reverse=True)[:1]
+        # 최종 정렬 후 개별 종목 상위 8개, ETF 상위 2개 선정 (8+2 구조)
+        final_stocks = sorted(top_stocks, key=lambda x: x['score'], reverse=True)[:8]
+        final_etfs = sorted(top_etfs, key=lambda x: x['score'], reverse=True)[:2]
         
         return final_stocks + final_etfs
 
@@ -503,15 +503,13 @@ class GeminiAdvisor:
         1. **가격 절대 준수**: 추천주의 매수가격은 반드시 위 리스트에 제공된 '1주당 현재가'의 ±3% 이내에서만 제안하세요. 리스트에 없는 가격을 상상해서 적지 마세요.
         2. **매수 가능 여부 확인**: (매수 권장 금액)이 (추천주 1주당 현재가)보다 작으면 절대 추천하지 마세요. 최소 1주는 살 수 있어야 합니다.
         3. **수치 논리**: 추가매수(물타기) 지점 > 손절선(SL), 불타기지점 < 익절선(TP) 공식을 반드시 지키세요.
-        4. **양식 준수**:
-           - AI[전략]: 익절 +X.X%, 손절 -Y.Y%, 물타기 -Z.Z%, 불타기 +W.W%, 금액 N원
-           - AI[추천]: 종목명(코드), 권장매수가 N원, 예상매수주수 M주
+        4. **[중요] 분량 제한**: AI[액션]과 AI[추천]은 반드시 **각각 단 1줄**로만 요약하세요. 여러 줄 출력 절대 금지.
         
         [답변 형식]
-        AI[시장]: 요약
-        AI[전략]: 수치 (금액은 반드시 콤마 포함)
-        AI[액션]: 포트폴리오 조정 지시
-        AI[추천]: 위 리스트 중 가장 유망한 1종목 선정 (가격/금액/주수 명시. 데이터와 다를 경우 답변 금지)
+        AI[시장]: 요약 (1줄)
+        AI[전략]: 익절 +X.X%, 손절 -Y.Y%, 물타기 -Z.Z%, 불타기 +W.W%, 금액 N원
+        AI[액션]: 포트폴리오 조정 및 매수 실행 여부 요약 (1줄 고정)
+        AI[추천]: 종목명(코드), 권장매수가 N원, 예상매수주수 M주 (1줄 고정)
         한국어로 대답하세요.
         """
         payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
@@ -1109,9 +1107,8 @@ class VibeStrategy:
 
     def update_ai_recommendations(self, themes, hot_raw, vol_raw, progress_cb: Optional[Callable] = None, on_item_found: Optional[Callable] = None):
         try: 
-            # 분석 전 기존 추천 목록을 초기화 (실시간 스트리밍 업데이트를 위함)
-            if on_item_found:
-                self.ai_recommendations = []
+            # 분석 전 기존 추천 목록을 항상 초기화 (이전 캐시 잔상 제거 및 실시간 업데이트 위함)
+            self.ai_recommendations = []
                 
             recs = self.alpha_eng.analyze(
                 themes, hot_raw, vol_raw, 

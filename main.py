@@ -520,11 +520,17 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         
         # --- [이동] AI 브리핑 출력 (커맨드 메뉴 바로 아래) ---
         if strategy.ai_briefing and not prompt_mode:
-            # AI 브리핑 출력 (시장, 전략, 액션, 추천 4개 라인 활용)
-            brief_lines = [line.strip() for line in strategy.ai_briefing.split('\n') if line.strip()][:4]
-            for line in brief_lines:
-                buf.write("\033[1;95m" + align_kr(f" {line}", tw) + "\033[0m\n")
-            for _ in range(4 - len(brief_lines)): buf.write("\n")
+            # AI 브리핑 출력 (시장, 전략, 액션, 추천 각 1줄씩 총 4개 라인 고정)
+            all_lines = [line.strip() for line in strategy.ai_briefing.split('\n') if line.strip()]
+            brief_map = {"시장": "", "전략": "", "액션": "", "추천": ""}
+            for l in all_lines:
+                for k in brief_map.keys():
+                    if f"AI[{k}]:" in l: brief_map[k] = l; break
+            
+            # 순서대로 4줄 출력 (내용이 없어도 라인 확보)
+            for k in ["시장", "전략", "액션", "추천"]:
+                line_txt = brief_map[k] if brief_map[k] else f"AI[{k}]: 분석 데이터 없음"
+                buf.write("\033[1;95m" + align_kr(f" {line_txt}", tw) + "\033[0m\n")
         elif prompt_mode: 
             buf.write("\033[1;33m" + align_kr(f" >>> [{prompt_mode} MODE] 입력 대기 중... (ESC 취소)", tw) + "\033[0m\n")
             buf.write("\n" * 3)
@@ -601,31 +607,21 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         f_h = _cached_holdings if _ranking_filter == "ALL" else [h for h in _cached_holdings if get_market_name(h.get('pdno','')) == _ranking_filter]
         
         # --- 레이아웃 동적 계산 (자산 리스트 우선) ---
-        # 상단(10)+브리핑(4)+자산/전략(6)+테마/추천(9)+하단(5) = 약 34줄 (BULL 추가로 1줄 증가)
-        # 30줄 터미널에서도 작동할 수 있도록 유연하게 조정
-        fixed_h = 27 if th < 35 else 34
-        available_h = max(3, th - fixed_h)
+        # 상단(6)+브리핑(4)+자산/전략(6)+테마(3)+랭킹헤더(2)+로그(2) = 약 23줄 (고정 영역)
+        # 랭킹 10줄을 포함하면 총 33줄이 최소 필요 높이
+        base_fixed = 23
+        ranking_target = 10
         
         asset_count = len(f_h)
-        if asset_count == 0:
-            max_h_display = 1
-            ranking_items_count = max(5, min(10, available_h))
-        else:
-            # 1. 자산 리스트에 우선 배분
-            max_h_display = min(asset_count, available_h)
-            if th < 35: # 작은 화면에서는 자산 리스트를 더 축약
-                max_h_display = min(max_h_display, 5)
-            
-            # 2. 남은 공간을 랭킹에 배분
-            ranking_items_count = max(0, th - (fixed_h + max_h_display))
-            if th < 35: # 작은 화면에서도 최소 3개는 보이도록 강제
-                ranking_items_count = max(3, min(8, ranking_items_count))
-            else:
-                ranking_items_count = max(3, min(10, ranking_items_count))
-                # 랭킹을 위해 자산 리스트를 더 축소 (필요시)
-                if fixed_h + max_h_display + ranking_items_count > th:
-                    max_h_display = max(1, th - fixed_h - ranking_items_count)
-
+        # 랭킹 10개와 고정 영역을 제외한 나머지 공간을 자산 리스트에 할당
+        max_h_display = max(1, th - base_fixed - ranking_target)
+        
+        # 만약 보유 종목이 적다면 남는 공간을 랭킹에 더 주거나 그냥 둠 (여기서는 자산 리스트 최적화)
+        if asset_count < max_h_display:
+            max_h_display = asset_count
+        
+        # 랭킹 아이템 수는 남은 공간 전체 활용 (최대 10개)
+        ranking_items_count = min(10, max(3, th - base_fixed - max_h_display))
         if not f_h: 
             buf.write(align_kr(f"No active {_ranking_filter} holdings found.", tw, 'center') + "\n")
         else:
@@ -677,7 +673,7 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
                       align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + \
                       color + align_kr(pnl_txt, w[8], 'right') + "\033[0m" + \
                       "  " + align_kr(f"{tp:+.1f}/{sl:+.1f}%", w[9], 'right') + \
-                      stgy_color + align_kr(stgy_txt, w[10], 'center') + "\033[0m" + \
+                      "  " + stgy_color + align_kr(stgy_txt, w[10], 'center') + "\033[0m" + \
                       align_kr(rem_txt, w[11], 'right')
                 buf.write(align_kr(row, tw) + "\n")
             
@@ -695,66 +691,24 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
             buf.write("\n")
         buf.write("-" * tw + "\n")
         
-        # --- AI 추천 섹션 (일반 5개 + ETF 1개, 2줄 고정 배치) ---
-        ai_mode = "[\033[91mAUTO\033[0m]" if strategy.auto_ai_trade else "[\033[93mMANUAL\033[0m]"
-        buf.write("\033[1;92m" + align_kr(f" ✨ AI 추천 {ai_mode} (보합/저평가 선점)", tw) + "\033[0m\n")
-        
-        recs = strategy.ai_recommendations
-        if not recs:
-            buf.write(align_kr(" ... 유망 종목 및 ETF 분석 중 ...", tw) + "\n")
-            buf.write("\n")
-        else:
-            stocks = [r for r in recs if not r.get('is_etf')][:5]
-            etfs = [r for r in recs if r.get('is_etf')][:1]
-            col_w = (tw - 4) // 3
-            
-            # Row 1: 종목 1, 2, 3위
-            row1 = " "
-            for idx in range(3):
-                if idx < len(stocks):
-                    r = stocks[idx]
-                    rate = float(r['rate'])
-                    color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
-                    row1 += align_kr(f"({r['theme'][:3]}) [{r['code']}] {r['name'][:8]} ({color}{rate:+.1f}%\033[0m)", col_w) + " "
-            buf.write(row1.rstrip() + "\n")
-            
-            # Row 2: 종목 4, 5위 + ETF 1위
-            row2 = " "
-            for idx in range(3, 5):
-                if idx < len(stocks):
-                    r = stocks[idx]
-                    rate = float(r['rate'])
-                    color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
-                    row2 += align_kr(f"({r['theme'][:3]}) [{r['code']}] {r['name'][:8]} ({color}{rate:+.1f}%\033[0m)", col_w) + " "
-            if etfs:
-                r = etfs[0]
-                rate = float(r['rate'])
-                color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
-                row2 += align_kr(f"(ETF) [{r['code']}] {r['name'][:12]} ({color}{rate:+.1f}%\033[0m)", col_w)
-            buf.write(row2.rstrip() + "\n")
-            
-        buf.write("-" * tw + "\n")
-
-        # --- 어제 추천 종목 성과 (Yesterday's Recs) - AI 추천 바로 아래로 배치 ---
+        # --- 어제 추천 종목 성과 (Yesterday's Recs) ---
         y_recs = strategy.yesterday_recs_processed
         if y_recs:
             top_y = y_recs[:3]
-            # 타이틀은 회색(90), 종목명은 기본 밝은색(0)으로 분리하여 가독성 확보
             y_content = ""
             for r in top_y:
                 color = "\033[91m" if r['change'] >= 0 else "\033[94m"
-                # 종목명 앞에 \033[0m를 추가하여 타이틀의 회색(90m) 영향을 벗어남
                 y_content += f"\033[0m{r['name']}({color}{r['change']:+0.2f}%\033[0m) | "
-            
             y_line = f"\033[90m 📅 어제 추천 성과: {y_content.rstrip(' | ')}"
             buf.write(align_kr(y_line, tw) + "\033[0m\n")
         else:
             buf.write(align_kr("\033[90m 📅 어제 추천 이력이 없습니다.", tw) + "\033[0m\n")
         buf.write("-" * tw + "\n")
 
-        left_w, right_w = (tw - 3) // 2, tw - 3 - (tw - 3) // 2
+        # --- 최하단 3단 랭킹 구성 (HOT | VOLUME | AI) ---
+        col_w = (tw - 6) // 3
         
-        # 네이버 랭킹 필터링 및 슬라이싱
+        # 1. 데이터 필터링 및 슬라이싱
         if _ranking_filter == "ALL":
             hot_list = _cached_hot_raw[:ranking_items_count]
             vol_list = _cached_vol_raw[:ranking_items_count]
@@ -762,28 +716,70 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
             hot_list = [g for g in _cached_hot_raw if str(g.get('mkt','')).strip().upper() == _ranking_filter.strip().upper() or _ranking_filter == "ALL"][:ranking_items_count]
             vol_list = [l for l in _cached_vol_raw if str(l.get('mkt','')).strip().upper() == _ranking_filter.strip().upper() or _ranking_filter == "ALL"][:ranking_items_count]
 
-        # Fallback: 인기검색어가 비어있을 경우 거래량 상위 종목 중 등락률 높은 순으로 대체
-        if not hot_list and _cached_vol_raw:
-            fallback_hot = sorted(_cached_vol_raw, key=lambda x: abs(x.get('rate', 0)), reverse=True)
-            hot_list = fallback_hot[:ranking_items_count]
+        # 2. AI 추천 데이터 (3단 구성을 위해 슬라이싱)
+        ai_recs = strategy.ai_recommendations[:ranking_items_count]
+        ai_mode_txt = "AUTO" if strategy.auto_ai_trade else "MANUAL"
+        ai_color = "\033[91m" if strategy.auto_ai_trade else "\033[93m"
 
-        def format_rank(item, is_hot=True, width=left_w):
+        def format_rank(item, width=col_w):
             if not item: return " " * width
-            rw = [4, 9, 14, 10, 8]
-            rt_v = f"{float(item['rate']):>6.2f}%"
-            row = f"{align_kr(item.get('mkt','KSP')[:3],rw[0])} {align_kr(f'[{item['code']}]',rw[1])} {align_kr(item['name'],rw[2])} {align_kr(f'{int(float(item['price'])):,}',rw[3],'right')} {align_kr(rt_v,rw[4],'right')}"
-            return align_kr(row.replace(rt_v, f"{('\033[91m' if float(item['rate']) >= 0 else '\033[94m')}{rt_v}\033[0m"), width)
+            rate = float(item['rate'])
+            price = int(float(item.get('price', 0)))
+            color = "\033[91m" if rate >= 0 else "\033[94m"
             
-        buf.write(f"\033[1;93m{align_kr('🔥 HOT SEARCH (Naver)', left_w)}\033[0m │ \033[1;96m{align_kr('📊 VOLUME TOP (Naver)', right_w)}\033[0m\n")
-        buf.write("─" * left_w + "─┼─" + "─" * right_w + "\n")
+            # [코드] + (가격/등락%) 의 고정 너비 계산
+            code_part = f"[{item['code']}] "
+            price_part = f"({price:,}/{color}{rate:>+4.1f}%\033[0m)"
+            fixed_w = get_visual_width(code_part) + get_visual_width(ANSI_ESCAPE.sub('', price_part))
+            
+            # 가용 이름 너비 계산
+            avail_name_w = width - fixed_w - 1
+            name_txt = item['name']
+            if get_visual_width(name_txt) > avail_name_w:
+                # 공간 부족 시 축약 (.. 포함)
+                while get_visual_width(name_txt + "..") > avail_name_w and len(name_txt) > 1:
+                    name_txt = name_txt[:-1]
+                name_txt += ".."
+            
+            row = f"{code_part}{name_txt} {price_part}"
+            return align_kr(row, width)
+
+        def format_ai_rec(item, width=col_w):
+            if not item: return " " * width
+            rate = float(item.get('rate', 0))
+            price = int(float(item.get('price', 0)))
+            color = "\033[91m" if rate >= 0 else "\033[94m"
+            
+            # 테마 + [코드] + (가격/등락%) 고정 너비
+            theme_txt = f"({item.get('theme','?')[0:2]})"
+            code_part = f"[{item['code']}] "
+            price_part = f"({price:,}/{color}{rate:>+4.1f}%\033[0m)"
+            fixed_w = get_visual_width(theme_txt) + get_visual_width(code_part) + get_visual_width(ANSI_ESCAPE.sub('', price_part))
+            
+            avail_name_w = width - fixed_w - 1
+            name_txt = item['name']
+            if get_visual_width(name_txt) > avail_name_w:
+                while get_visual_width(name_txt + "..") > avail_name_w and len(name_txt) > 1:
+                    name_txt = name_txt[:-1]
+                name_txt += ".."
+                
+            row = f"{theme_txt}{code_part}{name_txt} {price_part}"
+            return align_kr(row, width)
+
+        # 헤더 출력 (상태에 따라 색상 부여)
+        ai_head_txt = f"✨ AI 추천 {ai_color}[{ai_mode_txt}]\033[1;92m"
+        h_str = f"\033[1;93m{align_kr('🔥 HOT SEARCH', col_w)}\033[0m │ \033[1;96m{align_kr('📊 VOLUME TOP', col_w)}\033[0m │ \033[1;92m{align_kr(ai_head_txt, col_w)}\033[0m"
+        buf.write(h_str + "\n")
+        buf.write("─" * col_w + "─┼─" + "─" * col_w + "─┼─" + "─" * col_w + "\n")
         
-        if not hot_list and not vol_list:
-            buf.write(align_kr("네이버 랭킹 데이터 수집 중...", tw, 'center') + "\n")
-            if ranking_items_count > 1:
-                buf.write("\n" * (ranking_items_count - 1))
+        if not hot_list and not vol_list and not ai_recs:
+            buf.write(align_kr("데이터 수집 중...", tw, 'center') + "\n")
         else:
-            for i in range(ranking_items_count): 
-                buf.write(f"{format_rank(hot_list[i] if i < len(hot_list) else None, True, left_w)} │ {format_rank(vol_list[i] if i < len(vol_list) else None, False, right_w)}\n")
+            for i in range(ranking_items_count):
+                row = f"{format_rank(hot_list[i] if i < len(hot_list) else None)} │ " + \
+                      f"{format_rank(vol_list[i] if i < len(vol_list) else None)} │ " + \
+                      f"{format_ai_rec(ai_recs[i] if i < len(ai_recs) else None)}"
+                buf.write(row + "\n")
     
     # --- 하단 로그 및 상태창 배분 (로그 축약 로직 강화) ---
     line_count = buf.getvalue().count('\n')
@@ -882,10 +878,10 @@ def input_with_esc(prompt, tw):
         time.sleep(0.01)
 
 def draw_recommendation_report(strategy, tw, th):
-    """AI 추천 종목의 상세 분석 정보를 전체 화면으로 출력"""
+    """AI 추천 종목(총 10개)의 상세 분석 정보를 전체 화면으로 출력"""
     buf = io.StringIO()
     buf.write("\033[H\033[2J") # 화면 전체 삭제
-    header = " [AI DETAILED STRATEGY REPORT] "
+    header = " [AI DETAILED STRATEGY REPORT: TOP 10 RECOMMENDATIONS] "
     buf.write("\033[42;30m" + align_kr(header, tw, 'center') + "\033[0m\n\n")
     
     # --- AI 시장 전망 섹션 (시장 브리핑 전체 출력) ---
@@ -903,36 +899,36 @@ def draw_recommendation_report(strategy, tw, th):
     if not recs:
         buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. 'A'를 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
     else:
-        # 표 헤더 (지표 통합)
-        h = f"{align_kr('테마', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 9)} | {align_kr('등락', 7)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('배당', 6)} | {align_kr('업종PER', 7)} | {align_kr('AI점수', 6)} | 발굴 근거"
+        # 표 헤더 (10개 종목 출력을 위해 컴팩트하게 구성)
+        h = f"{align_kr('테마', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 9)} | {align_kr('등락', 7)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('AI점수', 6)} | 발굴 근거"
         buf.write("\033[1m" + h + "\033[0m\n")
         buf.write("-" * tw + "\n")
         
+        # 10개 종목 전체 출력
         for r in recs:
             code = r['code']
             rate = float(r['rate'])
             color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
             rate_txt = f"{color}{rate:+.1f}%\033[0m"
             gem_mark = "💎" if r.get('is_gem') else "  "
+            if r.get('is_etf'): gem_mark = "📊"
             
-            # 지표 데이터 실시간 수집 (캐시 활용)
             detail = strategy.api.get_naver_stock_detail(code)
             
-            row = f"{align_kr(r['theme'], 8)} | {align_kr(code, 8)} | {align_kr(gem_mark + r['name'], 14)} | {align_kr(f'{int(float(r.get('price',0))):,}', 9, 'right')} | {align_kr(rate_txt, 7, 'right')} | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('yield','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')} | {align_kr(f'{r['score']:.1f}', 6, 'right')} | {r['reason']}"
+            row = f"{align_kr(r['theme'], 8)} | {align_kr(code, 8)} | {align_kr(gem_mark + r['name'], 14)} | {align_kr(f'{int(float(r.get('price',0))):,}', 9, 'right')} | {align_kr(rate_txt, 7, 'right')} | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(f'{r['score']:.1f}', 6, 'right')} | {r['reason']}"
             buf.write(row + "\n")
             
-    # --- AI 심층 투자 의견 (공간 최적화 출력) ---
+    # --- AI 심층 투자 의견 (전략 리포트) ---
     buf.write("\n" + "-" * tw + "\n")
     buf.write("\033[1;92m" + " [AI 수석 전략가 입체 분석 및 대응 전략]" + "\033[0m\n")
     
     if strategy.ai_detailed_opinion:
         opinion_lines = [l.strip() for l in strategy.ai_detailed_opinion.split('\n') if l.strip()]
-        # 터미널 높이에 따라 유동적으로 조절 (최대 15줄까지 허용)
-        max_opinion_h = max(5, th - 25) # 대략적인 나머지 공간 계산
-        for line in opinion_lines[:max_opinion_h]:
+        # 10개 종목 출력 후 남은 공간에 최대한 출력
+        for line in opinion_lines:
             buf.write(f" > {line}\n")
     else:
-        buf.write(" ⚠️ 아직 생성된 분석 의견이 없습니다. 'A'를 눌러 분석을 먼저 수행하세요.\n")
+        buf.write(" ⚠️ 아직 생성된 상세 분석 의견이 없습니다. '8:시황'을 실행하세요.\n")
             
     buf.write("-" * tw + "\n")
     buf.write(align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
@@ -1418,6 +1414,9 @@ def perform_interaction(key, api, strategy, cycle):
                         last_draw_t[0] = time.time()
 
                 show_status("🧠 Gemini AI가 시장 상황을 분석 중입니다. 잠시만 기다려주세요...")
+                # 분석 시작 전 기존 추천 목록을 즉시 비워서 AI 검토 완료된 건만 보이게 함
+                with _data_lock:
+                    strategy.ai_recommendations = []
                 draw_tui(strategy, cycle)
                 set_busy("AI 시장 분석")
                 try:
