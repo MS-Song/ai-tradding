@@ -52,10 +52,37 @@ class KISAPI:
             for h in raw_holdings:
                 qty = int(self._safe_float(h.get('hldg_qty', 0)))
                 if qty <= 0: continue
+                
+                # 수치 데이터 안전하게 추출
+                pchs_avg = self._safe_float(h.get('pchs_avg_pric', 0))
+                prpr = self._safe_float(h.get('prpr', 0))
+                evlu_amt = self._safe_float(h.get('evlu_amt', 0))
+                evlu_pfls_rt = self._safe_float(h.get('evlu_pfls_rt', 0))
+                
+                # 전일 대비 변동 데이터 수집 및 폴백 로직
+                vrss = self._safe_float(h.get('prdy_vrss', 0))
+                ctrt = self._safe_float(h.get('prdy_ctrt', 0))
+                bfdy = self._safe_float(h.get('bfdy_zprc', 0))
+                
+                # 폴백: 전일대비 데이터가 0인데 전일종가가 있는 경우 계산
+                if vrss == 0 and bfdy > 0 and prpr > 0:
+                    vrss = prpr - bfdy
+                    ctrt = (vrss / bfdy) * 100
+                else:
+                    # 부호 보정
+                    sign = h.get('prdy_vrss_sign', '3')
+                    if sign == '5': # 하락
+                        vrss = -abs(vrss)
+                        if ctrt > 0: ctrt = -ctrt
+                    elif sign == '2': # 상승
+                        vrss = abs(vrss)
+                        if ctrt < 0: ctrt = abs(ctrt)
+
                 holdings.append({
                     "pdno": h.get("pdno"), "prdt_name": h.get("prdt_name"),
-                    "hldg_qty": str(qty), "pchs_avg_pric": h.get("pchs_avg_pric"),
-                    "prpr": h.get("prpr"), "evlu_amt": h.get("evlu_amt"), "evlu_pfls_rt": h.get("evlu_pfls_rt")
+                    "hldg_qty": str(qty), "pchs_avg_pric": str(pchs_avg),
+                    "prpr": str(prpr), "evlu_amt": str(evlu_amt), "evlu_pfls_rt": str(evlu_pfls_rt),
+                    "prdy_vrss": str(vrss), "prdy_ctrt": str(ctrt)
                 })
             raw_summary = data.get("output2", [{}])[0]
             # 실제 주식 앱 기준 매핑: 
@@ -64,18 +91,26 @@ class KISAPI:
             # - total_asset: 주식평가액 + 예수금
             # - pnl: 평가손익 합계
             stock_eval = self._safe_float(raw_summary.get("evlu_amt_smtl_amt"))
-            cash = self._safe_float(raw_summary.get("dnca_tot_amt")) # D+2 예상예수금
+            stock_principal = self._safe_float(raw_summary.get("pchs_amt_smtl_amt"))
+            # D+0(dnca_tot_amt) 사용 시 미결제 주식 이중합산 오류 발생! 
+            # D+2(prvs_rcdl_excc_amt) 가수도정산금액을 실질 가용 현금(Cash)으로 사용
+            cash = self._safe_float(raw_summary.get("prvs_rcdl_excc_amt")) 
+            if cash == 0: cash = self._safe_float(raw_summary.get("dnca_tot_amt"))
+            
             pnl = self._safe_float(raw_summary.get("evlu_pfls_smtl_amt"))
+            total_asset = self._safe_float(raw_summary.get("tot_evlu_amt"))
             
             asset_info = {
-                "total_asset": stock_eval + cash,
+                "total_asset": total_asset,
+                "total_principal": stock_principal + cash,
                 "stock_eval": stock_eval,
+                "stock_principal": stock_principal,
                 "cash": cash,
                 "pnl": pnl,
                 "deposit": self._safe_float(raw_summary.get("prvs_rcdl_exca_amt") or 0)
             }
             return holdings, asset_info
-        except: return [], {"total_asset":0, "stock_eval":0, "cash":0, "pnl":0, "deposit":0}
+        except: return [], {"total_asset":0, "total_principal":0, "stock_eval":0, "stock_principal":0, "cash":0, "pnl":0, "deposit":0}
 
     def get_balance(self): return self.get_full_balance()[0]
 
@@ -86,8 +121,15 @@ class KISAPI:
         try:
             res = self._request("GET", url, headers=headers, params=params, timeout=5)
             d = res.json().get("output", {})
-            return {"price": self._safe_float(d.get("stck_prpr")), "vol": self._safe_float(d.get("acml_vol")),
-                    "prev_vol": self._safe_float(d.get("prdy_vol")), "high": self._safe_float(d.get("stck_hgpr")), "low": self._safe_float(d.get("stck_lwpr"))}
+            return {
+                "price": self._safe_float(d.get("stck_prpr")), 
+                "vrss": self._safe_float(d.get("prdy_vrss")),
+                "ctrt": self._safe_float(d.get("prdy_ctrt")),
+                "vol": self._safe_float(d.get("acml_vol")),
+                "prev_vol": self._safe_float(d.get("prdy_vol")), 
+                "high": self._safe_float(d.get("stck_hgpr")), 
+                "low": self._safe_float(d.get("stck_lwpr"))
+            }
         except: return None
 
     def order_market(self, code: str, qty: int, is_buy: bool, price: int = 0) -> Tuple[bool, str]:

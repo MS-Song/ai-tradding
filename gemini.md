@@ -3,7 +3,7 @@
 ## 1. Project Overview
 * **Name:** KIS-Vibe-Trader
 * **Goal:** 시니어 아키텍트의 설계 사상이 반영된 객체지향형 자율 트레이딩 엔진.
-* **Architecture**: `ExitManager`, `MarketAnalyzer`, `RecoveryEngine`, `PyramidingEngine`, `VibeAlphaEngine` 5대 모듈 중심.
+* **Architecture**: `ExitManager`, `MarketAnalyzer`, `RecoveryEngine`, `PyramidingEngine`, `VibeAlphaEngine`, `PresetStrategyEngine` 6대 모듈 중심.
 * **Response Policy**: 모든 답변과 설명은 반드시 **한국어**로 작성함.
 * **Documentation Policy**: 
     *   모든 주요 기능 변경 및 추가 시 `gemini.md`와 관련 설계서(`specs/`)를 최신화함.
@@ -74,12 +74,29 @@
 *   **AI Fallback**: Gemini API 장애(토큰 소진, 네트워크 에러, 타임아웃) 발생 시 **기존 알고리즘 모드로 자동 전환**하여 무중단 운영.
 *   **리눅스 호환성**: 터미널 Raw 모드 및 ESC 키 인터랙션을 완벽 지원하여 환경에 구애받지 않는 안정적 제어 보장.
 
+### H. 프리셋 전략 엔진 (Preset Strategy Engine)
+*   **KIS 10대 공식 전략 + 표준 전략(11개)**: 골든크로스, 모멘텀, 52주신고가, 연속상승, 이격도, 돌파실패, 강한종가, 변동성확장, 평균회귀, 추세필터 + 표준(기본)
+*   **우선순위**: 프리셋 전략이 할당된 종목은 **표준 전략(Vibe 보정 TP/SL)보다 최우선 적용**됨.
+*   **AI 기반 동적 보정 (Policy)**: 
+    *   모든 프리셋 전략은 AI가 종목의 [펀더멘털 + 차트 흐름 + 뉴스]를 분석하여 **동적 TP/SL을 계산**함.
+    *   전략별 기본 베이스라인(Baseline) 수치는 다음과 같으나, AI 판단에 따라 ±2~4% 범위 내외에서 개별 최적화됨.
+    *   **Baseline Table**:
+        1. 골든크로스 (+8%/-4%) | 2. 모멘텀 (+10%/-5%) | 3. 52주신고가 (+12%/-3%)
+        4. 연속상승 (+7%/-4%) | 5. 이격도 (+5%/-3%) | 6. 돌파실패 (+4%/-2%)
+        7. 강한종가 (+6%/-3.5%) | 8. 변동성확장 (+9%/-4%) | 9. 평균회귀 (+4%/-3%)
+        10. 추세필터 (+8%/-5%)
+*   **표준 모드**: `00:표준` 선택 시 프리셋을 해제하고 기존 디폴트 전략(Vibe 보정 포함)으로 복귀.
+*   **AI 자동 추천**: 엔터(빈 입력) 시 Gemini가 종목 분석 후 10개 프리셋 중 최적 전략 + 동적 TP/SL을 자동 계산하여 적용.
+*   **자동 매수 연동**: AI 자율 매수 모드에서 신규 매수 성공 시 프리셋 전략이 자동으로 할당됨.
+*   **영속성**: `trading_state.json`의 `preset_strategies` 딕셔너리에 저장되어 재시작 시 자동 복구.
+*   **TUI 표시**: 보유 종목 TP/SL 우측에 `[전략명]` 태그 (시안색) — 단축키 `9`
+
 ---
 
 ## 3. TUI 단축키 맵 (최신)
 
 ```
-[COMMANDS] 1:매도 | 2:매수 | 3:전략 | 4:추천 | 5:물타기 6:불타기 | 7:분석 8:시황 | 리포트 B:보유 D:추천 H:인기 | S:셋업 | Q:종료
+[COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 | S:셋업 | Q:종료
 ```
 
 ## 4. 설정 영속성 구조 (`trading_state.json`)
@@ -94,6 +111,7 @@
     "ai_config": { "amount_per_trade": 500000, "min_score": 60.0, "max_investment_per_stock": 2000000, "auto_mode": false },
     "bear_config": { "min_loss_to_buy": -3.0, "average_down_amount": 500000, "max_investment_per_stock": 2000000, "auto_mode": false },
     "bull_config": { "min_profit_to_pyramid": 3.0, "average_down_amount": 500000, "max_investment_per_stock": 25000000, "auto_mode": false },
+    "preset_strategies": { "005930": { "preset_id": "01", "name": "골든크로스", "tp": 8.5, "sl": -3.5, "reason": "AI 분석 기반" } },
     "recommendation_history": {}
 }
 ```

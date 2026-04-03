@@ -21,7 +21,7 @@ if os.name != 'nt':
 from src.logger import logger
 from src.auth import KISAuth
 from src.api import KISAPI
-from src.strategy import VibeStrategy
+from src.strategy import VibeStrategy, PRESET_STRATEGIES
 from src.config_init import ensure_env, get_config
 
 # --- OS/Terminal 설정 ---
@@ -157,7 +157,7 @@ _last_log_time = 0
 _trading_logs = [] # 최근 10개 거래 로그
 _last_size = (0, 0)
 _cached_holdings = []
-_cached_asset = {"total_asset":0, "stock_eval":0, "cash":0, "pnl":0, "deposit":0}
+_cached_asset = {"total_asset":0, "total_principal":0, "stock_eval":0, "stock_principal":0, "cash":0, "pnl":0, "deposit":0}
 _cached_stock_info = {} # 종목별 추가 정보 캐시 (TP/SL, 볼륨 스파이크 등)
 _cached_hot_raw = []
 _cached_vol_raw = []
@@ -169,6 +169,7 @@ _last_update_time = ""
 _ranking_filter = "ALL"
 _is_kr_market_active = False
 _data_lock = threading.Lock()
+_ui_lock = threading.Lock()
 
 # 개별 갱신 시각 관리
 _last_times = {"index": 0, "asset": 0, "ranking": 0}
@@ -176,6 +177,12 @@ _last_times = {"index": 0, "asset": 0, "ranking": 0}
 def show_status(msg, is_error=False):
     global _status_msg, _status_time
     color = "\033[91m" if is_error else "\033[92m"
+    # 터미널 너비 초과 방지 (ANSI 코드 제외 실제 표시 길이 기준 잘라냄)
+    try:
+        max_len = os.get_terminal_size().columns - 12  # [STATUS] + 여백
+    except: max_len = 100
+    if len(msg) > max_len:
+        msg = msg[:max_len - 2] + ".." 
     _status_msg = f"{color}[STATUS] {msg}\033[0m"
     _status_time = time.time()
 
@@ -280,7 +287,15 @@ def data_update_worker(api, strategy, is_virtual):
                         code = stock.get('pdno')
                         p_data = api.get_inquire_price(code)
                         tp, sl, spike = strategy.get_dynamic_thresholds(code, _cached_vibe.lower(), p_data)
-                        _cached_stock_info[code] = {"tp": tp, "sl": sl, "spike": spike}
+                        
+                        # 시세 API에서 가져온 전일 대비 데이터를 캐시에 저장
+                        day_val = p_data.get('vrss', 0) if p_data else 0
+                        day_rate = p_data.get('ctrt', 0) if p_data else 0
+                        
+                        _cached_stock_info[code] = {
+                            "tp": tp, "sl": sl, "spike": spike,
+                            "day_val": day_val, "day_rate": day_rate
+                        }
                 _last_times["asset"] = curr_t
                 add_log(f"잔고 업데이트 완료 (Cash: {a['cash']:,}원)")
 
@@ -326,6 +341,10 @@ def data_update_worker(api, strategy, is_virtual):
                                 success, msg = api.order_market(top_ai['code'], qty, True)
                                 if success:
                                     add_trading_log(f"✨ AI자율매수: {top_ai['name']} {qty}주 선점")
+                                    # 자동 매수 성공 → 프리셋 전략 자동 할당
+                                    preset_result = strategy.auto_assign_preset(top_ai['code'], top_ai['name'])
+                                    if preset_result:
+                                        add_trading_log(f"📋 전략 자동적용: [{preset_result['preset_name']}] TP:{preset_result['tp']:+.1f}% SL:{preset_result['sl']:.1f}%")
                                     update_all_data(api, strategy, is_virtual, force=True)
                                 else:
                                     if "잔고가 부족" in msg: strategy.auto_ai_trade = False
@@ -343,13 +362,14 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
     global _cached_holdings, _cached_asset, _cached_hot_raw, _cached_vol_raw, _cached_stock_info
     global _cached_market_data, _cached_vibe, _cached_panic, _last_update_time, _ranking_filter, _cached_recommendations, _last_times
     
-    try:
-        size = os.get_terminal_size(); tw, th = size.columns, size.lines
-    except: tw, th = 110, 30
+    with _ui_lock:
+        try:
+            size = os.get_terminal_size(); tw, th = size.columns, size.lines
+        except: tw, th = 110, 30
 
-    buf = io.StringIO()
-    if (tw, th) != _last_size: buf.write("\033[2J"); _last_size = (tw, th)
-    buf.write("\033[H")
+        buf = io.StringIO()
+        if (tw, th) != _last_size: buf.write("\033[2J"); _last_size = (tw, th)
+        buf.write("\033[H")
     
     now_dt = datetime.now()
     k_st, u_st = ("OPEN" if is_market_open() else "CLOSED"), ("OPEN" if is_us_market_open() else "CLOSED")
@@ -435,27 +455,45 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
             
         buf.write(align_kr(f" VIBE: {v_c}{_cached_vibe.upper()}\033[0m {panic_txt} {vibe_desc}{ai_msg_formatted}", tw) + "\n")
         
-        buf.write("\033[93m" + align_kr(" [COMMANDS] 1:매도 | 2:매수 | 3:전략 | 4:추천 | 5:물타기 6:불타기 | 7:분석 8:시황 | 리포트 B:보유 D:추천 H:인기 | S:셋업 | Q:종료", tw) + "\033[0m\n")
+        # 3번 메뉴 명칭 변경: 전략 -> 자동
+        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 | S:셋업 | Q:종료", tw) + "\033[0m\n")
         
-        # 커맨드 하단 브리핑/가이드 영역 (4줄 확장)
-        if prompt_mode: 
-            buf.write("\033[1;33m" + align_kr(f" >>> [{prompt_mode} MODE] 입력 대기 중... (ESC 취소)", tw) + "\033[0m\n")
-            buf.write("\n" * 3)
-        elif strategy.ai_briefing:
+        # --- [이동] AI 브리핑 출력 (커맨드 메뉴 바로 아래) ---
+        if strategy.ai_briefing and not prompt_mode:
             # AI 브리핑 출력 (시장, 전략, 액션, 추천 4개 라인 활용)
             brief_lines = [line.strip() for line in strategy.ai_briefing.split('\n') if line.strip()][:4]
             for line in brief_lines:
                 buf.write("\033[1;95m" + align_kr(f" {line}", tw) + "\033[0m\n")
             for _ in range(4 - len(brief_lines)): buf.write("\n")
+        elif prompt_mode: 
+            buf.write("\033[1;33m" + align_kr(f" >>> [{prompt_mode} MODE] 입력 대기 중... (ESC 취소)", tw) + "\033[0m\n")
+            buf.write("\n" * 3)
         else:
             buf.write("\n" * 4) 
         
         buf.write("=" * tw + "\n")
 
-        asset = _cached_asset; p_c = "\033[91m" if asset['pnl'] >= 0 else "\033[94m"
-        # 수익률 계산: (총손익 / (총자산 - 총손익)) * 100
-        p_rt = (asset['pnl'] / (asset['total_asset'] - asset['pnl']) * 100) if (asset['total_asset'] - asset['pnl']) > 0 else 0
-        asset_line = f" ASSETS | Total: {asset['total_asset']:,.0f} | Stock: {asset['stock_eval']:,.0f} | Cash: {asset['cash']:,.0f} | PnL: {p_c}{int(asset['pnl']):+,} ({p_rt:+.2f}%)\033[0m"
+        asset = _cached_asset
+        
+        # Total
+        tot_eval = asset.get('total_asset', 0)
+        tot_prin = asset.get('total_principal', 0)
+        tot_rt = ((tot_eval - tot_prin) / tot_prin * 100) if tot_prin > 0 else 0
+        tot_color = "\033[91m" if tot_rt >= 0 else "\033[94m"
+        tot_str = f"평가액: {tot_eval:,.0f} (원금: {tot_prin:,.0f}, {tot_color}{tot_rt:+.2f}%\033[0m)"
+        
+        # Cash
+        cash_val = asset.get('cash', 0)
+        cash_str = f"인출가능: {cash_val:,.0f}"
+        
+        # Stock
+        stk_eval = asset.get('stock_eval', 0)
+        stk_prin = asset.get('stock_principal', 0)
+        stk_rt = ((stk_eval - stk_prin) / stk_prin * 100) if stk_prin > 0 else 0
+        stk_color = "\033[91m" if stk_rt >= 0 else "\033[94m"
+        stk_str = f"주식총액: {stk_eval:,.0f} ({stk_color}{stk_rt:+.2f}%\033[0m)"
+        
+        asset_line = f" Asset | {tot_str} | {cash_str} | {stk_str}"
         buf.write(align_kr(asset_line, tw) + "\n")
         
         # 전략 라인 추가 (BASE 전략 표시용은 주입 없이 호출 가능)
@@ -484,18 +522,19 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         # 컬럼 정의 (터미널 너비 tw에 맞춰 유연하게 배분)
         eff_w = tw - 4
         w = [
-            max(4, int(eff_w * 0.04)),  # NO
-            max(5, int(eff_w * 0.05)),  # MKT
-            max(15, int(eff_w * 0.18)), # SYMBOL
-            max(10, int(eff_w * 0.10)), # CURR
-            max(14, int(eff_w * 0.14)), # DAY
-            max(10, int(eff_w * 0.10)), # AVG
-            max(8, int(eff_w * 0.08)),  # QTY
-            max(10, int(eff_w * 0.10)), # EVAL
-            max(18, int(eff_w * 0.14)), # PnL
-            max(12, int(eff_w * 0.07))  # TP/SL
+            max(4, int(eff_w * 0.03)),  # NO
+            max(5, int(eff_w * 0.04)),  # MKT
+            max(15, int(eff_w * 0.16)), # SYMBOL
+            max(10, int(eff_w * 0.09)), # CURR
+            max(14, int(eff_w * 0.13)), # DAY
+            max(10, int(eff_w * 0.09)), # AVG
+            max(8, int(eff_w * 0.07)),  # QTY
+            max(10, int(eff_w * 0.09)), # EVAL
+            max(18, int(eff_w * 0.13)), # PnL
+            max(10, int(eff_w * 0.07)), # TP/SL
+            max(10, int(eff_w * 0.10))  # STGY
         ]
-        header = align_kr("NO",w[0])+align_kr("MKT",w[1])+align_kr("SYMBOL",w[2])+align_kr("CURR",w[3],'right')+align_kr("DAY",w[4],'right')+align_kr("AVG",w[5],'right')+align_kr("QTY",w[6],'right')+align_kr("EVAL",w[7],'right')+align_kr("PnL",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')
+        header = align_kr("NO",w[0])+align_kr("MKT",w[1])+align_kr("SYMBOL",w[2])+align_kr("CURR",w[3],'right')+align_kr("DAY",w[4],'right')+align_kr("AVG",w[5],'right')+align_kr("QTY",w[6],'right')+align_kr("EVAL",w[7],'right')+align_kr("PnL",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+align_kr("전략",w[10],'center')
         buf.write("\033[1m" + align_kr(header, tw) + "\033[0m\n")
         f_h = _cached_holdings if _ranking_filter == "ALL" else [h for h in _cached_holdings if get_market_name(h.get('pdno','')) == _ranking_filter]
         
@@ -539,14 +578,23 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
                 tp, sl, spike = info["tp"], info["sl"], info["spike"]
                 
                 p_a, p_cu = float(h.get('pchs_avg_pric', 0)), float(h.get('prpr', 0))
-                d_v, d_r = float(h.get('prdy_vrss', 0)), float(h.get('prdy_ctrt', 0))
+                
+                # [개선] 시세 API에서 가져온 정밀 전일 대비 데이터 사용
+                d_v = info.get("day_val", float(h.get('prdy_vrss', 0)))
+                d_r = info.get("day_rate", float(h.get('prdy_ctrt', 0)))
+                
                 d_c = "\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else ""
-                d_txt = f"{d_v:+,g}({abs(d_r):.2f}%)"
+                d_txt = f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-"
                 
                 pnl_amt = (p_cu - p_a) * float(h.get('hldg_qty', 0))
                 pnl_rt = float(h.get('evlu_pfls_rt', 0))
                 color = "\033[91m" if pnl_amt >= 0 else "\033[94m"
                 pnl_txt = f"{int(pnl_amt):+,}({abs(pnl_rt):.2f}%)"
+                
+                # 프리셋 전략 컬럼 표시 (미설정 시 '표준')
+                preset_label = strategy.get_preset_label(code)
+                stgy_txt = preset_label if preset_label else "표준"
+                stgy_color = "\033[96m" if preset_label else "\033[90m"  # 시안색/회색
                 
                 row = align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name_disp}" + (" *" if spike else ""), w[2]) + \
                       align_kr(f"{int(p_cu):,}", w[3], 'right') + \
@@ -555,7 +603,8 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
                       align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + \
                       align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + \
                       color + align_kr(pnl_txt, w[8], 'right') + "\033[0m" + \
-                      "  " + align_kr(f"{tp:+.1f}/{sl:+.1f}%", w[9], 'right')
+                      "  " + align_kr(f"{tp:+.1f}/{sl:+.1f}%", w[9], 'right') + \
+                      stgy_color + align_kr(stgy_txt, w[10], 'center') + "\033[0m"
                 buf.write(align_kr(row, tw) + "\n")
             
             if len(f_h) > max_h_display:
@@ -616,13 +665,17 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         y_recs = strategy.yesterday_recs_processed
         if y_recs:
             top_y = y_recs[:3]
-            y_line = " 📅 어제 추천 성과: "
+            # 타이틀은 회색(90), 종목명은 기본 밝은색(0)으로 분리하여 가독성 확보
+            y_content = ""
             for r in top_y:
                 color = "\033[91m" if r['change'] >= 0 else "\033[94m"
-                y_line += f"{r['name']}({color}{r['change']:+0.2f}%\033[0m) | "
-            buf.write("\033[90m" + align_kr(y_line.rstrip(" | "), tw) + "\033[0m\n")
+                # 종목명 앞에 \033[0m를 추가하여 타이틀의 회색(90m) 영향을 벗어남
+                y_content += f"\033[0m{r['name']}({color}{r['change']:+0.2f}%\033[0m) | "
+            
+            y_line = f"\033[90m 📅 어제 추천 성과: {y_content.rstrip(' | ')}"
+            buf.write(align_kr(y_line, tw) + "\033[0m\n")
         else:
-            buf.write(align_kr(" 📅 어제 추천 이력이 없습니다.", tw) + "\n")
+            buf.write(align_kr("\033[90m 📅 어제 추천 이력이 없습니다.", tw) + "\033[0m\n")
         buf.write("-" * tw + "\n")
 
         left_w, right_w = (tw - 3) // 2, tw - 3 - (tw - 3) // 2
@@ -1052,16 +1105,23 @@ def perform_interaction(key, api, strategy, cycle):
 
     set_terminal_raw()
     try:
-        m_label = '매도' if mode=='1' else '매수' if mode=='2' else '전략' if mode=='3' else '추천' if mode=='4' else '물타기' if mode=='5' else '불타기' if mode=='6' else 'AI분석' if mode=='7' else 'AI시황' if mode=='8' else '필터' if mode=='9' else '보유리포트' if mode=='b' else '추천리포트' if mode=='d' else '인기리포트' if mode=='h' else '셋업'
+        m_label = '매도' if mode=='1' else '매수' if mode=='2' else '자동' if mode=='3' else '추천' if mode=='4' else '물타기' if mode=='5' else '불타기' if mode=='6' else 'AI분석' if mode=='7' else 'AI시황' if mode=='8' else '전략' if mode=='9' else '보유리포트' if mode=='b' else '추천리포트' if mode=='d' else '인기리포트' if mode=='h' else '셋업'
         
         # 즉시 실행형 키들은 프롬프트 모드 표시 최소화
         if mode not in ['a', 'd', '8']:
             draw_tui(strategy, cycle, prompt_mode=m_label)
         
         # 커서 위치 제어: 
-        # 1:Header, 2:K-Mkt, 3:U-Mkt, 4:C-Mkt, 5:VIBE, 6:COMMANDS, 7:Prompt Mode
-        # 따라서 사용자 프롬프트는 8행(8;1H)에 위치해야 모드 설명을 덮어쓰지 않음
-        sys.stdout.write("\033[8;1H\033[K") 
+        # 일반 모드는 8행(상단), AI 분석/시황 모드는 하단(th-5)에 프롬프트 배치
+        try:
+            th = os.get_terminal_size().lines
+        except: th = 30
+        
+        if mode in ['a', '8']:
+            prompt_row = max(8, th - 5)
+            sys.stdout.write(f"\033[{prompt_row};1H\033[K")
+        else:
+            sys.stdout.write("\033[8;1H\033[K") 
         sys.stdout.flush()
         
         f_h = _cached_holdings if _ranking_filter == "ALL" else [h for h in _cached_holdings if get_market_name(h.get('pdno','')) == _ranking_filter]
@@ -1072,14 +1132,29 @@ def perform_interaction(key, api, strategy, cycle):
                 inp = res.strip().split()
                 if inp and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
                     h = f_h[int(inp[0])-1]
+                    code = h['pdno']
+                    name = h['prdt_name']
                     qty = int(float(inp[1])) if len(inp) > 1 and inp[1].replace('.','',1).isdigit() else int(float(h['hldg_qty']))
                     price = int(float(inp[2])) if len(inp) > 2 and inp[2].replace('.','',1).isdigit() else 0
-                    success, msg = api.order_market(h['pdno'], qty, False, price)
-                    if success: 
-                        show_status(f"✅ 매도 성공: {h['prdt_name']}")
-                        add_trading_log(f"수동매도: {h['prdt_name']} {qty}주 @ {price if price else '시장가'}")
-                        update_all_data(api, strategy, True, force=True)
-                    else: show_status(f"❌ 매도 실패: {msg}", True)
+                    
+                    # 즉시 시도 로그 출력
+                    price_display = f"{price:,}원" if price > 0 else "시장가"
+                    add_trading_log(f"[{code}] {name} {price_display} {qty}주 매도시도")
+                    
+                    def run_sell():
+                        success, msg = api.order_market(code, qty, False, price)
+                        if success: 
+                            show_status(f"✅ 매도 성공: {name}")
+                            add_trading_log(f"수동매도완료: {name} {qty}주 @ {price_display}")
+                            draw_tui(strategy, cycle) # 결과 즉시 화면 반영
+                            update_all_data(api, strategy, True, force=True)
+                            draw_tui(strategy, cycle) # 잔고 갱신 후 다시 반영
+                        else: 
+                            show_status(f"❌ 매도 실패: {msg}", True)
+                            draw_tui(strategy, cycle)
+                    
+                    threading.Thread(target=run_sell, daemon=True).start()
+                    
         elif mode == '2':
             res = input_with_esc("> 매수 [코드 수량 가격] 입력 (공백 구분, 가격 미입력시 시장가): ", tw)
             if res:
@@ -1087,12 +1162,63 @@ def perform_interaction(key, api, strategy, cycle):
                 if len(inp) >= 2:
                     code, qty = inp[0], int(inp[1])
                     price = int(inp[2]) if len(inp) > 2 and inp[2].isdigit() else 0
+                    
+                    # 매수 시 종목명 확인을 위해 캐시 또는 API 활용
+                    name = "알수없음"
+                    for h in _cached_holdings:
+                        if h['pdno'] == code: name = h['prdt_name']; break
+                    if name == "알수없음":
+                        # 캐시에 없으면 네이버 상세 정보에서 가져옴 (동기적이지만 매수 시도 직전 1회만 수행)
+                        detail = api.get_naver_stock_detail(code)
+                        if detail: name = detail.get('name', code)
+
+                    price_display = f"{price:,}원" if price > 0 else "시장가"
+                    add_trading_log(f"[{code}] {name} {price_display} {qty}주 매입시도")
+
+                    # 기존 보유 여부 확인 (신규 매수인지 추가 매수인지)
+                    is_new_stock = not any(h['pdno'] == code for h in _cached_holdings)
+
                     success, msg = api.order_market(code, qty, True, price)
                     if success: 
                         show_status(f"✅ 매수 성공: {code}")
-                        add_trading_log(f"수동매수: {code} {qty}주 @ {price if price else '시장가'}")
+                        add_trading_log(f"수동매수완료: {name} {qty}주 @ {price_display}")
+                        draw_tui(strategy, cycle)
+                        
+                        # 신규 종목 매수 시 전략 즉시 할당 프롬프트
+                        if is_new_stock:
+                            sys.stdout.write("\033[9;1H")
+                            sys.stdout.write(f"\033[K  \033[96m[{code}] {name}\033[0m  00:표준 | 01:골든크로스 | 02:모멘텀 | 03:52주신고가 | 04:연속상승 | 05:이격도 | 06:돌파실패 | 07:강한종가 | 08:변동성확장 | 09:평균회귀 | 10:추세필터 | 엔터:AI\n")
+                            sys.stdout.flush()
+                            
+                            res_strat = input_with_esc("> 전략 번호 선택 (엔터=AI 자동추천, ESC=표준): ", tw)
+                            
+                            if res_strat is not None:
+                                if res_strat.strip() == '':
+                                    show_status("🧠 AI가 최적 전략을 시뮬레이션 중입니다...")
+                                    draw_tui(strategy, cycle)
+                                    result = strategy.auto_assign_preset(code, name)
+                                    if result:
+                                        show_status(f"✅ [{name}] AI 추천: [{result['preset_name']}] TP:{result['tp']:+.1f}% SL:{result['sl']:.1f}%")
+                                    else:
+                                        show_status(f"⚠️ AI 추천 실패. 표준 전략으로 유지합니다.", True)
+                                else:
+                                    sel_id = res_strat.strip().zfill(2)
+                                    if sel_id in PRESET_STRATEGIES and sel_id != '00':
+                                        show_status(f"🧠 [{PRESET_STRATEGIES[sel_id]['name']}] 동적 TP/SL 계산 중...")
+                                        draw_tui(strategy, cycle)
+                                        detail_s = strategy.api.get_naver_stock_detail(code)
+                                        news_s = strategy.api.get_naver_stock_news(code)
+                                        result = strategy.ai_advisor.simulate_preset_strategy(code, name, strategy.current_market_vibe, detail_s, news_s)
+                                        tp_use = result['tp'] if result else PRESET_STRATEGIES[sel_id]['default_tp']
+                                        sl_use = result['sl'] if result else PRESET_STRATEGIES[sel_id]['default_sl']
+                                        strategy.assign_preset(code, sel_id, tp_use, sl_use, result['reason'] if result else '')
+                                        show_status(f"✅ [{name}] [{PRESET_STRATEGIES[sel_id]['name']}] 적용 (TP:{tp_use:+.1f}% SL:{sl_use:.1f}%)")
+                        
                         update_all_data(api, strategy, True, force=True)
-                    else: show_status(f"❌ 매수 실패: {msg}", True)
+                        draw_tui(strategy, cycle)
+                    else: 
+                        show_status(f"❌ 매수 실패: {msg}", True)
+                        draw_tui(strategy, cycle)
         elif mode == '4':
             res = input_with_esc("> 추천매매설정 [금액 한도 자동(y/n)]: ", tw)
             if res:
@@ -1116,19 +1242,24 @@ def perform_interaction(key, api, strategy, cycle):
             if not os.getenv("GOOGLE_API_KEY"):
                 show_status("⚠️ Gemini API Key가 없습니다. [S:셋업]에서 입력하세요.", True)
             else:
+                last_draw_t = [0.0] # 클로저에서 수정 가능하도록 리스트 사용
                 def progress_callback(curr, total, phase_msg="분석"):
                     show_status(f"[AI {phase_msg} 중... {curr}/{total}]")
-                    draw_tui(strategy, cycle)
+                    # 진행 상황 표시도 0.2초 간격으로 제한하여 깜빡임 방지
+                    if time.time() - last_draw_t[0] > 0.2:
+                        draw_tui(strategy, cycle)
+                        last_draw_t[0] = time.time()
                     
                 def item_found_cb(item):
-                    # 새로운 추천 종목이 발굴될 때마다 리스트에 추가하고 화면을 즉시 갱신
+                    # 새로운 추천 종목이 발굴될 때마다 리스트에 추가하고 화면을 주기적으로 갱신
                     with _data_lock:
                         if not any(r['code'] == item['code'] for r in strategy.ai_recommendations):
-                            # 아이템의 복사본을 넣어 참조 충돌 방지
                             strategy.ai_recommendations.append(item.copy())
-                            # 역순 정렬 (높은 점수가 위로 오도록 유지)
                             strategy.ai_recommendations.sort(key=lambda x: x['score'], reverse=True)
-                    draw_tui(strategy, cycle)
+                    
+                    if time.time() - last_draw_t[0] > 0.3:
+                        draw_tui(strategy, cycle)
+                        last_draw_t[0] = time.time()
 
                 show_status("🧠 Gemini AI가 시장 상황을 분석 중입니다. 잠시만 기다려주세요...")
                 draw_tui(strategy, cycle)
@@ -1144,12 +1275,19 @@ def perform_interaction(key, api, strategy, cycle):
                 
                 advice = strategy.get_ai_advice(progress_cb=lambda c, t, p="심층분석": progress_callback(c, t, "종목 심층분석"))
                 if advice and "⚠️" not in advice:
-                    show_status("✅ AI 분석 완료. 하단 브리핑을 확인하세요.")
+                    show_status("✅ AI 분석 완료. 상단 브리핑을 확인하세요.")
                     draw_tui(strategy, cycle) # 브리핑 출력
                     
                     # 수치 파싱 시도 및 반영 여부 확인
                     if strategy.parse_and_apply_ai_strategy():
                         # 파싱 성공 시 확인 절차 (수동 확인용 메시지)
+                        # [조정] 프롬프트 위치를 인기/거래 순위 밑으로 이동 (th - 10 내외)
+                        try:
+                            # 랭킹 데이터가 대략 25~30행쯤 끝나므로, 그 아래인 th-10 정도로 배치
+                            prompt_row = max(15, os.get_terminal_size().lines - 10)
+                            sys.stdout.write(f"\033[{prompt_row};1H\033[K")
+                        except: pass
+                        
                         show_status("💡 AI가 새로운 전략 수치를 도출했습니다. 반영할까요?")
                         res_a = input_with_esc("> AI 제안 수치를 시스템에 즉시 반영할까요? (y/n): ", tw)
                         if res_a and res_a.strip().lower() == 'y':
@@ -1163,9 +1301,10 @@ def perform_interaction(key, api, strategy, cycle):
                     show_status(f"❌ AI 분석 실패: {advice if advice else '알 수 없는 오류'}", True)
                 flush_input(); time.sleep(0.2)
         elif mode == '3':
-            res = input_with_esc("> 수정 [번호 TP SL] 입력 (초기화는 '번호 r'): ", tw)
+            res = input_with_esc("> 수정 [번호 TP SL] 또는 [TP SL] 입력 (초기화는 '번호 r'): ", tw)
             if res:
                 inp = res.strip().split()
+                # 1. 특정 종목 설정 또는 초기화
                 if len(inp) >= 2 and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
                     h = f_h[int(inp[0])-1]
                     if inp[1].lower() == 'r':
@@ -1179,6 +1318,22 @@ def perform_interaction(key, api, strategy, cycle):
                             strategy.manual_thresholds[h['pdno']] = [tp, sl]; strategy.save_manual_thresholds()
                             show_status(f"✅ 설정 완료: {h['prdt_name']}")
                         except: show_status("❌ 수치 입력 오류", True)
+                # 2. 번호 없이 입력 시 기본 전략(디폴트) 수정
+                elif len(inp) == 2:
+                    try:
+                        tp, sl = float(inp[0]), float(inp[1])
+                        strategy.exit_mgr.base_tp = tp
+                        strategy.exit_mgr.base_sl = sl
+                        strategy.save_manual_thresholds()
+                        show_status(f"✅ 기본 전략 변경 완료: 익절 {tp}% / 손절 {sl}%")
+                    except:
+                        show_status("❌ 기본 전략 입력 오류", True)
+                # 3. 전체 초기화 (r 하나만 입력 시)
+                elif len(inp) == 1 and inp[0].lower() == 'r':
+                    count = len(strategy.manual_thresholds)
+                    strategy.manual_thresholds.clear()
+                    strategy.save_manual_thresholds()
+                    show_status(f"🔄 모든 종목 수동 전략 초기화 완료 ({count}건)")
         elif mode == '5':
             res = input_with_esc("> 물타기설정 [트리거% 금액(원) 한도(원) 자동(y/n)]: ", tw)
             if res:
@@ -1207,12 +1362,68 @@ def perform_interaction(key, api, strategy, cycle):
                         strategy._save_all_states(); show_status(f"✅ 불타기 설정 저장 완료 (자동:{'ON' if auto else 'OFF'})")
                     except: show_status("❌ 입력 형식 오류", True)
         elif mode == '9':
-            res = input_with_esc("> 필터 [1:ALL, 2:KSP, 3:KDQ]: ", tw)
-            if res:
-                sel = res.strip()
-                if sel == '1': _ranking_filter = "ALL"
-                elif sel == '2': _ranking_filter = "KSP"
-                elif sel == '3': _ranking_filter = "KDQ"
+            # === 프리셋 전략 할당 메뉴 ===
+            # 1단계: 종목 선택 (커서는 이미 8행에 위치)
+            res_code = input_with_esc("> 전략 적용할 보유 종목 번호 입력: ", tw)
+            if res_code and res_code.strip().isdigit():
+                idx_num = int(res_code.strip())
+                if 0 < idx_num <= len(f_h):
+                    h = f_h[idx_num - 1]
+                    code = h['pdno']
+                    name = h['prdt_name']
+                    current_preset = strategy.get_preset_label(code)
+                    
+                    # 2단계: 프리셋 목록 출력 (COMMAND 바로 아래 영역에 출력)
+                    sys.stdout.write("\033[9;1H")  # 9행부터 출력
+                    sys.stdout.write(f"\033[K  \033[96m[{code}] {name}\033[0m (현재: {current_preset if current_preset else '표준'})  00:표준 | 01:골든크로스 | 02:모멘텀 | 03:52주신고가 | 04:연속상승 | 05:이격도 | 06:돌파실패 | 07:강한종가 | 08:변동성확장 | 09:평균회귀 | 10:추세필터 | 엔터:AI\n")
+                    sys.stdout.flush()
+                    
+                    res_strat = input_with_esc("> 전략 번호 선택 (엔터=AI 자동추천): ", tw)
+                    
+                    if res_strat is None:
+                        # ESC 취소
+                        pass
+                    elif res_strat.strip() == '':
+                        # 엔터 입력 → AI 자동 추천
+                        show_status("🧠 AI가 최적 전략을 시뮬레이션 중입니다...")
+                        draw_tui(strategy, cycle)
+                        result = strategy.auto_assign_preset(code, name)
+                        if result:
+                            show_status(f"✅ [{name}] AI 추천 전략: [{result['preset_name']}] TP:{result['tp']:+.1f}% SL:{result['sl']:.1f}% ({result['reason']})")
+                        else:
+                            show_status(f"❌ AI 전략 추천 실패. 수동으로 선택해주세요.", True)
+                    else:
+                        # 수동 선택
+                        sel_id = res_strat.strip().zfill(2)  # '1' → '01'
+                        if sel_id in PRESET_STRATEGIES:
+                            if sel_id == '00':
+                                strategy.assign_preset(code, '00')
+                                show_status(f"🔄 [{name}] 표준 전략으로 복귀 (기본 TP/SL 적용)")
+                            else:
+                                # 수동 선택도 AI가 동적 TP/SL을 계산해서 부여
+                                show_status(f"🧠 [{PRESET_STRATEGIES[sel_id]['name']}] 전략 기반 동적 TP/SL 계산 중...")
+                                draw_tui(strategy, cycle)
+                                detail = strategy.api.get_naver_stock_detail(code)
+                                news = strategy.api.get_naver_stock_news(code)
+                                vibe = strategy.current_market_vibe
+                                # AI에게 선택된 프리셋 기반으로 동적 수치 요청
+                                result = strategy.ai_advisor.simulate_preset_strategy(code, name, vibe, detail, news)
+                                if result and result['preset_id'] != sel_id:
+                                    # AI가 다른 전략을 추천해도 사용자가 선택한 전략을 존중
+                                    # 단, AI가 계산한 TP/SL은 활용
+                                    tp_use = result['tp']
+                                    sl_use = result['sl']
+                                else:
+                                    tp_use = result['tp'] if result else PRESET_STRATEGIES[sel_id]['default_tp']
+                                    sl_use = result['sl'] if result else PRESET_STRATEGIES[sel_id]['default_sl']
+                                
+                                strategy.assign_preset(code, sel_id, tp_use, sl_use, 
+                                                       result['reason'] if result else PRESET_STRATEGIES[sel_id]['desc'])
+                                show_status(f"✅ [{name}] [{PRESET_STRATEGIES[sel_id]['name']}] 전략 적용 (TP:{tp_use:+.1f}% SL:{sl_use:.1f}%)")
+                        else:
+                            show_status("⚠️ 유효하지 않은 전략 번호입니다.", True)
+                else:
+                    show_status("⚠️ 유효하지 않은 종목 번호입니다.", True)
     except Exception as e:
         from src.logger import log_error
         log_error(f"Interaction Error: {e}"); show_status(f"오류: {e}", True)

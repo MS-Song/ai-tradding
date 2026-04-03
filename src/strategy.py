@@ -8,6 +8,32 @@ from typing import Dict, List, Tuple, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor
 from src.logger import logger, log_error
 
+# --- KIS 프리셋 전략 카탈로그 (10개 공식 전략 + 표준) ---
+PRESET_STRATEGIES = {
+    "00": {"id": "00", "name": "표준",       "type": "기본",     "desc": "시스템 기본 TP/SL 적용 (Vibe 보정 포함)",
+           "default_tp": None, "default_sl": None},  # None이면 시스템 기본값 사용
+    "01": {"id": "01", "name": "골든크로스", "type": "추세추종", "desc": "단기 MA가 장기 MA 상향 돌파 시 매수",
+           "default_tp": 8.0, "default_sl": -4.0},
+    "02": {"id": "02", "name": "모멘텀",     "type": "추세추종", "desc": "최근 N일 수익률 상위 종목 매수",
+           "default_tp": 10.0, "default_sl": -5.0},
+    "03": {"id": "03", "name": "52주신고가", "type": "돌파매매", "desc": "52주 최고가 갱신 시 매수",
+           "default_tp": 12.0, "default_sl": -3.0},
+    "04": {"id": "04", "name": "연속상승",   "type": "추세추종", "desc": "N일 연속 종가 상승 시 매수",
+           "default_tp": 7.0, "default_sl": -4.0},
+    "05": {"id": "05", "name": "이격도",     "type": "역추세",   "desc": "이동평균 대비 과열/침체 판단",
+           "default_tp": 5.0, "default_sl": -3.0},
+    "06": {"id": "06", "name": "돌파실패",   "type": "손절",     "desc": "전고점 돌파 후 재하락 시 손절",
+           "default_tp": 4.0, "default_sl": -2.0},
+    "07": {"id": "07", "name": "강한종가",   "type": "모멘텀",   "desc": "종가가 당일 고가 근처 마감 시 매수",
+           "default_tp": 6.0, "default_sl": -3.5},
+    "08": {"id": "08", "name": "변동성확장", "type": "돌파매매", "desc": "변동성 축소 후 급등 시 매수",
+           "default_tp": 9.0, "default_sl": -4.0},
+    "09": {"id": "09", "name": "평균회귀",   "type": "역추세",   "desc": "평균에서 크게 이탈 시 반대 방향 매매",
+           "default_tp": 4.0, "default_sl": -3.0},
+    "10": {"id": "10", "name": "추세필터",   "type": "추세추종", "desc": "장기 MA 위 상승 중이면 매수",
+           "default_tp": 8.0, "default_sl": -5.0},
+}
+
 # --- 1. MarketAnalyzer: 시장 분석 엔진 ---
 class MarketAnalyzer:
     def __init__(self, api):
@@ -465,16 +491,16 @@ class GeminiAdvisor:
         2. [익절/손절/물타기/불타기/금액] 통합 수치 제안.
            - [논리 규칙] 추가매수(물타기) 지점은 반드시 손절선(SL)보다 높은(덜 손실인) 수치여야 합니다. 불타기지점은 익절선(TP)보다 낮은 수치여야 합니다.
            - [답변 양식] AI[전략]: 익절 +X.X%, 손절 -Y.Y%, 물타기 -Z.Z%, 불타기 +W.W%, 금액 N원
-           - [금액 규칙] 금액은 반드시 원화 정수로 표기하세요 (예: 500000원, 1000000원). 퍼센트, 비율, 텍스트 표현 절대 금지.
-        3. 신규 추천주 최우선 순위와 매수 권장 금액.
-        
-        [답변 형식 엄수] 
-        AI[시장]: 요약
-        AI[전략]: (위 답변 양식대로 수치만 명확히 기재. 금액은 반드시 정수 원화)
-        AI[액션]: 매수 지시 및 포트폴리오 조정
-        AI[추천]: 신규 추천 종목 및 매수가격 요약
-        한국어로 대답하세요.
-        """
+           - [금액 규칙] 금액은 가독성을 위해 천단위 콤마(,)를 포함하여 표기하세요 (예: 500,000원, 1,000,000원). 퍼센트, 비율, 텍스트 표현 절대 금지.
+           3. 신규 추천주 최우선 순위와 매수 권장 금액 (금액은 반드시 콤마 포함).
+
+           [답변 형식 엄수]
+           AI[시장]: 요약
+           AI[전략]: (위 답변 양식대로 수치만 명확히 기재. 금액은 반드시 콤마를 포함한 원화)
+           AI[액션]: 매수 지시 및 포트폴리오 조정
+           AI[추천]: 신규 추천 종목 및 매수가격 요약 (콤마 포함)
+           한국어로 대답하세요.
+           """
         payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
         endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
         try:
@@ -690,6 +716,72 @@ class GeminiAdvisor:
         return "인기 종목 분석 리포트를 생성하지 못했습니다."
 
 
+    def simulate_preset_strategy(self, code: str, name: str, vibe: str, detail: dict = None, news: List[str] = None) -> Optional[dict]:
+        """AI가 종목 현황 분석 후 KIS 10개 프리셋 중 최적 전략과 동적 TP/SL을 제안"""
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key: return None
+        
+        # 프리셋 목록 텍스트 생성
+        preset_list = "\n".join([
+            f"  {sid}: {s['name']} ({s['type']}) - {s['desc']} [기본 TP:{s['default_tp']}%, SL:{s['default_sl']}%]"
+            for sid, s in PRESET_STRATEGIES.items() if sid != "00"
+        ])
+        
+        detail_txt = ""
+        if detail:
+            detail_txt = f"현재가: {detail.get('price', 'N/A')}, PER: {detail.get('per', 'N/A')}, PBR: {detail.get('pbr', 'N/A')}, 배당: {detail.get('yield', 'N/A')}, 업종PER: {detail.get('sector_per', 'N/A')}"
+        news_txt = ", ".join(news[:5]) if news else "뉴스 없음"
+        
+        prompt = f"""
+        당신은 월스트리트 수석 퀀트 트레이더입니다. 아래 종목에 가장 적합한 매매 전략 프리셋 1개를 선택하고, 해당 전략에 맞는 동적 TP/SL 수치를 계산하세요.
+        
+        [종목 정보]
+        - 종목명: {name} ({code})
+        - {detail_txt}
+        - 최근 뉴스: {news_txt}
+        - 현재 시장 장세: {vibe}
+        
+        [KIS 공식 프리셋 전략 목록]
+{preset_list}
+        
+        [판단 가이드라인]
+        1. 종목의 현재 가격 흐름, 펀더멘털(PER/PBR), 뉴스 모멘텀, 시장 장세를 종합하여 가장 적합한 전략 1개를 선택하세요.
+        2. 선택한 전략의 기본 TP/SL을 기반으로, 해당 종목의 특성에 맞게 TP/SL을 ±2% 범위 내에서 동적 조정하세요.
+        3. 모멘텀이 강한 종목은 TP를 높게, 변동성이 큰 종목은 SL을 타이트하게 설정하세요.
+        
+        [필수 응답 형식 - 정확히 이 형식만 출력하세요]
+        전략번호: XX
+        익절: +X.X%
+        손절: -X.X%
+        근거: 한줄 설명
+        """
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
+        try:
+            res = requests.post(endpoint, json=payload, timeout=15)
+            if res.status_code == 200:
+                answer = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+                # 파싱
+                sid_match = re.search(r"전략번호[:\s]*(\d{2})", answer)
+                tp_match = re.search(r"익절[:\s]*([+-]?[\d.]+)", answer)
+                sl_match = re.search(r"손절[:\s]*([+-]?[\d.]+)", answer)
+                reason_match = re.search(r"근거[:\s]*(.*)", answer)
+                
+                if sid_match and tp_match and sl_match:
+                    sid = sid_match.group(1)
+                    if sid not in PRESET_STRATEGIES or sid == "00":
+                        sid = "01"  # fallback
+                    return {
+                        "preset_id": sid,
+                        "preset_name": PRESET_STRATEGIES[sid]["name"],
+                        "tp": abs(float(tp_match.group(1))),
+                        "sl": -abs(float(sl_match.group(1))),
+                        "reason": reason_match.group(1).strip() if reason_match else "AI 분석 기반 자동 선정"
+                    }
+        except Exception as e:
+            log_error(f"프리셋 전략 시뮬레이션 오류: {e}")
+        return None
+
     def verify_market_vibe(self, current_data: dict, heuristic_vibe: str) -> Optional[str]:
         """알고리즘이 1차 판정한 현재 장세를 AI가 최종 교차 검증합니다."""
         api_key = os.getenv("GOOGLE_API_KEY")
@@ -756,6 +848,8 @@ class VibeStrategy:
         self.ai_holdings_opinion = ""  # 보유 종목 리포트 결과 저장
         self.recommendation_history: Dict[str, List[dict]] = {} # {date: [recs]}
         self.yesterday_recs: List[dict] = []
+        # 프리셋 전략 할당 상태 {종목코드: {"preset_id": "01", "name": "골든크로스", "tp": 8.0, "sl": -4.0, "reason": "..."}}
+        self.preset_strategies: Dict[str, dict] = {}
         self.yesterday_recs_processed: List[dict] = []
         
         # AI 설정 초기화
@@ -836,6 +930,7 @@ class VibeStrategy:
                     self.last_sell_times = d.get("last_sell_times", {})
                     self.last_avg_down_msg = d.get("last_avg_down_msg", "없음")
                     self.recommendation_history = d.get("recommendation_history", {})
+                    self.preset_strategies = d.get("preset_strategies", {})
                     if "ai_config" in d: self.ai_config.update(d["ai_config"])
                     if "bear_config" in d: self.recovery_eng.config.update(d["bear_config"])
                     if "bull_config" in d: self.bull_config.update(d["bull_config"])
@@ -867,7 +962,8 @@ class VibeStrategy:
                 "recommendation_history": self.recommendation_history,
                 "ai_config": self.ai_config,
                 "bear_config": self.recovery_eng.config,
-                "bull_config": self.bull_config
+                "bull_config": self.bull_config,
+                "preset_strategies": self.preset_strategies
             }
             with open(self.state_file, "w") as f: json.dump(data, f, indent=4)
         except Exception as e: log_error(f"상태 저장 실패: {e}")
@@ -893,7 +989,59 @@ class VibeStrategy:
 
     def determine_market_trend(self): return self.analyzer.update()
     def save_manual_thresholds(self): self._save_all_states()
-    def get_dynamic_thresholds(self, code, vibe, p_data=None): return self.exit_mgr.get_thresholds(code, vibe, p_data)
+    
+    def get_dynamic_thresholds(self, code, vibe, p_data=None):
+        """프리셋 전략이 할당된 종목은 프리셋 TP/SL을 최우선 적용"""
+        ps = self.preset_strategies.get(code)
+        if ps and ps.get("preset_id") != "00":
+            # 프리셋 전략의 동적 TP/SL을 직접 사용 (Vibe 보정 미적용 - 프리셋 자체가 완성형)
+            return ps["tp"], ps["sl"], False
+        # 프리셋이 '표준(00)'이거나 미설정 시 기존 로직
+        return self.exit_mgr.get_thresholds(code, vibe, p_data)
+    
+    def get_preset_label(self, code: str) -> str:
+        """종목에 할당된 프리셋 전략 이름 반환 (없으면 빈 문자열)"""
+        ps = self.preset_strategies.get(code)
+        if ps:
+            return ps.get("name", "")
+        return ""
+    
+    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = ""):
+        """종목에 프리셋 전략 할당 (표준 선택 시 기존 설정으로 복귀)"""
+        preset = PRESET_STRATEGIES.get(preset_id)
+        if not preset:
+            return False
+        if preset_id == "00":
+            # 표준 모드: 프리셋 해제 (기본 전략으로 복귀)
+            if code in self.preset_strategies:
+                del self.preset_strategies[code]
+        else:
+            use_tp = tp if tp is not None else preset["default_tp"]
+            use_sl = sl if sl is not None else preset["default_sl"]
+            self.preset_strategies[code] = {
+                "preset_id": preset_id,
+                "name": preset["name"],
+                "tp": use_tp,
+                "sl": use_sl,
+                "reason": reason or preset["desc"]
+            }
+        self._save_all_states()
+        return True
+    
+    def auto_assign_preset(self, code: str, name: str) -> Optional[dict]:
+        """AI를 활용하여 종목에 최적 프리셋 전략 자동 할당 (자동매수 시 호출)"""
+        try:
+            detail = self.api.get_naver_stock_detail(code)
+            news = self.api.get_naver_stock_news(code)
+            vibe = self.current_market_vibe
+            result = self.ai_advisor.simulate_preset_strategy(code, name, vibe, detail, news)
+            if result:
+                self.assign_preset(code, result["preset_id"], result["tp"], result["sl"], result["reason"])
+                return result
+        except Exception as e:
+            log_error(f"자동 프리셋 할당 오류: {e}")
+        return None
+
     def record_buy(self, code, price):
         self.recovery_eng.last_avg_down_prices[code] = price
         self.pyramid_eng.last_buy_prices[code] = price
@@ -921,13 +1069,32 @@ class VibeStrategy:
         holdings = self.api.get_balance()
         base_sl = self.exit_mgr.base_sl
         if self.analyzer.kr_vibe.upper() == "DEFENSIVE": base_sl = -3.0
-        current_cfg = {"base_tp": self.exit_mgr.base_tp, "base_sl": base_sl, "bear_trig": max(self.recovery_eng.config.get("min_loss_to_buy"), base_sl + 1.0), "bull_trig": self.bull_config.get("min_profit_to_pyramid", 3.0), "ai_amt": self.ai_config["amount_per_trade"]}
-        self.ai_briefing = self.ai_advisor.get_advice(self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg)
-        self.ai_detailed_opinion = self.ai_advisor.get_detailed_report_advice(self.ai_recommendations, self.analyzer.kr_vibe, progress_cb=progress_cb)
+        current_cfg = {
+            "base_tp": self.exit_mgr.base_tp, 
+            "base_sl": base_sl, 
+            "bear_trig": max(self.recovery_eng.config.get("min_loss_to_buy"), base_sl + 1.0), 
+            "bull_trig": self.bull_config.get("min_profit_to_pyramid", 3.0), 
+            "ai_amt": self.ai_config["amount_per_trade"]
+        }
         
-        # 보유 종목 리포트 추가 생성 (분석 모드에서 호출 시)
-        if holdings:
-            self.ai_holdings_opinion = self.ai_advisor.get_holdings_report_advice(holdings, self.analyzer.kr_vibe, self.analyzer.current_data, progress_cb=progress_cb)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            # 1. 시장 브리핑 및 전략 제안 (가장 중요)
+            future_briefing = executor.submit(self.ai_advisor.get_advice, self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg)
+            
+            # 2. 추천 종목 입체 분석 리포트
+            future_detailed = executor.submit(self.ai_advisor.get_detailed_report_advice, self.ai_recommendations, self.analyzer.kr_vibe, progress_cb=progress_cb)
+            
+            # 3. 보유 종목 리포트 (있을 때만)
+            future_holdings = None
+            if holdings:
+                future_holdings = executor.submit(self.ai_advisor.get_holdings_report_advice, holdings, self.analyzer.kr_vibe, self.analyzer.current_data, progress_cb=progress_cb)
+            
+            # 결과 수집
+            self.ai_briefing = future_briefing.result()
+            self.ai_detailed_opinion = future_detailed.result()
+            if future_holdings:
+                self.ai_holdings_opinion = future_holdings.result()
             
         return self.ai_briefing
 
@@ -940,23 +1107,23 @@ class VibeStrategy:
                 if "AI[전략]:" in line: strat_line = line; break
             if not strat_line: return False
 
-            tp = re.search(r"익절\s*([+-]?[\d.]+)", strat_line)
-            sl = re.search(r"손절\s*([+-]?[\d.]+)", strat_line)
-            trig_bear = re.search(r"물타기\s*([+-]?[\d.]+)", strat_line)
-            trig_bull = re.search(r"불타기\s*([+-]?[\d.]+)", strat_line)
+            tp = re.search(r"익절\s*([+-]?[\d,.]+)", strat_line)
+            sl = re.search(r"손절\s*([+-]?[\d,.]+)", strat_line)
+            trig_bear = re.search(r"물타기\s*([+-]?[\d,.]+)", strat_line)
+            trig_bull = re.search(r"불타기\s*([+-]?[\d,.]+)", strat_line)
             amt = re.search(r"금액\s*([\d,]+)\s*원", strat_line)
             
             # 구버전 응답(추매) 호환성 지원
-            if not trig_bull: trig_bull = re.search(r"추매\s*([+-]?[\d.]+)", strat_line)
+            if not trig_bull: trig_bull = re.search(r"추매\s*([+-]?[\d,.]+)", strat_line)
             
             # 핵심 4개(익절/손절/물타기/불타기)는 반드시 있어야 함
             if not (tp and sl and trig_bear and trig_bull): return False
             
-            # 1. AI가 제안한 '최종 유효값' 파싱
-            target_tp = abs(float(tp.group(1)))
-            target_sl = -abs(float(sl.group(1)))
-            target_trig_bear = -abs(float(trig_bear.group(1)))
-            target_trig_bull = abs(float(trig_bull.group(1)))
+            # 1. AI가 제안한 '최종 유효값' 파싱 (모든 수치에서 콤마 제거 후 float 변환)
+            target_tp = abs(float(tp.group(1).replace(',', '')))
+            target_sl = -abs(float(sl.group(1).replace(',', '')))
+            target_trig_bear = -abs(float(trig_bear.group(1).replace(',', '')))
+            target_trig_bull = abs(float(trig_bull.group(1).replace(',', '')))
             
             # 금액 파싱: 실패 시 현재 설정값 유지 (AI가 비정형 텍스트를 보낸 경우 방어)
             if amt:
