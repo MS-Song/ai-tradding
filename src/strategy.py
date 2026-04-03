@@ -745,12 +745,14 @@ class GeminiAdvisor:
         [판단 가이드라인]
         1. 종목의 현재 가격 흐름, 펀더멘털(PER/PBR), 뉴스 모멘텀, 시장 장세를 종합하여 가장 적합한 전략 1개를 선택하세요.
         2. 선택한 전략의 기본 TP/SL을 기반으로, 해당 종목의 특성에 맞게 TP/SL을 ±2% 범위 내에서 동적 조정하세요.
-        3. 모멘텀이 강한 종목은 TP를 높게, 변동성이 큰 종목은 SL을 타이트하게 설정하세요.
+        3. 이 종목의 현재 모멘텀 지속 시간을 예측하여 '유효시간(분)'을 제안하세요. (예: 급등주는 60~120분, 완만한 추세주는 240~360분)
+        4. 모멘텀이 강한 종목은 TP를 높게, 변동성이 큰 종목은 SL을 타이트하게 설정하세요.
         
         [필수 응답 형식 - 정확히 이 형식만 출력하세요]
         전략번호: XX
         익절: +X.X%
         손절: -X.X%
+        유효시간: N분
         근거: 한줄 설명
         """
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -763,6 +765,7 @@ class GeminiAdvisor:
                 sid_match = re.search(r"전략번호[:\s]*(\d{2})", answer)
                 tp_match = re.search(r"익절[:\s]*([+-]?[\d.]+)", answer)
                 sl_match = re.search(r"손절[:\s]*([+-]?[\d.]+)", answer)
+                lt_match = re.search(r"유효시간[:\s]*(\d+)분", answer)
                 reason_match = re.search(r"근거[:\s]*(.*)", answer)
                 
                 if sid_match and tp_match and sl_match:
@@ -774,6 +777,7 @@ class GeminiAdvisor:
                         "preset_name": PRESET_STRATEGIES[sid]["name"],
                         "tp": abs(float(tp_match.group(1))),
                         "sl": -abs(float(sl_match.group(1))),
+                        "lifetime_mins": int(lt_match.group(1)) if lt_match else 120,
                         "reason": reason_match.group(1).strip() if reason_match else "AI 분석 기반 자동 선정"
                     }
         except Exception as e:
@@ -1075,7 +1079,7 @@ class VibeStrategy:
             vibe = self.current_market_vibe
             result = self.ai_advisor.simulate_preset_strategy(code, name, vibe, detail, news)
             if result:
-                self.assign_preset(code, result["preset_id"], result["tp"], result["sl"], result["reason"])
+                self.assign_preset(code, result["preset_id"], result["tp"], result["sl"], result["reason"], result.get("lifetime_mins"))
                 return result
         except Exception as e:
             log_error(f"자동 프리셋 할당 오류: {e}")
