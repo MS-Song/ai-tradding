@@ -931,6 +931,11 @@ class VibeStrategy:
                     self.last_avg_down_msg = d.get("last_avg_down_msg", "없음")
                     self.recommendation_history = d.get("recommendation_history", {})
                     self.preset_strategies = d.get("preset_strategies", {})
+                    # 하위 호환성을 위해 누락된 필드 초기화
+                    for code, s in self.preset_strategies.items():
+                        if 'buy_time' not in s: s['buy_time'] = None
+                        if 'deadline' not in s: s['deadline'] = None
+                        if 'is_p3_processed' not in s: s['is_p3_processed'] = False
                     if "ai_config" in d: self.ai_config.update(d["ai_config"])
                     if "bear_config" in d: self.recovery_eng.config.update(d["bear_config"])
                     if "bull_config" in d: self.bull_config.update(d["bull_config"])
@@ -1006,7 +1011,16 @@ class VibeStrategy:
             return ps.get("name", "")
         return ""
     
-    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = ""):
+    def _calculate_deadline(self, start_time_str, lifetime_mins):
+        if not start_time_str or not lifetime_mins: return None
+        from datetime import datetime, timedelta
+        try:
+            start_dt = datetime.strptime(start_time_str, '%Y-%m-%d %H:%M:%S')
+            deadline_dt = start_dt + timedelta(minutes=lifetime_mins)
+            return deadline_dt.strftime('%Y-%m-%d %H:%M:%S')
+        except: return None
+    
+    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = "", lifetime_mins: int = None):
         """종목에 프리셋 전략 할당 (표준 선택 시 기존 설정으로 복귀)"""
         preset = PRESET_STRATEGIES.get(preset_id)
         if not preset:
@@ -1016,6 +1030,8 @@ class VibeStrategy:
             if code in self.preset_strategies:
                 del self.preset_strategies[code]
         else:
+            from datetime import datetime
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             use_tp = tp if tp is not None else preset["default_tp"]
             use_sl = sl if sl is not None else preset["default_sl"]
             self.preset_strategies[code] = {
@@ -1023,7 +1039,10 @@ class VibeStrategy:
                 "name": preset["name"],
                 "tp": use_tp,
                 "sl": use_sl,
-                "reason": reason or preset["desc"]
+                "reason": reason or preset["desc"],
+                "buy_time": now_str,
+                "deadline": self._calculate_deadline(now_str, lifetime_mins),
+                "is_p3_processed": False
             }
         self._save_all_states()
         return True
