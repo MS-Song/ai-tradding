@@ -516,7 +516,7 @@ def draw_tui(strategy, cycle_info, prompt_mode=None):
         buf.write(align_kr(f" VIBE: {v_c}{_cached_vibe.upper()}\033[0m{phase_txt} {panic_txt} {vibe_desc}{ai_msg_formatted}", tw) + "\n")
         
         # 3번 메뉴 명칭 변경: 전략 -> 자동
-        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 | M:메뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
+        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 | M:메뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
         
         # --- [이동] AI 브리핑 출력 (커맨드 메뉴 바로 아래) ---
         if strategy.ai_briefing and not prompt_mode:
