@@ -150,14 +150,34 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         buf.write("-" * tw + "\n"); themes = get_cached_themes()
         if themes: buf.write("\033[93m" + align_kr(" 🔥 인기테마: " + " | ".join([f"{t['name']}({t['count']})" for t in themes[:8]]), tw) + "\033[0m\n")
         else: buf.write("\n")
+        
         y_recs = strategy.yesterday_recs_processed
         if y_recs:
-            parts = []
-            for r in y_recs[:3]:
-                color = "\033[91m" if r['change'] >= 0 else "\033[94m"
-                parts.append(f"\033[0m{r['name']}({color}{r['change']:+0.2f}%\033[0m)")
-            buf.write(align_kr(f"\033[90m 📅 어제 추천 성과: {' | '.join(parts)}", tw) + "\033[0m\n")
-        else: buf.write(align_kr("\033[90m 📅 어제 추천 이력이 없습니다.", tw) + "\033[0m\n")
+            # 최대 10개, 한 줄에 5개씩 표시
+            recs_to_show = y_recs[:10]
+            for i in range(0, len(recs_to_show), 5):
+                line_parts = []
+                chunk = recs_to_show[i:i+5]
+                # 각 항목의 최대 너비 계산 (tw - 여백) / 5
+                item_w = (tw - 10) // 5
+                for r in chunk:
+                    color = "\033[91m" if r['change'] >= 0 else "\033[94m"
+                    name = r['name']
+                    # [코드]이름(변동%) 형식으로 구성 후 너비 초과 시 이름 축약
+                    tag = f"[{r['code']}]"
+                    chg_tag = f"({color}{r['change']:+0.2f}%\033[0m)"
+                    base_w = get_visual_width(tag) + 8 # 변동성 태그 너비 약 8
+                    
+                    while get_visual_width(name) + base_w > item_w and len(name) > 2:
+                        name = name[:-1]
+                    
+                    if len(name) < len(r['name']): name += ".."
+                    line_parts.append(f"{tag}{name}{chg_tag}")
+                
+                label = " 📅 어제 성과: " if i == 0 else " " * 14
+                buf.write(align_kr(f"\033[90m{label}{' | '.join(line_parts)}", tw) + "\033[0m\n")
+        else:
+            buf.write(align_kr("\033[90m 📅 어제 추천 이력이 없습니다.", tw) + "\033[0m\n")
 
         buf.write("-" * tw + "\n")
 

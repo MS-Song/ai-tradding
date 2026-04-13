@@ -867,7 +867,8 @@ class VibeStrategy:
             "amount_per_trade": v_cfg.get("ai_config", {}).get("amount_per_trade", 500000),
             "min_score": v_cfg.get("ai_config", {}).get("min_score", 60.0),
             "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
-            "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False)
+            "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False),
+            "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False)
         }
         
         # 2. 영속 상태(state) 로드
@@ -945,7 +946,11 @@ class VibeStrategy:
                         if 'buy_time' not in s: s['buy_time'] = None
                         if 'deadline' not in s: s['deadline'] = None
                         if 'is_p3_processed' not in s: s['is_p3_processed'] = False
-                    if "ai_config" in d: self.ai_config.update(d["ai_config"])
+                    if "ai_config" in d: 
+                        self.ai_config.update(d["ai_config"])
+                        # .env 우선순위 적용 (새로 추가된 필드 대응)
+                        if "auto_apply" not in d["ai_config"]:
+                            self.ai_config["auto_apply"] = self.base_config.get("ai_config", {}).get("auto_apply", False)
                     if "bear_config" in d: self.recovery_eng.config.update(d["bear_config"])
                     if "bull_config" in d: self.bull_config.update(d["bull_config"])
                     self._last_closing_bet_date = d.get("last_closing_bet_date")

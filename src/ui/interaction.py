@@ -274,17 +274,35 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     strategy.update_ai_recommendations(get_cached_themes(), dm.cached_hot_raw, dm.cached_vol_raw, progress_cb=progress_callback, on_item_found=item_found_cb)
                     advice = strategy.get_ai_advice(progress_cb=lambda c, t, p="심층분석": progress_callback(c, t, "종목 심층분석"))
                 finally: dm.clear_busy()
+                
                 if advice and "⚠️" not in advice:
                     dm.show_status("✅ AI 분석 완료. 상단 브리핑을 확인하세요."); draw_tui(strategy, dm, cycle)
+                    
+                    # AI 전략 파싱 시도
                     if strategy.parse_and_apply_ai_strategy():
-                        try: prompt_row = max(15, os.get_terminal_size().lines - 10); sys.stdout.write(f"\033[{prompt_row};1H\033[K")
-                        except: pass
-                        dm.show_status("💡 AI가 새로운 전략 수치를 도출했습니다. 반영할까요?")
-                        res_a = input_with_esc("> AI 제안 수치를 시스템에 즉시 반영할까요? (y/n): ", tw)
-                        if res_a and res_a.strip().lower() == 'y': dm.show_status("🚀 AI 전략이 시스템에 완벽히 반영되었습니다."); dm.update_all_data(True, force=True)
-                        else: dm.show_status("⚠️ AI 전략 반영이 취소되었습니다. (기존 설정 유지)")
-                    else: dm.show_status("❌ AI 전략 파싱 실패 (수치 형식이 올바르지 않음)", True)
-                else: dm.show_status(f"❌ AI 분석 실패: {advice if advice else '알 수 없는 오류'}", True)
+                        # 자동 반영 여부 체크
+                        if strategy.ai_config.get("auto_apply"):
+                            dm.show_status("🚀 AI 전략이 시스템에 자동 반영되었습니다.")
+                            # 구분선을 === 로 변경하여 시각적 피드백 제공 (11행 타겟)
+                            sys.stdout.write(f"\033[11;1H\033[K\033[1;92m{'=' * tw}\033[0m\n"); sys.stdout.flush()
+                            dm.update_all_data(True, force=True); time.sleep(1.0)
+                        else:
+                            # 11행의 ==== 구분선을 일시적으로 지우고 프롬프트 표시
+                            sys.stdout.write("\033[11;1H\033[K"); sys.stdout.flush()
+                            dm.show_status("💡 AI가 새로운 전략 수치를 도출했습니다. 반영할까요?")
+                            res_a = input_with_esc("> AI 제안 수치를 시스템에 즉시 반영할까요? (y/n): ", tw)
+                            
+                            # 입력 후 원래의 구분선으로 복구
+                            sys.stdout.write(f"\033[11;1H\033[K{'=' * tw}\n"); sys.stdout.flush()
+                            
+                            if res_a and res_a.strip().lower() == 'y':
+                                dm.show_status("🚀 AI 전략이 시스템에 완벽히 반영되었습니다."); dm.update_all_data(True, force=True)
+                            else:
+                                dm.show_status("⚠️ AI 전략 반영이 취소되었습니다. (기존 설정 유지)")
+                    else:
+                        dm.show_status("❌ AI 전략 파싱 실패 (수치 형식이 올바르지 않음)", True)
+                else:
+                    dm.show_status(f"❌ AI 분석 실패: {advice if advice else '알 수 없는 오류'}", True)
                 flush_input(); time.sleep(0.2)
         elif mode == '3':
             res = input_with_esc("> 수정 [번호 TP SL] 또는 [TP SL] 입력 (초기화는 '번호 r'): ", tw)
