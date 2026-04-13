@@ -28,6 +28,7 @@ class DataManager:
         self.last_update_time = ""
         self.ranking_filter = "ALL"
         self.is_kr_market_active = False
+        self.last_size = (0, 0)
         
         # --- 글로벌 진행 표시기 상태 ---
         self.global_busy_msg = None

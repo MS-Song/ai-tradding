@@ -13,7 +13,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         except: tw, th = 110, 30
 
         buf = io.StringIO()
-        if (tw, th) != dm.strategy.last_size: buf.write("\033[2J"); dm.strategy.last_size = (tw, th)
+        if (tw, th) != dm.last_size: buf.write("\033[2J"); dm.last_size = (tw, th)
         buf.write("\033[H")
     
     now_dt = datetime.now()
@@ -167,15 +167,22 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         def fmt_r(item, width=col_w):
             if not item: return " " * width
             r = float(item['rate']); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
-            txt = f"[{item['code']}] {item['name']} ({p:,}/{c}{r:>+4.1f}%\033[0m)"
-            while get_visual_width(txt) > width: item['name'] = item['name'][:-1]; txt = f"[{item['code']}] {item['name']}.. ({p:,}/{c}{r:>+4.1f}%\033[0m)"
+            name = item.get('name', 'Unknown')
+            txt = f"[{item['code']}] {name} ({p:,}/{c}{r:>+4.1f}%\033[0m)"
+            while get_visual_width(txt) > width:
+                name = name[:-1]
+                txt = f"[{item['code']}] {name}.. ({p:,}/{c}{r:>+4.1f}%\033[0m)"
             return align_kr(txt, width)
 
         def fmt_ai(item, width=col_w):
             if not item: return " " * width
             r = float(item.get('rate', 0)); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
-            txt = f"({item.get('theme','?')[0:2]})[{item['code']}] {item['name']} ({p:,}/{c}{r:>+4.1f}%\033[0m)"
-            while get_visual_width(txt) > width: item['name'] = item['name'][:-1]; txt = f"({item.get('theme','?')[0:2]})[{item['code']}] {item['name']}.. ({p:,}/{c}{r:>+4.1f}%\033[0m)"
+            name = item.get('name', 'Unknown')
+            theme = item.get('theme','?')[0:2]
+            txt = f"({theme})[{item['code']}] {name} ({p:,}/{c}{r:>+4.1f}%\033[0m)"
+            while get_visual_width(txt) > width:
+                name = name[:-1]
+                txt = f"({theme})[{item['code']}] {name}.. ({p:,}/{c}{r:>+4.1f}%\033[0m)"
             return align_kr(txt, width)
 
         buf.write(f"\033[1;93m{align_kr('🔥 HOT SEARCH', col_w)}\033[0m │ \033[1;96m{align_kr('📊 VOLUME TOP', col_w)}\033[0m │ \033[1;92m{align_kr(f'✨ AI 추천 {'\033[91m' if strategy.auto_ai_trade else '\033[93m'}[{'AUTO' if strategy.auto_ai_trade else 'MANUAL'}]\033[1;92m', col_w)}\033[0m\n")

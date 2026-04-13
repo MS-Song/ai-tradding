@@ -123,6 +123,8 @@ def draw_stock_analysis(strategy, dm, code, tw, th):
     dm.show_status("✅ 분석 완료")
 
 def perform_interaction(key, api, strategy, dm, cycle):
+    import os
+    import time
     from src.ui.renderer import draw_tui, draw_manual_page
     from src.utils import get_key_immediate, input_with_esc
     from src.config_init import ensure_env, get_config

@@ -289,7 +289,7 @@ class VibeAlphaEngine:
 
     def analyze(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], min_score: float = 60.0, progress_cb: Optional[Callable] = None, kr_vibe: str = "Neutral", market_data: dict = None, on_item_found: Optional[Callable] = None) -> List[dict]:
         """주도 테마 및 랭킹 데이터를 분석하여 국내 종목과 ETF 분리 추출 (병렬 처리)"""
-        from main import THEME_KEYWORDS
+        from src.theme_engine import THEME_KEYWORDS
         
         combined = hot_raw + vol_raw
         candidates = []
@@ -1122,7 +1122,8 @@ class VibeStrategy:
             )
             self.ai_recommendations = recs
             self._save_all_states()
-        except: pass
+        except Exception as e:
+            log_error(f"AI 추천 업데이트 오류: {e}")
 
     def get_ai_advice(self, progress_cb: Optional[Callable] = None):
         holdings = self.api.get_balance()
