@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>KIS-Vibe-Trader 개편 로드맵 (V2)</title>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; background: #1e1e1e; color: #eee; line-height: 1.6; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h1 { color: #00ffcc; border-bottom: 2px solid #00ffcc; padding-bottom: 10px; }
+        .group-card { background: #2d2d2d; border-radius: 8px; padding: 20px; margin-bottom: 20px; border-left: 5px solid #00ffcc; }
+        .group-title { font-size: 1.2em; font-weight: bold; color: #ffcc00; margin-bottom: 10px; }
+        .task-list { list-style: none; padding-left: 0; }
+        .task-item { margin-bottom: 8px; padding-left: 20px; position: relative; }
+        .task-item::before { content: '✔'; position: absolute; left: 0; color: #00ffcc; }
+        .ui-mockup { background: #000; color: #0f0; font-family: monospace; padding: 15px; border-radius: 5px; border: 1px solid #444; margin-top: 10px; }
+        .highlight-red { color: #ff5555; }
+        .highlight-blue { color: #5555ff; }
+        .highlight-yellow { color: #ffff55; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 KIS-Vibe-Trader 개편 로드맵 (Gemini V3 반영)</h1>
+
+        <div class="group-card">
+            <div class="group-title">Group 1: 시스템 안정성 및 AI 회복력 (Gemini 3.1/3.0/2.5)</div>
+            <ul class="task-list">
+                <li class="task-item">Gemini 모델 선택 (3.1 Pro ~ 2.5 Lite) 기능 추가</li>
+                <li class="task-item">API 부하 시 하위 모델 자동 Fallback 시스템 (Pro -> Lite)</li>
+                <li class="task-item">시황 분석 중 상태 표시 및 종료 메시지 복구</li>
+            </ul>
+        </div>
+
+        <div class="group-card">
+            <div class="group-title">Group 2: 트레이딩 로그 및 실적 추적 (실제 체결가 기반)</div>
+            <ul class="task-list">
+                <li class="task-item">L:로그 메뉴 신설 및 최근 20개 거래/5개 설정 로그 관리</li>
+                <li class="task-item">시장가가 아닌 실제 체결가 기록 및 금일 수익금 합산 표시</li>
+            </ul>
+        </div>
+
+        <div class="group-card">
+            <div class="group-title">Group 4: 성능 최적화 및 UI 시인성 (비동기 스레드)</div>
+            <ul class="task-list">
+                <li class="task-item">커맨드 입력/실행 스레드 완전 분리 (입력 중 멈춤 방지)</li>
+                <li class="task-item">수치별 색상 적용 (+빨강 / -파랑) 및 레이아웃 정렬 최적화</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
