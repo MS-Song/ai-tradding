@@ -13,3 +13,5 @@ error.log
 activate_venv.sh
 run.sh
 .worktrees/
+model_list_raw.txt
+model_list_utf8.txt
