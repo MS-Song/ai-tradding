@@ -21,7 +21,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     
     m_label = "ALL" if dm.ranking_filter == "ALL" else "KOSPI" if dm.ranking_filter == "KSP" else "KOSDAQ" if dm.ranking_filter == "KDQ" else "USA"
     h_l = f" [AI TRADING SYSTEM] | {now_dt.strftime('%Y-%m-%d %H:%M:%S')} | KR:{k_st} | US:{u_st}"
-    h_r = f" ✅ LAST UPDATE: {dm.last_update_time} | FILTER: {m_label} "
+    h_r = f" ??LAST UPDATE: {dm.last_update_time} | FILTER: {m_label} "
     
     busy_txt = ""
     if dm.global_busy_msg:
@@ -86,24 +86,24 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         v_c = "\033[91m" if "Bull" in dm.cached_vibe else ("\033[94m" if "Bear" in dm.cached_vibe else "\033[93m")
         panic_txt = " !!! PANIC !!!" if dm.cached_panic else ""
         b_cfg = strategy.bear_config; auto_st = "ON" if b_cfg.get("auto_mode") else "OFF"
-        phase = strategy.get_market_phase(); phase_icons = {"P1": "🔥", "P2": "🧘", "P3": "💰", "P4": "🛒", "IDLE": "💤"}
-        phase_txt = f" [PHASE: {phase_icons.get(phase['id'], '💤')}{phase['name']}]"
-        vibe_desc = f"(하락장: 물타기 [\033[94m{b_cfg.get('min_loss_to_buy')}% / {b_cfg.get('average_down_amount')/10000:,.0f}만 / 자동:{auto_st}\033[0m])" if "Bear" in dm.cached_vibe else ("(\033[91m상승장: 익절 기준 상향 보정 [+3.0%]\033[0m)" if "Bull" in dm.cached_vibe else "(보합장: 기본 전략 유지)")
+        phase = strategy.get_market_phase(); phase_icons = {"P1": "?��", "P2": "?��", "P3": "?��", "P4": "?��", "IDLE": "?��"}
+        phase_txt = f" [PHASE: {phase_icons.get(phase['id'], '?��')}{phase['name']}]"
+        vibe_desc = f"(?�락?? 물�?�?[\033[94m{b_cfg.get('min_loss_to_buy')}% / {b_cfg.get('average_down_amount')/10000:,.0f}�?/ ?�동:{auto_st}\033[0m])" if "Bear" in dm.cached_vibe else ("(\033[91m?�승?? ?�절 기�? ?�향 보정 [+3.0%]\033[0m)" if "Bull" in dm.cached_vibe else "(보합?? 기본 ?�략 ?��?)")
         ai_msg = strategy.analyzer.ai_override_msg if hasattr(strategy.analyzer, "ai_override_msg") else ""
-        ai_msg_formatted = f" \033[92m{ai_msg}\033[0m" if "일치" in ai_msg else (f" \033[93m{ai_msg}\033[0m" if ai_msg else "")
-        buf.write(align_kr(f" VIBE: {v_c}{dm.cached_vibe.upper()}\033[0m{phase_txt} {panic_txt} {vibe_desc}{ai_msg_formatted}", tw) + "\n")
-        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 L:로그 | M:메뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
+        ai_msg_formatted = f" \033[92m{ai_msg}\033[0m" if "?�치" in ai_msg else (f" \033[93m{ai_msg}\033[0m" if ai_msg else "")
+        buf.write(align_kr(status_line, tw) + "\n")
+        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:?�동 | 4:추천 | 5:물�?�?6:불�?�?| AI 7:분석 8:?�황 | 9:?�략 | 리포??B:보유 D:추천 H:?�기 L:로그 | M:메뉴??| S:?�업 | Q:종료", tw) + "\033[0m\n")
         
         if strategy.ai_briefing and not prompt_mode:
             all_lines = [line.strip() for line in strategy.ai_briefing.split('\n') if line.strip()]
-            brief_map = {"시장": "", "전략": "", "액션": "", "추천": ""}
+            brief_map = {"?�장": "", "?�략": "", "?�션": "", "추천": ""}
             for l in all_lines:
                 for k in brief_map.keys():
                     if f"AI[{k}]:" in l: brief_map[k] = l; break
-            for k in ["시장", "전략", "액션", "추천"]:
-                buf.write("\033[1;95m" + align_kr(f" {brief_map[k] if brief_map[k] else f'AI[{k}]: 분석 데이터 없음'}", tw) + "\033[0m\n")
+            for k in ["?�장", "?�략", "?�션", "추천"]:
+                buf.write("\033[1;95m" + align_kr(f" {brief_map[k] if brief_map[k] else f'AI[{k}]: 분석 ?�이???�음'}", tw) + "\033[0m\n")
         elif prompt_mode: 
-            buf.write("\033[1;33m" + align_kr(f" >>> [{prompt_mode} MODE] 입력 대기 중... (ESC 취소)", tw) + "\033[0m\n")
+            buf.write("\033[1;33m" + align_kr(f" >>> [{prompt_mode} MODE] ?�력 ?��?�?.. (ESC 취소)", tw) + "\033[0m\n")
             buf.write("\n" * 3)
         else: buf.write("\n" * 4) 
         
@@ -115,25 +115,25 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         stk_rt = ((stk_eval - stk_prin) / stk_prin * 100) if stk_prin > 0 else 0
         stk_color = "\033[91m" if stk_rt > 0 else "\033[94m" if stk_rt < 0 else "\033[0m"
         
-        # 금일 누적 수익금 (Group 2 반영)
+        # 금일 ?�적 ?�익�?(Group 2 반영)
         from src.logger import trading_log
         daily_p = trading_log.get_daily_profit()
         daily_c = "\033[91m" if daily_p > 0 else "\033[94m" if daily_p < 0 else "\033[0m"
-        daily_txt = f" | 금일: {daily_c}{daily_p:+,}원\033[0m"
+        daily_txt = f" | 금일: {daily_c}{daily_p:+,}??033[0m"
         
-        buf.write(align_kr(f" Asset | 평가액: {tot_eval:,.0f} (원금: {tot_prin:,.0f}, {tot_color}{tot_rt:+.2f}%\033[0m) | 현금: {asset.get('cash', 0):,.0f} | 주식총액: {stk_eval:,.0f} ({stk_color}{stk_rt:+.2f}%\033[0m){daily_txt}", tw) + "\n")
+        buf.write(align_kr(f" Asset | ?��??? {tot_eval:,.0f} (?�금: {tot_prin:,.0f}, {tot_color}{tot_rt:+.2f}%\033[0m) | ?�금: {asset.get('cash', 0):,.0f} | 주식총액: {stk_eval:,.0f} ({stk_color}{stk_rt:+.2f}%\033[0m){daily_txt}", tw) + "\n")
         
         tp_cur, sl_cur, _ = strategy.get_dynamic_thresholds("BASE", dm.cached_vibe.lower())
-        buf.write(align_kr(f"{'* STRAT' if strategy.is_modified('STRAT') else ' STRAT '} | 매입/수: 익절 {strategy.base_tp:+.1f}% (현재 {tp_cur:+.1f}%) | 손절 {strategy.base_sl:+.1f}% (현재 {sl_cur:+.1f}%)", tw) + "\n")
-        buf.write(align_kr(f"{'* BEAR ' if strategy.is_modified('BEAR') else ' BEAR  '} | 물타기: 트리거 \033[94m{b_cfg.get('min_loss_to_buy'):+.1f}%\033[0m | 회당 {b_cfg.get('average_down_amount'):,}원 | 종목한도 {b_cfg.get('max_investment_per_stock'):,}원 | 자동: {auto_st} | PnL 하락 방어", tw) + "\n")
+        buf.write(align_kr(f"{'* STRAT' if strategy.is_modified('STRAT') else ' STRAT '} | 매입/?? ?�절 {strategy.base_tp:+.1f}% (?�재 {tp_cur:+.1f}%) | ?�절 {strategy.base_sl:+.1f}% (?�재 {sl_cur:+.1f}%)", tw) + "\n")
+        buf.write(align_kr(f"{'* BEAR ' if strategy.is_modified('BEAR') else ' BEAR  '} | 물�?�? ?�리�?\033[94m{b_cfg.get('min_loss_to_buy'):+.1f}%\033[0m | ?�당 {b_cfg.get('average_down_amount'):,}??| 종목?�도 {b_cfg.get('max_investment_per_stock'):,}??| ?�동: {auto_st} | PnL ?�락 방어", tw) + "\n")
         u_cfg = strategy.bull_config; u_st = "ON" if u_cfg.get("auto_mode") else "OFF"
-        buf.write(align_kr(f"{'* BULL ' if strategy.is_modified('BULL') else ' BULL  '} | 불타기: 트리거 \033[91m+{u_cfg.get('min_profit_to_pyramid'):.1f}%\033[0m | 회당 {u_cfg.get('average_down_amount'):,}원 | 종목한도 {u_cfg.get('max_investment_per_stock'):,}원 | 자동: {u_st} | 수익 비중 확대", tw) + "\n")
+        buf.write(align_kr(f"{'* BULL ' if strategy.is_modified('BULL') else ' BULL  '} | 불�?�? ?�리�?\033[91m+{u_cfg.get('min_profit_to_pyramid'):.1f}%\033[0m | ?�당 {u_cfg.get('average_down_amount'):,}??| 종목?�도 {u_cfg.get('max_investment_per_stock'):,}??| ?�동: {u_st} | ?�익 비중 ?��?", tw) + "\n")
         a_cfg = strategy.ai_config; ai_st = "ON" if a_cfg.get("auto_mode") else "OFF"
-        buf.write(align_kr(f"{'* ALGO ' if strategy.is_modified('ALGO') else ' ALGO  '} | 추천매매: 회당 {a_cfg.get('amount_per_trade'):,}원 | 종목한도 {a_cfg.get('max_investment_per_stock'):,}원 | 자동: {ai_st} | 테마 모멘텀", tw) + "\n")
+        buf.write(align_kr(f"{'* ALGO ' if strategy.is_modified('ALGO') else ' ALGO  '} | 추천매매: ?�당 {a_cfg.get('amount_per_trade'):,}??| 종목?�도 {a_cfg.get('max_investment_per_stock'):,}??| ?�동: {ai_st} | ?�마 모멘?�", tw) + "\n")
         buf.write("-" * tw + "\n")
 
         eff_w = tw - 4; w = [max(4, int(eff_w * 0.03)), max(5, int(eff_w * 0.04)), max(15, int(eff_w * 0.15)), max(10, int(eff_w * 0.09)), max(14, int(eff_w * 0.12)), max(10, int(eff_w * 0.08)), max(8, int(eff_w * 0.07)), max(10, int(eff_w * 0.08)), max(18, int(eff_w * 0.12)), max(10, int(eff_w * 0.07)), max(10, int(eff_w * 0.10)), max(6, int(eff_w * 0.05))]
-        buf.write("\033[1m" + align_kr(align_kr("NO",w[0])+align_kr("MKT",w[1])+align_kr("SYMBOL",w[2])+align_kr("CURR",w[3],'right')+align_kr("DAY",w[4],'right')+align_kr("AVG",w[5],'right')+align_kr("QTY",w[6],'right')+align_kr("EVAL",w[7],'right')+align_kr("PnL",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+"  "+align_kr("전략",w[10],'center')+align_kr("남음",w[11],'right'), tw) + "\033[0m\n")
+        buf.write("\033[1m" + align_kr(align_kr("NO",w[0])+align_kr("MKT",w[1])+align_kr("SYMBOL",w[2])+align_kr("CURR",w[3],'right')+align_kr("DAY",w[4],'right')+align_kr("AVG",w[5],'right')+align_kr("QTY",w[6],'right')+align_kr("EVAL",w[7],'right')+align_kr("PnL",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+"  "+align_kr("?�략",w[10],'center')+align_kr("?�음",w[11],'right'), tw) + "\033[0m\n")
         
         f_h = dm.cached_holdings if dm.ranking_filter == "ALL" else [h for h in dm.cached_holdings if get_market_name(h.get('pdno','')) == dm.ranking_filter]
         base_fixed = 23; ranking_target = 10; asset_count = len(f_h); max_h_display = max(1, th - base_fixed - ranking_target)
@@ -151,29 +151,29 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 if p_strat and p_strat.get('deadline'):
                     try: rem_mins = int((datetime.strptime(p_strat['deadline'], '%Y-%m-%d %H:%M:%S') - datetime.now()).total_seconds() / 60); rem_txt = f"{rem_mins}M" if rem_mins > 0 else "EXP"
                     except: rem_txt = "ERR"
-                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name[:(w[2]-10)//2*2]}" + (" *" if info['spike'] else ""), w[2]) + align_kr(f"{int(p_cu):,}", w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{info['tp']:+.1f}/{info['sl']:+.1f}%", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw) + "\n")
-            if len(f_h) > max_h_display: buf.write(align_kr(f"... 외 {len(f_h) - max_h_display}종목 생략됨", tw, 'center') + "\n")
+                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name[:(w[2]-10)//2*2]}" + (" *" if info['spike'] else ""), w[2]) + align_kr(f"{int(p_cu):,}", w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{info['tp']:+.1f}/{info['sl']:+.1f}%", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "?��?", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw) + "\n")
+            if len(f_h) > max_h_display: buf.write(align_kr(f"... ??{len(f_h) - max_h_display}종목 ?�략??, tw, 'center') + "\n")
         
         buf.write("-" * tw + "\n"); themes = get_cached_themes()
-        if themes: buf.write("\033[93m" + align_kr(" 🔥 인기테마: " + " | ".join([f"{t['name']}({t['count']})" for t in themes[:8]]), tw) + "\033[0m\n")
+        if themes: buf.write("\033[93m" + align_kr(" ?�� ?�기?�마: " + " | ".join([f"{t['name']}({t['count']})" for t in themes[:8]]), tw) + "\033[0m\n")
         else: buf.write("\n")
         
         y_recs = strategy.yesterday_recs_processed
         if y_recs:
-            # 최대 10개, 한 줄에 5개씩 표시
+            # 최�? 10�? ??줄에 5개씩 ?�시
             recs_to_show = y_recs[:10]
             for i in range(0, len(recs_to_show), 5):
                 line_parts = []
                 chunk = recs_to_show[i:i+5]
-                # 각 항목의 최대 너비 계산 (tw - 여백) / 5
+                # �???��??최�? ?�비 계산 (tw - ?�백) / 5
                 item_w = (tw - 10) // 5
                 for r in chunk:
                     color = "\033[91m" if r['change'] >= 0 else "\033[94m"
                     name = r['name']
-                    # [코드]이름(변동%) 형식으로 구성 후 너비 초과 시 이름 축약
+                    # [코드]?�름(변??) ?�식?�로 구성 ???�비 초과 ???�름 축약
                     tag = f"[{r['code']}]"
                     chg_tag = f"({color}{r['change']:+0.2f}%\033[0m)"
-                    base_w = get_visual_width(tag) + 8 # 변동성 태그 너비 약 8
+                    base_w = get_visual_width(tag) + 8 # 변?�성 ?�그 ?�비 ??8
                     
                     while get_visual_width(name) + base_w > item_w and len(name) > 2:
                         name = name[:-1]
@@ -181,10 +181,10 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                     if len(name) < len(r['name']): name += ".."
                     line_parts.append(f"{tag}{name}{chg_tag}")
                 
-                label = " 📅 어제 성과: " if i == 0 else " " * 14
+                label = " ?�� ?�제 ?�과: " if i == 0 else " " * 14
                 buf.write(align_kr(f"\033[90m{label}{' | '.join(line_parts)}", tw) + "\033[0m\n")
         else:
-            buf.write(align_kr("\033[90m 📅 어제 추천 이력이 없습니다.", tw) + "\033[0m\n")
+            buf.write(align_kr("\033[90m ?�� ?�제 추천 ?�력???�습?�다.", tw) + "\033[0m\n")
 
         buf.write("-" * tw + "\n")
 
@@ -212,16 +212,16 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 txt = f"({theme})[{item['code']}] {name}.. ({p:,}/{c}{r:>+4.1f}%\033[0m)"
             return align_kr(txt, width)
 
-        buf.write(f"\033[1;93m{align_kr('🔥 HOT SEARCH', col_w)}\033[0m │ \033[1;96m{align_kr('📊 VOLUME TOP', col_w)}\033[0m │ \033[1;92m{align_kr(f'✨ AI 추천 {'\033[91m' if strategy.auto_ai_trade else '\033[93m'}[{'AUTO' if strategy.auto_ai_trade else 'MANUAL'}]\033[1;92m', col_w)}\033[0m\n")
-        buf.write("─" * col_w + "─┼─" + "─" * col_w + "─┼─" + "─" * col_w + "\n")
-        for i in range(ranking_items_count): buf.write(f"{fmt_r(hot_list[i] if i < len(hot_list) else None)} │ {fmt_r(vol_list[i] if i < len(vol_list) else None)} │ {fmt_ai(ai_recs[i] if i < len(ai_recs) else None)}\n")
+        buf.write(f"\033[1;93m{align_kr('?�� HOT SEARCH', col_w)}\033[0m ??\033[1;96m{align_kr('?�� VOLUME TOP', col_w)}\033[0m ??\033[1;92m{align_kr(f'??AI 추천 {'\033[91m' if strategy.auto_ai_trade else '\033[93m'}[{'AUTO' if strategy.auto_ai_trade else 'MANUAL'}]\033[1;92m', col_w)}\033[0m\n")
+        buf.write("?�" * col_w + "?�?��?" + "?�" * col_w + "?�?��?" + "?�" * col_w + "\n")
+        for i in range(ranking_items_count): buf.write(f"{fmt_r(hot_list[i] if i < len(hot_list) else None)} ??{fmt_r(vol_list[i] if i < len(vol_list) else None)} ??{fmt_ai(ai_recs[i] if i < len(ai_recs) else None)}\n")
     
     rem = th - buf.getvalue().count('\n')
     if rem > 0: buf.write(f"\033[K {dm.status_msg if dm.status_msg and (time.time()-dm.status_time<60) else ''}\n"); rem -= 1
     if rem > 0: buf.write(f"\033[K {dm.last_log_msg if dm.last_log_msg and (time.time()-dm.last_log_time<60) else ''}\n"); rem -= 1
     if rem > 0:
         logs = dm.trading_logs; skip = len(logs) - (rem - 1)
-        if skip > 0: buf.write(f"\033[K \033[90m... 외 {skip}건의 로그 생략됨\033[0m\n"); logs = logs[-(rem-1):]; rem -= 1
+        if skip > 0: buf.write(f"\033[K \033[90m... ??{skip}건의 로그 ?�략??033[0m\n"); logs = logs[-(rem-1):]; rem -= 1
         for tl in logs:
             if rem <= 0: break
             buf.write(f"\033[K {tl}\n"); rem -= 1
@@ -235,64 +235,64 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
 def draw_manual_page(tw, th):
     buf = io.StringIO(); buf.write("\033[H\033[2J")
     buf.write("\033[46;37m" + align_kr(" [KIS-VIBE-TRADER SYSTEM MANUAL] ", tw, 'center') + "\033[0m\n\n")
-    buf.write("\033[1;93m 1. 장중 시간 페이즈(Market Phase) 전략\033[0m\n")
-    buf.write("  - \033[91m🔥 Phase 1 (09:00~10:00) [공격]\033[0m: 변동성 극대화 구간. 익절 상향(+2%), 손절 완화(-1%).\n")
-    buf.write("  - \033[92m🧘 Phase 2 (10:00~14:30) [관리]\033[0m: 횡보 함정 구간. 익절/손절 강화(-1%)로 리스크 타이트하게 관리.\n")
-    buf.write("  - \033[93m💰 Phase 3 (14:30~15:10) [확정]\033[0m: 당일 수익 확정. 수익권 종목 50% 분할 매도 및 잔량 본전 스탑.\n")
-    buf.write("  - \033[96m🛒 Phase 4 (15:10~15:20) [준비]\033[0m: 익일 유망주 선취매. 시장 안심(Bull/Neutral) 시에만 신규 매수.\n\n")
-    buf.write("\033[1;93m 2. AI 동적 리스크 관리 (Time-Stop)\033[0m\n")
-    buf.write("  - \033[1m유효 시간(Lifetime)\033[0m: 전략 할당 시 AI가 종목의 모멘텀 수명을 예측하여 데드라인을 설정.\n")
-    buf.write("  - \033[1m타임 스탑\033[0m: 데드라인(REM:EXP) 경과 시, 익절선을 현재 수익의 절반으로 낮춰 수익을 보존.\n")
-    buf.write("  - \033[1m동적 보정\033[0m: 시장 Vibe(Bull/Bear)와 종목 변동성을 분석하여 TP/SL을 실시간으로 미세 조정.\n\n")
-    buf.write("\033[1;93m 3. 핵심 운영 팁\033[0m\n")
-    buf.write("  - \033[1m[3:자동]\033[0m: 번호 없이 'TP SL' 입력 시 보유 전 종목의 기본 익절/손절을 일괄 변경합니다.\n")
-    buf.write("  - \033[1m[8:시황]\033[0m: AI가 제안하는 수치는 현재 Vibe가 반영된 최종 목표값이며 시스템이 역산 적용합니다.\n")
-    buf.write("  - \033[1m[9:전략]\033[0m: 엔터만 입력 시 AI가 해당 종목에 가장 적합한 KIS 프리셋 전략을 자동 매칭합니다.\n\n")
-    buf.write("-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
+    buf.write("\033[1;93m 1. ?�중 ?�간 ?�이�?Market Phase) ?�략\033[0m\n")
+    buf.write("  - \033[91m?�� Phase 1 (09:00~10:00) [공격]\033[0m: 변?�성 극�???구간. ?�절 ?�향(+2%), ?�절 ?�화(-1%).\n")
+    buf.write("  - \033[92m?�� Phase 2 (10:00~14:30) [관�?\033[0m: ?�보 ?�정 구간. ?�절/?�절 강화(-1%)�?리스???�?�트?�게 관�?\n")
+    buf.write("  - \033[93m?�� Phase 3 (14:30~15:10) [?�정]\033[0m: ?�일 ?�익 ?�정. ?�익�?종목 50% 분할 매도 �??�량 본전 ?�탑.\n")
+    buf.write("  - \033[96m?�� Phase 4 (15:10~15:20) [준�?\033[0m: ?�일 ?�망�??�취�? ?�장 ?�심(Bull/Neutral) ?�에�??�규 매수.\n\n")
+    buf.write("\033[1;93m 2. AI ?�적 리스??관�?(Time-Stop)\033[0m\n")
+    buf.write("  - \033[1m?�효 ?�간(Lifetime)\033[0m: ?�략 ?�당 ??AI가 종목??모멘?� ?�명???�측?�여 ?�드?�인???�정.\n")
+    buf.write("  - \033[1m?�???�탑\033[0m: ?�드?�인(REM:EXP) 경과 ?? ?�절?�을 ?�재 ?�익???�반?�로 ??�� ?�익??보존.\n")
+    buf.write("  - \033[1m?�적 보정\033[0m: ?�장 Vibe(Bull/Bear)?� 종목 변?�성??분석?�여 TP/SL???�시간으�?미세 조정.\n\n")
+    buf.write("\033[1;93m 3. ?�심 ?�영 ??033[0m\n")
+    buf.write("  - \033[1m[3:?�동]\033[0m: 번호 ?�이 'TP SL' ?�력 ??보유 ??종목??기본 ?�절/?�절???�괄 변경합?�다.\n")
+    buf.write("  - \033[1m[8:?�황]\033[0m: AI가 ?�안?�는 ?�치???�재 Vibe가 반영??최종 목표값이�??�스?�이 ??�� ?�용?�니??\n")
+    buf.write("  - \033[1m[9:?�략]\033[0m: ?�터�??�력 ??AI가 ?�당 종목??가???�합??KIS ?�리???�략???�동 매칭?�니??\n\n")
+    buf.write("-" * tw + "\n" + align_kr(" ?�무 ?�나 ?�르�?메인 ?�면?�로 ?�아갑니?? ", tw, 'center') + "\n")
     sys.stdout.write(buf.getvalue()); sys.stdout.flush()
     while not sys.stdin.read(1): time.sleep(0.1)
     buf.close()
 
 def draw_trading_logs(strategy, dm, tw, th):
-    """트레이딩 로그 상세 화면 (Group 2 신설)"""
+    """?�레?�딩 로그 ?�세 ?�면 (Group 2 ?�설)"""
     import io
     from src.logger import trading_log
     buf = io.StringIO(); buf.write("\033[H\033[2J")
     buf.write("\033[44;37m" + align_kr(" [TRADING HISTORY & SYSTEM LOGS] ", tw, 'center') + "\033[0m\n\n")
     
-    # 1. TRADE 로그 섹션
-    buf.write("\033[1;93m [최근 거래 내역 (TRADE)]\033[0m\n")
+    # 1. TRADE 로그 ?�션
+    buf.write("\033[1;93m [최근 거래 ?�역 (TRADE)]\033[0m\n")
     trades = trading_log.data.get("trades", [])
     if not trades:
-        buf.write("  최근 거래 내역이 없습니다.\n")
+        buf.write("  최근 거래 ?�역???�습?�다.\n")
     else:
-        header = f"{align_kr('시간', 20)} | {align_kr('구분', 10)} | {align_kr('종목명', 14)} | {align_kr('체결가', 10)} | {align_kr('수량', 6)} | {align_kr('수익금', 12)} | 메모"
+        header = f"{align_kr('?�간', 20)} | {align_kr('구분', 10)} | {align_kr('종목�?, 14)} | {align_kr('체결가', 10)} | {align_kr('?�량', 6)} | {align_kr('?�익�?, 12)} | 메모"
         buf.write("\033[1m" + header + "\033[0m\n" + "-" * tw + "\n")
-        # 화면 높이 고려하여 최대 15개 표시
+        # ?�면 ?�이 고려?�여 최�? 15�??�시
         for t in trades[:15]:
             t_type = t.get('type', 'Unknown')
-            t_color = "\033[91m" if "매수" in t_type else "\033[94m" if "매도" in t_type or "익절" in t_type or "손절" in t_type else ""
+            t_color = "\033[91m" if "매수" in t_type else "\033[94m" if "매도" in t_type or "?�절" in t_type or "?�절" in t_type else ""
             p_val = t.get('profit', 0)
             p_color = "\033[91m" if p_val > 0 else "\033[94m" if p_val < 0 else ""
-            p_str = f"{p_color}{int(p_val):+,}원\033[0m" if p_val != 0 else "-"
+            p_str = f"{p_color}{int(p_val):+,}??033[0m" if p_val != 0 else "-"
             
             line = f"{t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(t.get('name','-'), 14)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {t.get('memo', '')}"
             buf.write(line + "\n")
             
     buf.write("\n" + "=" * tw + "\n\n")
     
-    # 2. CONFIG 로그 섹션
-    buf.write("\033[1;96m [시스템 설정 및 전략 변경 (CONFIG)]\033[0m\n")
+    # 2. CONFIG 로그 ?�션
+    buf.write("\033[1;96m [?�스???�정 �??�략 변�?(CONFIG)]\033[0m\n")
     configs = trading_log.data.get("configs", [])
     if not configs:
-        buf.write("  변경 이력이 없습니다.\n")
+        buf.write("  변�??�력???�습?�다.\n")
     else:
-        for c in configs[:10]: # 최근 10개
+        for c in configs[:10]: # 최근 10�?
             buf.write(f"  [{c.get('time', '-')}] {c.get('content', '')}\n")
             
-    buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
+    buf.write("\n" + "-" * tw + "\n" + align_kr(" ?�무 ?�나 ?�르�?메인 ?�면?�로 ?�아갑니?? ", tw, 'center') + "\n")
     sys.stdout.write(buf.getvalue()); sys.stdout.flush()
     
-    # 아무 키나 입력 대기
+    # ?�무 ?�나 ?�력 ?��?
     while not get_key_immediate(): time.sleep(0.1)
     buf.close()

@@ -907,11 +907,12 @@ class VibeStrategy:
         if code in self.exit_mgr.manual_thresholds:
             del self.exit_mgr.manual_thresholds[code]
             self._save_all_states()
-
-    def reset_all_manual_thresholds(self):
-        """모든 수동 설정 초기화"""
-        self.exit_mgr.manual_thresholds.clear()
-        self._save_all_states()
+def apply_ai_strategy_to_all(self, data_manager):
+    """보유한 모든 종목에 AI 최적 전략 자동 할당"""
+    portfolio = data_manager.get_portfolio()
+    for code in portfolio:
+        strategy = self.auto_assign_preset(code, "")
+        # strategy는 내부에서 assign_preset를 호출하므로 여기서 별도 저장 필요 없음
 
     def determine_market_trend(self): return self.analyzer.update()
     def save_manual_thresholds(self): self._save_all_states()
