@@ -323,3 +323,58 @@ class KISAPI:
                 log_error(f"get_naver_volume_stocks Error: {e}")
             except: pass
             return self._vol_cache or []  # 실패 시 기존 캐시 반환
+
+    def get_naver_theme_data(self) -> dict:
+        """네이버 금융에서 전체 테마 및 구성 종목 데이터를 수집하여 딕셔너리로 반환"""
+        theme_map = {}
+        try:
+            # 1. 테마 리스트 페이지 (최대 10페이지까지 크롤링하여 전체 테마 확보)
+            for page in range(1, 11):
+                url = f"https://finance.naver.com/sise/theme.naver?&page={page}"
+                res = requests.get(url, headers=self.headers, timeout=10)
+                if not BeautifulSoup: return {}
+                soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+                
+                table = soup.find('table', {'class': 'type_1'})
+                if not table: break
+                
+                # 'col_type1' 클래스를 가진 td 안의 a 태그가 테마 링크
+                links = table.find_all('td', {'class': 'col_type1'})
+                found_on_page = False
+                for l in links:
+                    a = l.find('a')
+                    if a and 'sise_group_detail.naver' in a['href']:
+                        found_on_page = True
+                        theme_name = a.text.strip()
+                        theme_url = "https://finance.naver.com" + a['href']
+                        
+                        # 2. 각 테마의 상세 페이지에서 종목 리스트 수집
+                        try:
+                            # 상세 페이지 요청 간격 조절 (부하 방지)
+                            time.sleep(0.1)
+                            res_d = requests.get(theme_url, headers=self.headers, timeout=5)
+                            soup_d = BeautifulSoup(res_d.content, 'html.parser', from_encoding='cp949')
+                            
+                            stocks = []
+                            table_d = soup_d.find('table', {'class': 'type_5'})
+                            if table_d:
+                                for row in table_d.find_all('tr'):
+                                    name_td = row.find('td', {'class': 'name'})
+                                    if name_td and name_td.find('a'):
+                                        a_s = name_td.find('a')
+                                        stock_name = a_s.text.strip()
+                                        stock_code = a_s['href'].split('=')[-1]
+                                        stocks.append({"name": stock_name, "code": stock_code})
+                            
+                            if stocks:
+                                theme_map[theme_name] = stocks
+                        except: continue
+                
+                if not found_on_page: break
+            return theme_map
+        except Exception as e:
+            try:
+                from src.logger import log_error
+                log_error(f"get_naver_theme_data Error: {e}")
+            except: pass
+            return {}
