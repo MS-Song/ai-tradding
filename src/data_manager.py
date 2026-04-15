@@ -288,6 +288,28 @@ class DataManager:
                 log_error(f"Data Update Error: {e}")
             time.sleep(5)
 
+    def theme_update_worker(self):
+        """테마 데이터를 주기적으로 크롤링하여 파일로 저장 (Naver Finance)"""
+        while True:
+            try:
+                from src.theme_engine import save_theme_data
+                self.set_busy("테마 데이터 수집")
+                theme_map = self.api.get_naver_theme_data()
+                if theme_map:
+                    save_theme_data(theme_map)
+                    self.add_trading_log("✨ 테마 데이터베이스 갱신 완료")
+            except Exception as e:
+                try:
+                    from src.logger import log_error
+                    log_error(f"Theme Update Error: {e}")
+                except: pass
+            finally:
+                self.clear_busy()
+            
+            # 테마 데이터는 6시간마다 갱신
+            time.sleep(6 * 3600)
+
     def start_workers(self, is_virtual):
         threading.Thread(target=self.index_update_worker, daemon=True).start()
         threading.Thread(target=self.data_update_worker, args=(is_virtual,), daemon=True).start()
+        threading.Thread(target=self.theme_update_worker, daemon=True).start()

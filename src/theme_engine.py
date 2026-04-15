@@ -34,7 +34,10 @@ def load_theme_data():
 load_theme_data()
 
 # 제외하거나 후순위로 밀어낼 광범위한 테마명 (섹터 분류 등)
-BROAD_THEMES = ["KOSPI200", "KOSDAQ150", "IT 대표주", "자동차 대표주", "금융지주", "은행", "대형주", "중형주", "소형주", "코스피 200", "코스닥 150"]
+BROAD_THEMES = [
+    "KOSPI200", "KOSDAQ150", "IT 대표주", "자동차 대표주", "금융지주", "은행", "대형주", "중형주", "소형주", 
+    "코스피 200", "코스닥 150", "KOSPI", "KOSDAQ", "KRX300", "지주사", "코스피200건설", "철강 주요종목"
+]
 
 def get_theme_for_stock(code: str, name: str) -> str:
     """종목 코드 또는 이름을 기반으로 테마명을 반환 (동적 데이터 우선)"""

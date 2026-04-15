@@ -168,11 +168,11 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 if p_strat and p_strat.get('deadline'):
                     try: rem_mins = int((datetime.strptime(p_strat['deadline'], '%Y-%m-%d %H:%M:%S') - datetime.now()).total_seconds() / 60); rem_txt = f"{rem_mins}M" if rem_mins > 0 else "EXP"
                     except: rem_txt = "ERR"
-                # [Task 9] TP/SL 색상 적용
+                # [Task 9] TP/SL 색상 적용 (단위 % 제거)
                 tp_txt = f"\033[91m{info['tp']:+.1f}\033[0m"
                 sl_txt = f"\033[94m{info['sl']:+.1f}\033[0m"
                 
-                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name[:(w[2]-10)//2*2]}" + (" *" if info['spike'] else ""), w[2]) + align_kr(f"{int(p_cu):,}", w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}%", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw) + "\n")
+                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name[:(w[2]-10)//2*2]}" + (" *" if info['spike'] else ""), w[2]) + align_kr(f"{int(p_cu):,}", w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw) + "\n")
             if len(f_h) > max_h_display: buf.write(align_kr(f"... 외 {len(f_h) - max_h_display}종목 생략됨 ...", tw, 'center') + "\n")
         
         buf.write("-" * tw + "\n"); themes = get_cached_themes()
@@ -217,14 +217,16 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             r = float(item['rate']); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
             name = item.get('name', 'Unknown')
             orig_name = name
+            from src.theme_engine import get_theme_for_stock
+            theme = get_theme_for_stock(item['code'], name)[0:4]
             rate_str = f"{r:>+4.1f}%"
             # ANSI 제외 plain 너비로 축약 여부 결정
-            plain = f"[{item['code']}] {name} ({p:,}/{rate_str})"
+            plain = f"({theme})[{item['code']}] {name} ({p:,}/{rate_str})"
             while get_visual_width(plain) > width and len(name) > 1:
                 name = name[:-1]
-                plain = f"[{item['code']}] {name}.. ({p:,}/{rate_str})"
+                plain = f"({theme})[{item['code']}] {name}.. ({p:,}/{rate_str})"
             suffix = ".." if name != orig_name else ""
-            txt = f"[{item['code']}] {name}{suffix} ({p:,}/{c}{rate_str}\033[0m)"
+            txt = f"({theme})[{item['code']}] {name}{suffix} ({p:,}/{c}{rate_str}\033[0m)"
             return align_kr(txt, width)
 
         def fmt_ai(item, width=col_w):
@@ -232,7 +234,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             r = float(item.get('rate', 0)); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
             name = item.get('name', 'Unknown')
             orig_name = name
-            theme = item.get('theme', '?')[0:2]
+            theme = item.get('theme', '?')[0:4]
             rate_str = f"{r:>+4.1f}%"
             # ANSI 제외 plain 너비로 축약 여부 결정
             plain = f"({theme})[{item['code']}] {name} ({p:,}/{rate_str})"

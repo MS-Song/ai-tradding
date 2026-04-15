@@ -49,10 +49,13 @@ def draw_recommendation_report(strategy, dm, tw, th):
             gem_mark = "💎" if r.get('is_gem') else ("📊" if r.get('is_etf') else "  ")
             detail = strategy.api.get_naver_stock_detail(code)
             buf.write(f"{align_kr(r['theme'], 8)} | {align_kr(code, 8)} | {align_kr(gem_mark + r['name'], 14)} | {align_kr(f'{int(float(r.get('price',0))):,}', 9, 'right')} | {align_kr(f'{color}{rate:+.1f}%\033[0m', 7, 'right')} | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(f'{r['score']:.1f}', 6, 'right')} | {r['reason']}\n")
-    buf.write("\n" + "-" * tw + "\n\033[1;92m" + " [AI 수석 전략가 입체 분석 및 대응 전략]" + "\033[0m\n")
+    buf.write("\n" + "-" * tw + "\n\033[1;92m" + " [AI 수석 전략가 입체 분석 및 대응 전략 (초압축)]" + "\033[0m\n")
     if strategy.ai_detailed_opinion:
-        for line in strategy.ai_detailed_opinion.split('\n'):
-            if line.strip(): buf.write(f" > {line.strip()}\n")
+        # [Task 9] 높이 제한에 따른 출력 라인 수 조절
+        lines = [l.strip() for l in strategy.ai_detailed_opinion.split('\n') if l.strip()]
+        max_lines = max(5, th - buf.getvalue().count('\n') - 4)
+        for line in lines[:max_lines]:
+            buf.write(f" > {line}\n")
     else: buf.write(" ⚠️ 아직 생성된 상세 분석 의견이 없습니다. '8:시황'을 실행하세요.\n")
     buf.write("-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
     sys.stdout.write(buf.getvalue()); sys.stdout.flush()
@@ -207,13 +210,20 @@ def perform_interaction(key, api, strategy, dm, cycle):
     # 환경 설정
     if mode == 's':
         dm.show_status("⚙️ 환경 설정 모드로 전환합니다...")
-        draw_tui(strategy, dm, cycle); time.sleep(0.5); exit_alt_screen()
-        print("\n" + "="*60 + "\n ⚙️  KIS-Vibe-Trader 환경 설정 모드\n" + "="*60); flush_input()
-        ensure_env(force=True); load_dotenv(override=True); config = get_config()
-        new_auth = KISAuth(); api.auth = new_auth; api.domain = new_auth.domain; strategy.api = api
-        enter_alt_screen(); set_terminal_raw(); dm.strategy.last_size = (0, 0)
-        dm.show_status("✅ 환경 설정 완료")
-        dm.update_all_data(new_auth.is_virtual, force=True); return
+        draw_tui(strategy, dm, cycle) # 마지막 상태 반영
+        dm.is_full_screen_active = True
+        try:
+            time.sleep(0.5)
+            restore_terminal_settings(); exit_alt_screen()
+            print("\n" + "="*60 + "\n ⚙️  KIS-Vibe-Trader 환경 설정 모드\n" + "="*60); flush_input()
+            ensure_env(force=True); load_dotenv(override=True); config = get_config()
+            new_auth = KISAuth(); api.auth = new_auth; api.domain = new_auth.domain; strategy.api = api
+            enter_alt_screen(); set_terminal_raw(); dm.strategy.last_size = (0, 0)
+            dm.show_status("✅ 환경 설정 완료")
+            dm.update_all_data(new_auth.is_virtual, force=True)
+        finally:
+            dm.is_full_screen_active = False
+        return
 
     # 나머지 커맨드 처리 (입력 수집 -> 큐에 작업 삽입)
     try:

@@ -289,11 +289,14 @@ class VibeAlphaEngine:
 
     def analyze(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], min_score: float = 60.0, progress_cb: Optional[Callable] = None, kr_vibe: str = "Neutral", market_data: dict = None, on_item_found: Optional[Callable] = None) -> List[dict]:
         """주도 테마 및 랭킹 데이터를 분석하여 국내 종목과 ETF 분리 추출 (병렬 처리)"""
-        from src.theme_engine import THEME_KEYWORDS
+        from src.theme_engine import get_theme_for_stock
         
         combined = hot_raw + vol_raw
         candidates = []
         seen = set()
+
+        # 테마 카운트 맵 생성 (테마별 가산점용)
+        theme_count_map = {t['name']: t['count'] for t in themes}
 
         for item in combined:
             code = item['code']
@@ -301,11 +304,10 @@ class VibeAlphaEngine:
             seen.add(code)
             if not (len(code) == 6 and code.isdigit()): continue
             
-            my_theme = {"name": "기타", "count": 1}
-            for t in themes:
-                keywords = THEME_KEYWORDS.get(t['name'], [])
-                if any(kw.lower() in item.get('name','').lower() for kw in keywords):
-                    my_theme = t; break
+            # 동적 테마 매핑 활용
+            theme_name = get_theme_for_stock(code, item.get('name', ''))
+            theme_count = theme_count_map.get(theme_name, 1)
+            my_theme = {"name": theme_name, "count": theme_count}
             
             is_hot = any(x['code'] == code for x in hot_raw)
             candidates.append((item, my_theme, is_hot))
@@ -560,15 +562,15 @@ class GeminiAdvisor:
             enriched_recs = list(executor.map(fetch_enriched_data, recs))
         
         prompt = f"""
-        수석 투자 전략가로서 실시간 데이터를 기반으로 입체 분석 리포트를 작성하세요.
+        수석 투자 전략가로서 아래 종목들에 대해 [초압축] 입체 분석 리포트를 작성하세요.
         [시장 장세] {vibe}
         [데이터]
         {"\n".join(enriched_recs)}
-        [가이드라인]
-        1. 지표와 뉴스를 연계 분석.
-        2. 목표가(+5~20%), 손절가(-3~7%)를 현재가 기준으로 산출.
-        3. 종목별 [투자 근거], [매매 전략], [진단] 구분.
-        4. 전문가 어조, 한국어, 12~15줄.
+        [가이드라인 - 필수 준수]
+        1. 종목당 **반드시 2줄 이내**로 핵심만 요약 (매우 중요).
+        2. 1행: [투자근거/지표], 2행: [목표/손절/전략].
+        3. 불필요한 수식어 제거, 날카로운 전문가 어조, 한국어.
+        4. 전체 리포트 길이를 최대한 짧게 유지하여 터미널 한 화면에 들어오게 할 것.
         """
         return self._safe_gemini_call(prompt) or "종목별 입체 분석 의견을 가져오지 못했습니다."
 
