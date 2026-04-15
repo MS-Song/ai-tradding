@@ -472,359 +472,218 @@ class VibeAlphaEngine:
 
 # --- 5. GeminiAdvisor: 생성형 AI 전략 보좌관 ---
 class GeminiAdvisor:
-    def __init__(self, api):
+    def __init__(self, api, ai_config: dict = None):
         self.api = api
-        self.model_id = "gemini-2.5-flash-lite"  # 비용 최적화: 실통신 확인된 2.5 Flash-Lite (최저비용 GA)
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
+        
+        # 기본 모델 설정 (사용자 검증 기반: Group 1 수정 반영)
+        self.config = ai_config or {}
+        self.preferred_model = self.config.get("preferred_model", "gemini-2.5-flash")
+        self.fallback_sequence = self.config.get("fallback_sequence", [
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-3-flash-preview",
+            "gemini-3.1-flash-lite-preview",
+            "gemini-3.1-pro-preview"
+        ])
+
+    def _safe_gemini_call(self, prompt: str, timeout: int = 60) -> Optional[str]:
+        """Spec에 정의된 순서대로 모델을 교체하며 재시도 (Timeout 60초 적용)"""
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key: return None
+
+        # 1순위 preferred_model부터 시작하여 fallback_sequence 순회 (중복 제거)
+        models_to_try = [self.preferred_model] + [m for m in self.fallback_sequence if m != self.preferred_model]
+        
+        last_error = ""
+        for model_id in models_to_try:
+            endpoint = f"{self.base_url}/models/{model_id}:generateContent?key={api_key}"
+            payload = {"contents": [{"parts": [{"text": prompt}]}]}
+            try:
+                # Spec 요구사항: 부하 시 충분한 대기 시간(60초) 확보
+                res = requests.post(endpoint, json=payload, timeout=timeout)
+                if res.status_code == 200:
+                    result = res.json()
+                    if 'candidates' in result and result['candidates']:
+                        return result['candidates'][0]['content']['parts'][0]['text'].strip()
+                last_error = f"HTTP {res.status_code}"
+            except Exception as e:
+                last_error = str(e)
+            
+            # 실패 시 로그 기록 후 다음 모델로 전환
+            log_error(f"Gemini Fallback Triggered: Model {model_id} failed ({last_error}). Trying next...")
+            
+        return None
 
     def get_advice(self, market_data: dict, vibe: str, holdings: List[dict], current_config: dict, recs: List[dict] = None) -> Optional[str]:
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key: return "⚠️ GOOGLE_API_KEY가 없습니다."
-        
         holdings_txt = "\n".join([f"- {h['prdt_name']}({h['pdno']}): 수익률 {h['evlu_pfls_rt']}%" for h in holdings])
-        
         recs_txt = ""
         if recs:
-            # 주당 가격을 명확히 인지하도록 '1주당 현재가'라고 명시
             recs_txt = "\n".join([f"- {r['name']}({r['code']}): 1주당 현재가 {int(float(r.get('price',0))):,}원, 금일 등락 {r.get('rate',0):+.1f}%" for r in recs[:5]])
 
         prompt_text = f"""
         당신은 월스트리트 수석 퀀트 트레이더입니다. 아래의 **[실시간 데이터]**만을 근거로 전략을 브리핑하세요.
-        
         [실시간 데이터]
         - 시장Vibe: {vibe}
         - 현재 지수 상태: {json.dumps(market_data)}
         - 현재 포트폴리오: {holdings_txt if holdings else "보유 종목 없음"}
-        - **신규 추천 후보 및 1주당 시세**: 
-{recs_txt if recs_txt else "추천 후보 없음"}
+        - 신규 추천 후보: {recs_txt if recs_txt else "추천 후보 없음"}
         - 시스템 매수 설정 금액: {current_config.get('ai_amt'):,}원
-        
-        [필수 내용 및 절대 규칙 - 위반 시 해고]
-        1. **가격 절대 준수**: 추천주의 매수가격은 반드시 위 리스트에 제공된 '1주당 현재가'의 ±3% 이내에서만 제안하세요. 리스트에 없는 가격을 상상해서 적지 마세요.
-        2. **매수 가능 여부 확인**: (매수 권장 금액)이 (추천주 1주당 현재가)보다 작으면 절대 추천하지 마세요. 최소 1주는 살 수 있어야 합니다.
-        3. **수치 논리**: 추가매수(물타기) 지점 > 손절선(SL), 불타기지점 < 익절선(TP) 공식을 반드시 지키세요.
-        4. **[중요] 분량 제한**: AI[액션]과 AI[추천]은 반드시 **각각 단 1줄**로만 요약하세요. 여러 줄 출력 절대 금지.
-        
+        [필수 규칙]
+        1. 추천주의 매수가격은 '1주당 현재가'의 ±3% 이내에서만 제안.
+        2. (매수 권장 금액)이 (추천주 1주당 현재가)보다 작으면 추천 불가.
+        3. 추가매수(물타기) 지점 > 손절선(SL), 불타기지점 < 익절선(TP).
+        4. AI[액션]과 AI[추천]은 각각 단 1줄로 요약.
         [답변 형식]
-        AI[시장]: 요약 (1줄)
+        AI[시장]: 요약
         AI[전략]: 익절 +X.X%, 손절 -Y.Y%, 물타기 -Z.Z%, 불타기 +W.W%, 금액 N원
-        AI[액션]: 포트폴리오 조정 및 매수 실행 여부 요약 (1줄 고정)
-        AI[추천]: 종목명(코드), 권장매수가 N원, 예상매수주수 M주 (1줄 고정)
+        AI[액션]: 요약 (1줄)
+        AI[추천]: 종목명(코드), 권장매수가 N원, 예상매수주수 M주 (1줄)
         한국어로 대답하세요.
         """
-        payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
-        endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
-        try:
-            res = requests.post(endpoint, json=payload, timeout=25)
-            if res.status_code == 200:
-                return res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-            return f"⚠️ AI 엔진 응답 오류 ({res.status_code})"
-        except: return f"⚠️ 분석 엔진 기동 실패"
+        return self._safe_gemini_call(prompt_text) or "⚠️ AI 엔진 분석 실패 (모든 모델 시도함)"
 
     def get_detailed_report_advice(self, recs: List[dict], vibe: str, progress_cb: Optional[Callable] = None) -> Optional[str]:
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key or not recs: return "분석할 종목이 없습니다."
-        
-        # 각 종목별 입체 데이터 병렬 수집 (현재가, 펀더멘털, 뉴스)
-        current = 0
-        total = len(recs)
+        if not recs: return "분석할 종목이 없습니다."
+        current, total = 0, len(recs)
         lock = threading.Lock()
         def fetch_enriched_data(r):
             nonlocal current
-            code = r['code']
-            detail = self.api.get_naver_stock_detail(code)
-            news = self.api.get_naver_stock_news(code)
-            with lock:
-                current += 1
-                if progress_cb:
-                    progress_cb(current, total)
-            return f"""
-            - {r['name']}({code}) | {r['theme']}
-              * 현재가: {int(float(r.get('price',0))):,}원 | 등락률: {r.get('rate',0):+.2f}%
-              * 지표: PER {detail.get('per')}, PBR {detail.get('pbr')}, 배당수익률 {detail.get('yield')}, 업종PER {detail.get('sector_per')}
-              * 뉴스: {', '.join(news) if news else '최근 뉴스 없음'}
-            """.strip()
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            enriched_recs = list(executor.map(fetch_enriched_data, recs))
-
-        recs_txt = "\n".join(enriched_recs)
-        
-        prompt = f"""
-        당신은 월스트리트의 수석 투자 전략가이자 퀀트 분석가입니다. 
-        제공된 실시간 데이터(현재가, 펀더멘털, 실시간 뉴스)를 기반으로 입체적인 종목 분석 리포트를 작성하세요.
-        
-        [시장 장세] {vibe}
-        [실시간 추천 종목 상세 데이터]
-        {recs_txt}
-        
-        [분석 가이드라인 및 절대 규칙]
-        1. 입체적 접근: 제공된 [지표]와 [뉴스]를 반드시 연계하여 분석하십시오.
-           - (예: PER가 업종 평균 대비 낮음(저평가) + 최근 수주 뉴스(모멘텀) 발생 등)
-        2. 가격 논리 준수: 모든 제안 가격(매수/목표/손절)은 실시간 [현재가]를 기준으로 산출하십시오.
-           - 매수 타점: 현재가 부근의 현실적인 가격.
-           - 목표가: 매수 타점 대비 +5% ~ +20% (성장 가능성 및 모멘텀 반영).
-           - 손절가: 매수 타점 대비 -3% ~ -7% (리스크 관리).
-        3. 종목별 섹션화: 각 종목별로 [투자 근거], [매매 전략(가격)], [성장 가능성 진단]을 명확히 구분하여 작성하세요.
-        4. 종합 비중 조절: 현재 장세({vibe})를 고려하여 포트폴리오 비중 조절 조언을 덧붙이세요.
-        5. 경고: 임의의 데이터를 생성하지 마십시오. 오직 제공된 [현재가], [지표], [뉴스]만 근거로 삼으십시오.
-        
-        전문가 어조로 한국어로 12~15줄 내외로 작성하세요.
-        """
-        try:
-            payload = {"contents": [{"parts": [{"text": prompt}]}]}
-            endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
-            res = requests.post(endpoint, json=payload, timeout=25)
-            if res.status_code == 200: return res.json()['candidates'][0]['content']['parts'][0]['text']
-        except: pass
-        return "종목별 입체 분석 의견을 가져오지 못했습니다."
-
-    def get_stock_report_advice(self, code: str, name: str, detail: dict, news: List[str]) -> Optional[str]:
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key: return "⚠️ GOOGLE_API_KEY가 없습니다."
-        
-        prompt = f"""
-        당신은 월스트리트 수석 투자 전략가입니다. 아래 종목에 대해 [매수/매도 고민 해결사] 관점에서 분석 리포트를 작성하세요.
-        
-        [종목 정보]
-        - 종목명: {name} ({code})
-        - 실시간 시세: {int(float(detail.get('price', 0))):,}원 ({detail.get('rate', 0.0):+.2f}%)
-        - 시가총액: {detail.get('market_cap')}
-        - 지표: PER {detail.get('per')}, PBR {detail.get('pbr')}, 배당수익률 {detail.get('yield')}, 업종PER {detail.get('sector_per')}
-        - 최신 뉴스/공시 요약: {', '.join(news) if news else '최근 소식 없음'}
-        
-        [리포트 필수 포함 내용]
-        1. [가격 변동 원인]: 최근 이 종목이 왜 오르거나 내리고 있는가? (수집된 뉴스/공시 및 시세 흐름 기반)
-        2. [모멘텀 진단]: 이 흐름이 내일까지 유지될 것인가? (퀀트 데이터 및 수급/뉴스 분석)
-        3. [매수/매도 조언]: 지금 사도 될까? 혹은 팔아야 할까? (리스크 관리 중심의 명확한 가이드)
-        4. [한줄평]: 이 종목에 대한 가장 날카로운 결론.
-        
-        전문가 어조로 한국어로 10~15줄 내외로 작성하세요.
-        """
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
-        try:
-            res = requests.post(endpoint, json=payload, timeout=25)
-            if res.status_code == 200: return res.json()['candidates'][0]['content']['parts'][0]['text']
-        except: pass
-        return "종목 심층 분석 리포트를 생성하지 못했습니다."
-
-    def get_holdings_report_advice(self, holdings: List[dict], vibe: str, market_data: dict, progress_cb: Optional[Callable] = None) -> Optional[str]:
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key or not holdings: return "보유 중인 종목이 없습니다."
-        
-        current = 0
-        total = len(holdings)
-        lock = threading.Lock()
-        
-        def fetch_enriched_holding(h):
-            nonlocal current
-            code = h['pdno']
-            detail = self.api.get_naver_stock_detail(code)
-            news = self.api.get_naver_stock_news(code)
+            detail = self.api.get_naver_stock_detail(r['code'])
+            news = self.api.get_naver_stock_news(r['code'])
             with lock:
                 current += 1
                 if progress_cb: progress_cb(current, total)
-            
-            return f"""
-            - {h['prdt_name']}({code})
-              * 수익률: {float(h.get('evlu_pfls_rt', 0)):+.2f}% | 평가손익: {int(float(h.get('evlu_pfls_amt', 0))):+,}원
-              * 매입평단: {int(float(h.get('pchs_avg_pric', 0))):,}원 | 현재가: {int(float(h.get('prpr', 0))):,}원
-              * 지표: PER {detail.get('per')}, PBR {detail.get('pbr')}, 배당 {detail.get('yield')}
-              * 최근 뉴스: {', '.join(news[:2]) if news else '소식 없음'}
-            """.strip()
+            return f"- {r['name']}({r['code']}) | 현재가: {int(float(r.get('price',0))):,}원 | PER {detail.get('per')}, PBR {detail.get('pbr')} | 뉴스: {', '.join(news[:2])}"
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            enriched_recs = list(executor.map(fetch_enriched_data, recs))
+        
+        prompt = f"""
+        수석 투자 전략가로서 실시간 데이터를 기반으로 입체 분석 리포트를 작성하세요.
+        [시장 장세] {vibe}
+        [데이터]
+        {"\n".join(enriched_recs)}
+        [가이드라인]
+        1. 지표와 뉴스를 연계 분석.
+        2. 목표가(+5~20%), 손절가(-3~7%)를 현재가 기준으로 산출.
+        3. 종목별 [투자 근거], [매매 전략], [진단] 구분.
+        4. 전문가 어조, 한국어, 12~15줄.
+        """
+        return self._safe_gemini_call(prompt) or "종목별 입체 분석 의견을 가져오지 못했습니다."
+
+    def get_stock_report_advice(self, code: str, name: str, detail: dict, news: List[str]) -> Optional[str]:
+        prompt = f"""
+        수석 투자 전략가로서 아래 종목에 대해 분석 리포트를 작성하세요.
+        [종목 정보] {name}({code}) | {int(float(detail.get('price', 0))):,}원 | PER {detail.get('per')}, PBR {detail.get('pbr')}
+        [뉴스 요약] {', '.join(news[:3]) if news else '소식 없음'}
+        [필수 내용] 1.가격 변동 원인 2.모멘텀 진단 3.매수/매도 조언 4.한줄평
+        전문가 어조, 한국어, 10~15줄.
+        """
+        return self._safe_gemini_call(prompt) or "종목 심층 분석 리포트를 생성하지 못했습니다."
+
+    def get_holdings_report_advice(self, holdings: List[dict], vibe: str, market_data: dict, progress_cb: Optional[Callable] = None) -> Optional[str]:
+        if not holdings: return "보유 중인 종목이 없습니다."
+        current, total = 0, len(holdings)
+        lock = threading.Lock()
+        def fetch_enriched_holding(h):
+            nonlocal current
+            detail = self.api.get_naver_stock_detail(h['pdno'])
+            news = self.api.get_naver_stock_news(h['pdno'])
+            with lock:
+                current += 1
+                if progress_cb: progress_cb(current, total)
+            return f"- {h['prdt_name']}({h['pdno']}): 수익률 {float(h.get('evlu_pfls_rt', 0)):+.2f}% | 현재가 {int(float(h.get('prpr', 0))):,}원 | 뉴스 {', '.join(news[:2])}"
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             enriched_holdings = list(executor.map(fetch_enriched_holding, holdings))
 
-        holdings_txt = "\n".join(enriched_holdings)
-        
         prompt = f"""
-        당신은 월스트리트의 수석 포트폴리오 매니저입니다. 
-        아래 보유 종목 데이터와 현재 시장 장세를 분석하여 [보유 종목 리포트]를 작성하세요.
-        
-        [시장 장세] {vibe}
-        [지수 데이터] {json.dumps(market_data)}
-        
-        [현재 보유 종목 리포트 데이터]
-        {holdings_txt}
-        
-        [분석 필수 포함 내용]
-        1. 전체 포트폴리오 진단: 현재 장세({vibe}) 대비 보유 종목들의 구성이 적절한지 평가.
-        2. 종목별 대응 전략: 각 종목에 대해 '유지(Hold), 매도(Sell), 비중확대(Add)' 중 하나를 선택하고 근거(뉴스/지표)를 제시.
-        3. 리스크 경고: 특히 하락이 깊거나 뉴스가 부정적인 종목에 대한 즉각적인 조치 제안.
-        4. 종합 한줄평: 현재 내 자산의 건강 상태.
-        
-        한국어로 12~15줄 내외로 아주 날카롭고 전문적인 어조로 작성하세요.
+        수석 포트폴리오 매니저로서 보유 종목 리포트를 작성하세요.
+        [시장 장세] {vibe} | [지수] {json.dumps(market_data)}
+        [보유 데이터]
+        {"\n".join(enriched_holdings)}
+        [필수 내용] 1.전체 포트폴리오 진단 2.종목별 대응전략(Hold/Sell/Add) 3.리스크 경고 4.한줄평
+        한국어, 12~15줄, 날카롭고 전문적인 어조.
         """
-        try:
-            payload = {"contents": [{"parts": [{"text": prompt}]}]}
-            endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
-            res = requests.post(endpoint, json=payload, timeout=25)
-            if res.status_code == 200: return res.json()['candidates'][0]['content']['parts'][0]['text']
-        except: pass
-        return "보유 종목 심층 분석 의견을 생성하지 못했습니다."
+        return self._safe_gemini_call(prompt) or "보유 종목 심층 분석 의견을 생성하지 못했습니다."
 
     def get_hot_stocks_report_advice(self, hot_stocks: List[dict], themes: List[dict], vibe: str, progress_cb: Optional[Callable] = None) -> Optional[str]:
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key or not hot_stocks: return "인기 종목 데이터가 없습니다."
-        
-        current = 0
-        total = min(10, len(hot_stocks))
+        if not hot_stocks: return "인기 종목 데이터가 없습니다."
+        current, total = 0, min(10, len(hot_stocks))
         lock = threading.Lock()
-        
         def fetch_enriched_hot(item):
             nonlocal current
-            code = item.get('code', '')
-            detail = self.api.get_naver_stock_detail(code)
-            news = self.api.get_naver_stock_news(code)
+            detail = self.api.get_naver_stock_detail(item.get('code', ''))
+            news = self.api.get_naver_stock_news(item.get('code', ''))
             with lock:
                 current += 1
                 if progress_cb: progress_cb(current, total)
-            return f"""
-            - {item.get('name','')}({code}) | 등락률: {float(item.get('rate',0)):+.2f}% | 현재가: {int(float(item.get('price',0))):,}원
-              * 지표: PER {detail.get('per')}, PBR {detail.get('pbr')}, 배당 {detail.get('yield')}
-              * 최근 뉴스: {', '.join(news[:2]) if news else '소식 없음'}
-            """.strip()
+            return f"- {item.get('name','')}: {float(item.get('rate',0)):+.2f}% | PER {detail.get('per')}, PBR {detail.get('pbr')} | 뉴스 {', '.join(news[:2])}"
 
-        top_stocks = hot_stocks[:10]
         with ThreadPoolExecutor(max_workers=5) as executor:
-            enriched = list(executor.map(fetch_enriched_hot, top_stocks))
+            enriched = list(executor.map(fetch_enriched_hot, hot_stocks[:10]))
 
-        stocks_txt = "\n".join(enriched)
-        themes_txt = ", ".join([f"{t['name']}({t['count']})" for t in themes[:8]]) if themes else "테마 데이터 없음"
-        
         prompt = f"""
-        당신은 월스트리트의 수석 트렌드 분석가입니다. 
-        아래 실시간 인기 검색 종목과 테마 데이터를 분석하여 [인기 테마 리포트]를 작성하세요.
-        
-        [시장 장세] {vibe}
-        [인기 테마 트렌드] {themes_txt}
-        
-        [실시간 인기 검색 상위 종목 데이터]
-        {stocks_txt}
-        
-        [분석 필수 포함 내용]
-        1. 오늘의 시장 테마: 현재 시장을 관통하는 핵심 투자 테마 2~3개를 선정하고, 왜 주목받고 있는지 분석.
-        2. 종목별 핵심 진단: 각 인기 종목에 대해 '주목(Watch), 진입(Entry), 관망(Wait)' 중 하나를 택하고 뉴스/지표 기반 근거 제시.
-        3. 테마 지속성 판단: 현재 인기 테마가 단기 테마인지 중장기 추세인지 진단.
-        4. 한줄 결론: 오늘의 시장 키워드 한 마디.
-        
-        한국어로 12~15줄 내외로 날카롭고 전문적인 어조로 작성하세요.
+        수석 트렌드 분석가로서 인기 테마 리포트를 작성하세요.
+        [시장 장세] {vibe} | [테마] {", ".join([f"{t['name']}({t['count']})" for t in themes[:8]])}
+        [상위 종목]
+        {"\n".join(enriched)}
+        [필수 내용] 1.오늘의 시장 테마 2.종목별 핵심 진단(Watch/Entry/Wait) 3.테마 지속성 판단 4.한줄 결론
+        한국어, 12~15줄, 날카롭고 전문적인 어조.
         """
-        try:
-            payload = {"contents": [{"parts": [{"text": prompt}]}]}
-            endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
-            res = requests.post(endpoint, json=payload, timeout=25)
-            if res.status_code == 200: return res.json()['candidates'][0]['content']['parts'][0]['text']
-        except: pass
-        return "인기 종목 분석 리포트를 생성하지 못했습니다."
-
+        return self._safe_gemini_call(prompt) or "인기 종목 분석 리포트를 생성하지 못했습니다."
 
     def simulate_preset_strategy(self, code: str, name: str, vibe: str, detail: dict = None, news: List[str] = None) -> Optional[dict]:
-        """AI가 종목 현황 분석 후 KIS 10개 프리셋 중 최적 전략과 동적 TP/SL을 제안"""
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key: return None
-        
-        # 프리셋 목록 텍스트 생성
-        preset_list = "\n".join([
-            f"  {sid}: {s['name']} ({s['type']}) - {s['desc']} [기본 TP:{s['default_tp']}%, SL:{s['default_sl']}%]"
-            for sid, s in PRESET_STRATEGIES.items() if sid != "00"
-        ])
-        
-        detail_txt = ""
-        if detail:
-            detail_txt = f"현재가: {detail.get('price', 'N/A')}, PER: {detail.get('per', 'N/A')}, PBR: {detail.get('pbr', 'N/A')}, 배당: {detail.get('yield', 'N/A')}, 업종PER: {detail.get('sector_per', 'N/A')}"
-        news_txt = ", ".join(news[:5]) if news else "뉴스 없음"
-        
+        preset_list = "\n".join([f"  {sid}: {s['name']} [기본 TP:{s['default_tp']}%, SL:{s['default_sl']}%]"
+                                 for sid, s in PRESET_STRATEGIES.items() if sid != "00"])
+        detail_txt = f"현재가: {detail.get('price', 'N/A')}, PER: {detail.get('per', 'N/A')}, PBR: {detail.get('pbr', 'N/A')}" if detail else ""
         prompt = f"""
-        당신은 월스트리트 수석 퀀트 트레이더입니다. 아래 종목에 가장 적합한 매매 전략 프리셋 1개를 선택하고, 해당 전략에 맞는 동적 TP/SL 수치를 계산하세요.
-        
-        [종목 정보]
-        - 종목명: {name} ({code})
-        - {detail_txt}
-        - 최근 뉴스: {news_txt}
-        - 현재 시장 장세: {vibe}
-        
-        [KIS 공식 프리셋 전략 목록]
+        가장 적합한 프리셋 전략 1개와 동적 TP/SL을 제안하세요.
+        [종목] {name}({code}) | {detail_txt} | 뉴스: {", ".join(news[:5]) if news else "없음"} | 장세: {vibe}
+        [프리셋]
 {preset_list}
-        
-        [판단 가이드라인]
-        1. 종목의 현재 가격 흐름, 펀더멘털(PER/PBR), 뉴스 모멘텀, 시장 장세를 종합하여 가장 적합한 전략 1개를 선택하세요.
-        2. 선택한 전략의 기본 TP/SL을 기반으로, 해당 종목의 특성에 맞게 TP/SL을 ±2% 범위 내에서 동적 조정하세요.
-        3. 이 종목의 현재 모멘텀 지속 시간을 예측하여 '유효시간(분)'을 제안하세요. (예: 급등주는 60~120분, 완만한 추세주는 240~360분)
-        4. 모멘텀이 강한 종목은 TP를 높게, 변동성이 큰 종목은 SL을 타이트하게 설정하세요.
-        
-        [필수 응답 형식 - 정확히 이 형식만 출력하세요]
+        [형식]
         전략번호: XX
         익절: +X.X%
         손절: -X.X%
         유효시간: N분
         근거: 한줄 설명
         """
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
-        try:
-            res = requests.post(endpoint, json=payload, timeout=15)
-            if res.status_code == 200:
-                answer = res.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-                # 파싱
+        answer = self._safe_gemini_call(prompt)
+        if answer:
+            try:
                 sid_match = re.search(r"전략번호[:\s]*(\d{2})", answer)
                 tp_match = re.search(r"익절[:\s]*([+-]?[\d.]+)", answer)
                 sl_match = re.search(r"손절[:\s]*([+-]?[\d.]+)", answer)
                 lt_match = re.search(r"유효시간[:\s]*(\d+)분", answer)
                 reason_match = re.search(r"근거[:\s]*(.*)", answer)
-                
                 if sid_match and tp_match and sl_match:
                     sid = sid_match.group(1)
-                    if sid not in PRESET_STRATEGIES or sid == "00":
-                        sid = "01"  # fallback
+                    if sid not in PRESET_STRATEGIES or sid == "00": sid = "01"
                     return {
-                        "preset_id": sid,
-                        "preset_name": PRESET_STRATEGIES[sid]["name"],
-                        "tp": abs(float(tp_match.group(1))),
-                        "sl": -abs(float(sl_match.group(1))),
+                        "preset_id": sid, "preset_name": PRESET_STRATEGIES[sid]["name"],
+                        "tp": abs(float(tp_match.group(1))), "sl": -abs(float(sl_match.group(1))),
                         "lifetime_mins": int(lt_match.group(1)) if lt_match else 120,
                         "reason": reason_match.group(1).strip() if reason_match else "AI 분석 기반 자동 선정"
                     }
-        except Exception as e:
-            log_error(f"프리셋 전략 시뮬레이션 오류: {e}")
+            except Exception as e: log_error(f"프리셋 시뮬레이션 파싱 오류: {e}")
         return None
 
     def verify_market_vibe(self, current_data: dict, heuristic_vibe: str) -> Optional[str]:
-        """알고리즘이 1차 판정한 현재 장세를 AI가 최종 교차 검증합니다."""
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key: return None
-        
         prompt = f"""
-        당신은 월스트리트 수석 퀀트 트레이더입니다. 아래의 실시간 거시경제/지수 데이터를 바탕으로 현재 시장의 투자 심리(Market Vibe)를 단 하나의 단어로만 답변하세요.
-        
-        [현재 데이터 요약] 
-        - 시장 지표 원본: {json.dumps(current_data)}
-        - 기존 휴리스틱 알고리즘의 1차 판단: {heuristic_vibe}
-        
-        [판단 가이드라인 및 절대 규칙]
-        1. 글로벌 증시 침체(나스닥 등 크게 하락), 환율 급등(1400원 이상 고공행진), 또는 비트코인 등 주요 위험자산이 심하게 폭락하면 'Defensive'(방어모드)로 판정합니다.
-        2. 지수가 확실한 단기 하락세이거나 투심 회복이 불분명할 때는 'Bear'(하락장)로 진단합니다.
-        3. 주요 증시가 오름세이고, VIX가 안정적(안심 구간)이라면 'Bull'(상승장)로 진단합니다.
-        4. 방향성이 혼재되어 지지부진하면 'Neutral'(보합장)로 진단합니다.
-        
-        당신의 응답 라인은 오직 Bull, Bear, Neutral, Defensive 중 정확히 한 단어여야 합니다. 불필요한 서술은 제외하세요.
+        실시간 데이터를 바탕으로 현재 시장 Vibe를 한 단어로 답변하세요.
+        [데이터] {json.dumps(current_data)} | [알고리즘 판단] {heuristic_vibe}
+        [규칙] 1.글로벌 침체/공포 시 'Defensive' 2.하락세 시 'Bear' 3.상승세 시 'Bull' 4.보합 시 'Neutral'
+        오직 Bull, Bear, Neutral, Defensive 중 한 단어만 출력하세요.
         """
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        endpoint = f"{self.base_url}/models/{self.model_id}:generateContent?key={api_key}"
-        try:
-            # 병목이 생기지 않도록 최대 대기 시간(timeout)을 5초 내외로 짧게 제한 (Fallback 전환용)
-            res = requests.post(endpoint, json=payload, timeout=5)
-            if res.status_code == 200:
-                answer = res.json()['candidates'][0]['content']['parts'][0]['text'].strip().upper()
-                for valid_vibe in ["BULL", "BEAR", "NEUTRAL", "DEFENSIVE"]:
-                    if valid_vibe in answer:
-                        return valid_vibe.capitalize()
-            return None
-        except: 
-            # API 제한, 네트워크 에러, 응답 타임아웃 발생 -> 자연스럽게 단독 모드 진입
-            return None
+        # 시장 Vibe 검증은 응답 속도가 중요하므로 짧은 타임아웃(10초) 적용하여 Fallback 전환 가속화
+        answer = self._safe_gemini_call(prompt, timeout=10)
+        if answer:
+            answer_up = answer.upper()
+            for v in ["BULL", "BEAR", "NEUTRAL", "DEFENSIVE"]:
+                if v in answer_up: return v.capitalize()
+        return None
 
 # --- VibeStrategy Facade ---
 class VibeStrategy:
@@ -864,17 +723,35 @@ class VibeStrategy:
         self.yesterday_recs_processed: List[dict] = []
         self._last_closing_bet_date = None
         
-        # AI 설정 초기화
+        # AI 설정 초기화 (사용자 검증 기반: Group 1 수정 반영)
         self.ai_config = {
             "amount_per_trade": v_cfg.get("ai_config", {}).get("amount_per_trade", 500000),
             "min_score": v_cfg.get("ai_config", {}).get("min_score", 60.0),
             "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
             "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False),
-            "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False)
+            "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
+            "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-2.5-flash"),
+            "fallback_sequence": v_cfg.get("ai_config", {}).get("fallback_sequence", [
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-3-flash-preview",
+                "gemini-3.1-flash-lite-preview",
+                "gemini-3.1-pro-preview"
+            ])
         }
         
         # 2. 영속 상태(state) 로드
         self._load_all_states()
+        
+        # [수정] S:셋업(.env)에서 설정하는 모델이 항상 우선 적용됨
+        # trading_state.json의 이전 값보다 .env의 설정값이 최우선
+        self.ai_config["preferred_model"] = v_cfg.get("ai_config", {}).get("preferred_model", "gemini-2.5-flash")
+        
+        # Advisor 초기화 (최종 결정된 ai_config 반영)
+        self.ai_advisor = GeminiAdvisor(api, self.ai_config)
+        self.alpha_eng.ai_advisor = self.ai_advisor
+        self.analyzer.ai_advisor = self.ai_advisor # 시장 장세 AI 검증 연결
+        
         self.update_yesterday_recs()
 
     def update_yesterday_recs(self):
