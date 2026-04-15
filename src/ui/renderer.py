@@ -104,7 +104,11 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         buf.write(align_kr(status_line, tw) + "\n")
         buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 L:로그 | M:매뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
         
-        if strategy.ai_briefing and not prompt_mode:
+        # [Task 4] 입력 모드 또는 AI 브리핑 영역 (커맨드 바로 아래 고정 위치)
+        if dm.is_input_active:
+            buf.write(f"\033[K \033[33m{dm.input_prompt}\033[0m{dm.input_buffer}\033[1;33m_\033[0m\n")
+            buf.write("\n" * 3) # 영역 보존
+        elif strategy.ai_briefing:
             all_lines = [line.strip() for line in strategy.ai_briefing.split('\n') if line.strip()]
             brief_map = {"시장": "", "전략": "", "액션": "", "추천": ""}
             for l in all_lines:
@@ -112,9 +116,6 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                     if f"AI[{k}]:" in l: brief_map[k] = l; break
             for k in ["시장", "전략", "액션", "추천"]:
                 buf.write("\033[1;95m" + align_kr(f" {brief_map[k] if brief_map[k] else f'AI[{k}]: 분석 데이터 없음'}", tw) + "\033[0m\n")
-        elif prompt_mode: 
-            buf.write("\033[1;33m" + align_kr(f" >>> [{prompt_mode} MODE] 입력 대기중.. (ESC 취소)", tw) + "\033[0m\n")
-            buf.write("\n" * 3)
         else: buf.write("\n" * 4) 
         
         buf.write("=" * tw + "\n")
@@ -258,11 +259,6 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     
     rem = th - buf.getvalue().count('\n')
     if rem > 0: buf.write(f"\033[K {dm.status_msg if dm.status_msg and (time.time()-dm.status_time<60) else ''}\n"); rem -= 1
-    
-    # [Task 4] 입력 모드일 때 프롬프트와 버퍼 표시
-    if dm.is_input_active and rem > 0:
-        buf.write(f"\033[K \033[33m{dm.input_prompt}\033[0m{dm.input_buffer}\033[1;33m_\033[0m\n")
-        rem -= 1
     
     if rem > 0: buf.write(f"\033[K {dm.last_log_msg if dm.last_log_msg and (time.time()-dm.last_log_time<60) else ''}\n"); rem -= 1
     if rem > 0:
