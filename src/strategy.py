@@ -8,7 +8,7 @@ import threading
 from datetime import datetime, timedelta, time as dtime
 from typing import Dict, List, Tuple, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from src.logger import logger, log_error
+from src.logger import logger, log_error, trading_log
 
 # --- KIS 프리셋 전략 카탈로그 (10개 공식 전략 + 표준) ---
 PRESET_STRATEGIES = {
@@ -884,12 +884,34 @@ class VibeStrategy:
     def current_market_data(self): return self.analyzer.current_data
     @property
     def base_tp(self): return self.exit_mgr.base_tp
+    @base_tp.setter
+    def base_tp(self, val): self.exit_mgr.base_tp = float(val)
+
     @property
     def base_sl(self): return self.exit_mgr.base_sl
+    @base_sl.setter
+    def base_sl(self, val): self.exit_mgr.base_sl = float(val)
+
     @property
     def bear_config(self): return self.recovery_eng.config
     @property
     def manual_thresholds(self): return self.exit_mgr.manual_thresholds
+
+    def set_manual_threshold(self, code, tp, sl):
+        """특정 종목에 대해 수동 TP/SL 설정 (Group 2 안정성 강화)"""
+        self.exit_mgr.manual_thresholds[code] = [float(tp), float(sl)]
+        self._save_all_states()
+
+    def reset_manual_threshold(self, code):
+        """특정 종목의 수동 설정 해제"""
+        if code in self.exit_mgr.manual_thresholds:
+            del self.exit_mgr.manual_thresholds[code]
+            self._save_all_states()
+
+    def reset_all_manual_thresholds(self):
+        """모든 수동 설정 초기화"""
+        self.exit_mgr.manual_thresholds.clear()
+        self._save_all_states()
 
     def determine_market_trend(self): return self.analyzer.update()
     def save_manual_thresholds(self): self._save_all_states()
@@ -911,20 +933,33 @@ class VibeStrategy:
         return {"id": "IDLE", "name": "IDLE", "tp_delta": 0.0, "sl_delta": 0.0}
 
     def get_dynamic_thresholds(self, code, vibe, p_data=None):
-        """프리셋 전략이 할당된 종목은 프리셋 TP/SL을 최우선 적용"""
+        """전략 적용 우선순위: 1.수동(Manual) > 2.프리셋(Preset) > 3.표준(Base+Vibe)"""
         phase_cfg = self.get_market_phase()
+        
+        # 1. 수동 설정(3:자동 메뉴)이 있으면 최우선 (보정 없음)
+        if code in self.exit_mgr.manual_thresholds:
+            vals = self.exit_mgr.manual_thresholds[code]
+            return float(vals[0]), float(vals[1]), False
+
+        # 2. 프리셋 전략이 할당된 종목 (9:전략 메뉴)
         ps = self.preset_strategies.get(code)
         if ps and ps.get("preset_id") != "00":
-            # 프리셋 전략의 동적 TP/SL을 직접 사용 (Vibe 보정 미적용 - 프리셋 자체가 완성형)
             return ps["tp"], ps["sl"], False
-        # 프리셋이 '표준(00)'이거나 미설정 시 기존 로직
+            
+        # 3. 프리셋이 '표준(00)'이거나 미설정 시 기존 글로벌 로직 (Vibe/Phase 보정 포함)
         return self.exit_mgr.get_thresholds(code, vibe, p_data, phase_cfg)
     
     def get_preset_label(self, code: str) -> str:
-        """종목에 할당된 프리셋 전략 이름 반환 (없으면 빈 문자열)"""
+        """종목에 적용된 전략 상태 라벨 반환 (우선순위: 수동 > 프리셋 > 표준)"""
+        # 1. 수동 설정 여부 확인
+        if code in self.exit_mgr.manual_thresholds:
+            return "수동"
+            
+        # 2. 프리셋 전략 확인
         ps = self.preset_strategies.get(code)
         if ps:
             return ps.get("name", "")
+            
         return ""
     
     def _calculate_deadline(self, preset_id, start_time_str, lifetime_mins):
@@ -957,6 +992,7 @@ class VibeStrategy:
             # 표준 모드: 프리셋 해제 (기본 전략으로 복귀)
             if code in self.preset_strategies:
                 del self.preset_strategies[code]
+                trading_log.log_config(f"전략 해제: {code} (표준 전략으로 복귀)")
         else:
             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             use_tp = tp if tp is not None else preset["default_tp"]
@@ -971,6 +1007,7 @@ class VibeStrategy:
                 "deadline": self._calculate_deadline(preset_id, now_str, lifetime_mins),
                 "is_p3_processed": False
             }
+            trading_log.log_config(f"전략 할당: {code}({preset['name']}) | TP:{use_tp}% SL:{use_sl}%")
         self._save_all_states()
         return True
     
@@ -1101,6 +1138,9 @@ class VibeStrategy:
             self.bull_config["average_down_amount"] = new_amt
             self.bull_config["max_investment_per_stock"] = int(new_amt * 5)
             
+            # 구조화된 로그 기록 (Group 2)
+            trading_log.log_config(f"AI 전략 자동 반영: TP +{target_tp}%, SL {target_sl}%, 물타기 {target_trig_bear}%, 불타기 +{target_trig_bull}%, 금액 {new_amt:,}원")
+            
             self._save_all_states()
             return True
         except Exception as e:
@@ -1199,6 +1239,8 @@ class VibeStrategy:
                                 if success:
                                     self._last_closing_bet_date = today
                                     results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
+                                    # 구조화된 로그 기록 (Group 2)
+                                    trading_log.log_trade("P4종가매수", code, name, price, qty, "AI 추천 기반 종가 베팅")
                                     self.auto_assign_preset(code, name)
                                     self._save_all_states()
 
@@ -1294,10 +1336,20 @@ class VibeStrategy:
                 success, msg = self.api.order_market(code, sell_qty, False)
                 if success:
                     reason_str = f"({action_reason})" if action_reason else ""
+                    curr_p = float(item.get('prpr', 0))
+                    pchs_avg = float(item.get('pchs_avg_pric', 0))
+                    
+                    # 수익금 계산: (현재가 - 매입평단) * 매도수량
+                    trade_profit = (curr_p - pchs_avg) * sell_qty
+                    
                     if "익절" in action:
                         self.last_sell_times[code] = curr_t
                     elif "손절" in action:
                         self.last_sl_times[code] = curr_t
+                    
+                    # 구조화된 로그 기록 (Group 2)
+                    trading_log.log_trade(action, code, item.get('prdt_name'), curr_p, sell_qty, action_reason or action, profit=trade_profit)
+                    
                     self._save_all_states()
                     results.append(f"자동 {action}{reason_str}: {item.get('prdt_name')} {sell_qty}주")
         return results

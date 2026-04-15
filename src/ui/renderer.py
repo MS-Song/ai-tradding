@@ -92,7 +92,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         ai_msg = strategy.analyzer.ai_override_msg if hasattr(strategy.analyzer, "ai_override_msg") else ""
         ai_msg_formatted = f" \033[92m{ai_msg}\033[0m" if "일치" in ai_msg else (f" \033[93m{ai_msg}\033[0m" if ai_msg else "")
         buf.write(align_kr(f" VIBE: {v_c}{dm.cached_vibe.upper()}\033[0m{phase_txt} {panic_txt} {vibe_desc}{ai_msg_formatted}", tw) + "\n")
-        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 | M:메뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
+        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 L:로그 | M:메뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
         
         if strategy.ai_briefing and not prompt_mode:
             all_lines = [line.strip() for line in strategy.ai_briefing.split('\n') if line.strip()]
@@ -114,7 +114,14 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         stk_eval = asset.get('stock_eval', 0); stk_prin = asset.get('stock_principal', 0)
         stk_rt = ((stk_eval - stk_prin) / stk_prin * 100) if stk_prin > 0 else 0
         stk_color = "\033[91m" if stk_rt > 0 else "\033[94m" if stk_rt < 0 else "\033[0m"
-        buf.write(align_kr(f" Asset | 평가액: {tot_eval:,.0f} (원금: {tot_prin:,.0f}, {tot_color}{tot_rt:+.2f}%\033[0m) | 인출가능: {asset.get('cash', 0):,.0f} | 주식총액: {stk_eval:,.0f} ({stk_color}{stk_rt:+.2f}%\033[0m)", tw) + "\n")
+        
+        # 금일 누적 수익금 (Group 2 반영)
+        from src.logger import trading_log
+        daily_p = trading_log.get_daily_profit()
+        daily_c = "\033[91m" if daily_p > 0 else "\033[94m" if daily_p < 0 else "\033[0m"
+        daily_txt = f" | 금일: {daily_c}{daily_p:+,}원\033[0m"
+        
+        buf.write(align_kr(f" Asset | 평가액: {tot_eval:,.0f} (원금: {tot_prin:,.0f}, {tot_color}{tot_rt:+.2f}%\033[0m) | 현금: {asset.get('cash', 0):,.0f} | 주식총액: {stk_eval:,.0f} ({stk_color}{stk_rt:+.2f}%\033[0m){daily_txt}", tw) + "\n")
         
         tp_cur, sl_cur, _ = strategy.get_dynamic_thresholds("BASE", dm.cached_vibe.lower())
         buf.write(align_kr(f"{'* STRAT' if strategy.is_modified('STRAT') else ' STRAT '} | 매입/수: 익절 {strategy.base_tp:+.1f}% (현재 {tp_cur:+.1f}%) | 손절 {strategy.base_sl:+.1f}% (현재 {sl_cur:+.1f}%)", tw) + "\n")
@@ -244,4 +251,48 @@ def draw_manual_page(tw, th):
     buf.write("-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
     sys.stdout.write(buf.getvalue()); sys.stdout.flush()
     while not sys.stdin.read(1): time.sleep(0.1)
+    buf.close()
+
+def draw_trading_logs(strategy, dm, tw, th):
+    """트레이딩 로그 상세 화면 (Group 2 신설)"""
+    import io
+    from src.logger import trading_log
+    buf = io.StringIO(); buf.write("\033[H\033[2J")
+    buf.write("\033[44;37m" + align_kr(" [TRADING HISTORY & SYSTEM LOGS] ", tw, 'center') + "\033[0m\n\n")
+    
+    # 1. TRADE 로그 섹션
+    buf.write("\033[1;93m [최근 거래 내역 (TRADE)]\033[0m\n")
+    trades = trading_log.data.get("trades", [])
+    if not trades:
+        buf.write("  최근 거래 내역이 없습니다.\n")
+    else:
+        header = f"{align_kr('시간', 20)} | {align_kr('구분', 10)} | {align_kr('종목명', 14)} | {align_kr('체결가', 10)} | {align_kr('수량', 6)} | {align_kr('수익금', 12)} | 메모"
+        buf.write("\033[1m" + header + "\033[0m\n" + "-" * tw + "\n")
+        # 화면 높이 고려하여 최대 15개 표시
+        for t in trades[:15]:
+            t_type = t.get('type', 'Unknown')
+            t_color = "\033[91m" if "매수" in t_type else "\033[94m" if "매도" in t_type or "익절" in t_type or "손절" in t_type else ""
+            p_val = t.get('profit', 0)
+            p_color = "\033[91m" if p_val > 0 else "\033[94m" if p_val < 0 else ""
+            p_str = f"{p_color}{int(p_val):+,}원\033[0m" if p_val != 0 else "-"
+            
+            line = f"{t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(t.get('name','-'), 14)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {t.get('memo', '')}"
+            buf.write(line + "\n")
+            
+    buf.write("\n" + "=" * tw + "\n\n")
+    
+    # 2. CONFIG 로그 섹션
+    buf.write("\033[1;96m [시스템 설정 및 전략 변경 (CONFIG)]\033[0m\n")
+    configs = trading_log.data.get("configs", [])
+    if not configs:
+        buf.write("  변경 이력이 없습니다.\n")
+    else:
+        for c in configs[:10]: # 최근 10개
+            buf.write(f"  [{c.get('time', '-')}] {c.get('content', '')}\n")
+            
+    buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
+    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+    
+    # 아무 키나 입력 대기
+    while not get_key_immediate(): time.sleep(0.1)
     buf.close()

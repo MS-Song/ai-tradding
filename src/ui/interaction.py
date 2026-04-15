@@ -6,6 +6,7 @@ from datetime import datetime
 from src.utils import *
 from src.theme_engine import get_cached_themes
 from src.strategy import PRESET_STRATEGIES
+from src.logger import trading_log
 
 def draw_recommendation_report(strategy, dm, tw, th):
     import io
@@ -132,13 +133,21 @@ def perform_interaction(key, api, strategy, dm, cycle):
     from dotenv import load_dotenv
     
     flush_input(); mode = (key[-1] if 'alt+' in key else key).lower()
-    if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'm', 'q', 's']: return
+    if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's']: return
     if mode == 'q':
         restore_terminal_settings(); exit_alt_screen()
         print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다."); os._exit(0)
     if mode == 'm':
         restore_terminal_settings(); draw_manual_page(os.get_terminal_size().columns, os.get_terminal_size().lines)
         enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0); return
+    if mode == 'l':
+        dm.set_busy("로그 조회")
+        try:
+            from src.ui.renderer import draw_trading_logs
+            restore_terminal_settings(); draw_trading_logs(strategy, dm, os.get_terminal_size().columns, os.get_terminal_size().lines)
+            enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0); time.sleep(0.2)
+        finally: dm.clear_busy()
+        return
     if mode == 'b':
         dm.set_busy("보유 리포트 생성")
         try:
@@ -198,6 +207,13 @@ def perform_interaction(key, api, strategy, dm, cycle):
                         try:
                             success, msg = api.order_market(code, qty, False, price)
                             if success: 
+                                # 수익금 계산 (Group 2 반영)
+                                pchs_avg = float(h.get('pchs_avg_pric', 0))
+                                curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
+                                trade_profit = (curr_p - pchs_avg) * qty
+                                
+                                trading_log.log_trade("수동매도", code, name, curr_p, qty, f"수동 매도 ({price_display})", profit=trade_profit)
+                                
                                 dm.show_status(f"✅ 매도 성공: {name}"); dm.add_trading_log(f"수동매도완료: {name} {qty}주 @ {price_display}")
                                 draw_tui(strategy, dm, cycle); dm.update_all_data(True, force=True); draw_tui(strategy, dm, cycle)
                             else: dm.show_status(f"❌ 매도 실패: {msg}", True); draw_tui(strategy, dm, cycle)
@@ -222,6 +238,10 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     try:
                         success, msg = api.order_market(code, qty, True, price)
                         if success:
+                            # 체결가 가져오기 (Group 2 반영)
+                            curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
+                            trading_log.log_trade("수동매수", code, name, curr_p, qty, f"수동 매수 ({price_display})")
+                            
                             dm.show_status(f"✅ 매수 성공: {code}"); dm.add_trading_log(f"수동매수완료: {name} {qty}주 @ {price_display}")
                             draw_tui(strategy, dm, cycle)
                             if is_new_stock:
@@ -311,16 +331,25 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 if len(inp) >= 2 and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
                     h = f_h[int(inp[0])-1]
                     if inp[1].lower() == 'r':
-                        if h['pdno'] in strategy.manual_thresholds: del strategy.manual_thresholds[h['pdno']]; strategy.save_manual_thresholds(); dm.show_status(f"🔄 전략 초기화 완료: {h['prdt_name']}")
-                        else: dm.show_status("⚠️ 수동 설정된 전략이 없습니다.")
+                        strategy.reset_manual_threshold(h['pdno'])
+                        dm.show_status(f"🔄 전략 초기화 완료: {h['prdt_name']}")
                     elif len(inp) >= 3:
-                        try: tp, sl = float(inp[1]), float(inp[2]); strategy.manual_thresholds[h['pdno']] = [tp, sl]; strategy.save_manual_thresholds(); dm.show_status(f"✅ 설정 완료: {h['prdt_name']}")
+                        try:
+                            tp, sl = float(inp[1]), float(inp[2])
+                            strategy.set_manual_threshold(h['pdno'], tp, sl)
+                            dm.show_status(f"✅ 설정 완료: {h['prdt_name']}")
                         except: dm.show_status("❌ 수치 입력 오류", True)
                 elif len(inp) == 2:
-                    try: tp, sl = float(inp[0]), float(inp[1]); strategy.exit_mgr.base_tp = tp; strategy.exit_mgr.base_sl = sl; strategy.save_manual_thresholds(); dm.show_status(f"✅ 기본 전략 변경 완료: 익절 {tp}% / 손절 {sl}%")
+                    try:
+                        tp, sl = float(inp[0]), float(inp[1])
+                        strategy.base_tp = tp
+                        strategy.base_sl = sl
+                        strategy._save_all_states()
+                        dm.show_status(f"✅ 기본 전략 변경 완료: 익절 {tp}% / 손절 {sl}%")
                     except: dm.show_status("❌ 기본 전략 입력 오류", True)
                 elif len(inp) == 1 and inp[0].lower() == 'r':
-                    count = len(strategy.manual_thresholds); strategy.manual_thresholds.clear(); strategy.save_manual_thresholds(); dm.show_status(f"🔄 모든 종목 수동 전략 초기화 완료 ({count}건)")
+                    strategy.reset_all_manual_thresholds()
+                    dm.show_status(f"🔄 모든 종목 수동 전략 초기화 완료")
         elif mode == '5':
             res = input_with_esc("> 물타기설정 [트리거% 금액(원) 한도(원) 자동(y/n)]: ", tw)
             if res:
