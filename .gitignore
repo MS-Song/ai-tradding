@@ -1,17 +1,3 @@
-.env
-.env.bak
-.venv/
-__pycache__/
-*.pyc
-.vscode/
-target/
-.token_cache.json
-.trading_state.json
-trading_state.json
-trading.log
-error.log
-activate_venv.sh
-run.sh
+
+# Worktrees
 .worktrees/
-model_list_raw.txt
-model_list_utf8.txt
