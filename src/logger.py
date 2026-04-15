@@ -111,6 +111,22 @@ class TradingLogManager:
                 total_profit += t.get("profit", 0.0)
         return int(total_profit)
 
+    def get_daily_amounts(self):
+        """금일 발생한 BEAR, BULL, ALGO 트레이딩의 누적 집행 금액 합산 (요구사항 9)"""
+        today = datetime.now().strftime('%Y-%m-%d')
+        amounts = {"BEAR": 0, "BULL": 0, "ALGO": 0}
+        for t in self.data.get("trades", []):
+            if t["time"].startswith(today):
+                t_type = t.get("type", "")
+                amt = float(t.get("price", 0)) * int(t.get("qty", 0))
+                if "물타기" in t_type:
+                    amounts["BEAR"] += amt
+                elif "불타기" in t_type:
+                    amounts["BULL"] += amt
+                elif "AI자율매수" in t_type:
+                    amounts["ALGO"] += amt
+        return amounts
+
 # 전역 인스턴스
 trading_log = TradingLogManager()
 

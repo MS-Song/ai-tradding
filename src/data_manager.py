@@ -30,6 +30,12 @@ class DataManager:
         self.is_kr_market_active = False
         self.last_size = (0, 0)
         
+        # --- 입력 상태 관리 (Task 4) ---
+        self.is_input_active = False
+        self.input_prompt = ""
+        self.input_buffer = ""
+        self.is_full_screen_active = False
+        
         # --- 글로벌 진행 표시기 상태 ---
         self.global_busy_msg = None
         self.busy_anim_step = 0
@@ -236,6 +242,8 @@ class DataManager:
                                     if qty > 0:
                                         success, msg = self.api.order_market(code_r, qty, True)
                                         if success:
+                                            from src.logger import trading_log
+                                            trading_log.log_trade(f"자동{rec_type}", code_r, rec['name'], p['price'], qty, f"자동 {rec_type} 실행")
                                             msg_txt = f"자동{rec_type}: {rec['name']} {qty}주"
                                             self.strategy.last_avg_down_msg = f"[{datetime.now().strftime('%H:%M')}] {msg_txt}"
                                             self.strategy.record_buy(code_r, p['price'])
@@ -262,6 +270,8 @@ class DataManager:
                                 if qty > 0:
                                     success, msg = self.api.order_market(top_ai['code'], qty, True)
                                     if success:
+                                        from src.logger import trading_log
+                                        trading_log.log_trade("AI자율매수", top_ai['code'], top_ai['name'], p['price'], qty, "AI 추천 기반 자율 매수")
                                         self.add_trading_log(f"✨ AI자율매수: {top_ai['name']} {qty}주 선점")
                                         # 자동 매수 성공 → 프리셋 전략 자동 할당
                                         preset_result = self.strategy.auto_assign_preset(top_ai['code'], top_ai['name'])

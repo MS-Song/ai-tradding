@@ -80,25 +80,24 @@ def get_key_immediate():
             return c.lower()
     return None
 
-def input_with_esc(prompt, tw):
-    sys.stdout.write(f"\033[33m {prompt}\033[0m")
-    sys.stdout.flush()
+def input_with_esc(prompt, tw, callback=None):
+    if callback: callback(prompt, "")
     input_str = ""
     while True:
         k = get_key_immediate()
-        if k == 'esc': return None
+        if k == 'esc': 
+            if callback: callback("", "")
+            return None
         elif k == '\r' or k == '\n':
-            sys.stdout.write("\n")
+            if callback: callback("", "")
             return input_str
         elif k == '\b' or k == 'backspace' or k == '\x7f':
             if len(input_str) > 0:
                 input_str = input_str[:-1]
-                sys.stdout.write("\b \b")
-                sys.stdout.flush()
+                if callback: callback(prompt, input_str)
         elif k and len(k) == 1:
             input_str += k
-            sys.stdout.write(k)
-            sys.stdout.flush()
+            if callback: callback(prompt, input_str)
         time.sleep(0.01)
 
 # --- 유틸리티 함수 ---

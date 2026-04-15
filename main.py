@@ -29,12 +29,21 @@ def main():
         while True:
             cycle += 1
             if not auth.is_token_valid(): auth.generate_token()
-            for i in range(50):
+            
+            # [Task 4] 인터랙션 스레드 분리: 입력 중에도 렌더링(draw_tui)이 멈추지 않음
+            for i in range(10): # 약 5초마다 대기 (0.5s * 10)
                 draw_tui(strategy, dm, cycle)
                 start_t = time.time()
                 while time.time() - start_t < 0.5:
                     k = get_key_immediate()
-                    if k: perform_interaction(k, api, strategy, dm, cycle)
+                    if k:
+                        # 이미 입력 모드인 경우 추가 스레드 생성 방지
+                        if not dm.is_input_active:
+                            threading.Thread(
+                                target=perform_interaction, 
+                                args=(k, api, strategy, dm, cycle), 
+                                daemon=True
+                            ).start()
                     time.sleep(0.05)
     except KeyboardInterrupt: pass
     finally: restore_terminal_settings(); exit_alt_screen()
