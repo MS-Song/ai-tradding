@@ -985,16 +985,25 @@ class VibeStrategy:
             log_error(f"Deadline 계산 실패: {e}")
             return None
     
-    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = "", lifetime_mins: int = None):
+    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = "", lifetime_mins: int = None, name: str = ""):
         """종목에 프리셋 전략 할당 (표준 선택 시 기존 설정으로 복귀)"""
         preset = PRESET_STRATEGIES.get(preset_id)
         if not preset:
             return False
+        
+        # 이름이 없는 경우 기존 저장된 정보나 보유 종목에서 찾기 시도
+        if not name:
+            if code in self.preset_strategies: name = self.preset_strategies[code].get('name', '')
+            if not name:
+                # API나 DataManager를 직접 참조하기 어려우므로 최대한 인자로 받는 것이 좋음
+                pass
+
         if preset_id == "00":
             # 표준 모드: 프리셋 해제 (기본 전략으로 복귀)
             if code in self.preset_strategies:
                 del self.preset_strategies[code]
-                trading_log.log_config(f"전략 해제: {code} (표준 전략으로 복귀)")
+                name_txt = f" {name}" if name else ""
+                trading_log.log_config(f"전략 해제: [{code}]{name_txt} (표준 복귀)")
         else:
             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             use_tp = tp if tp is not None else preset["default_tp"]
@@ -1009,7 +1018,8 @@ class VibeStrategy:
                 "deadline": self._calculate_deadline(preset_id, now_str, lifetime_mins),
                 "is_p3_processed": False
             }
-            trading_log.log_config(f"전략 할당: {code}({preset['name']}) | TP:{use_tp}% SL:{use_sl}%")
+            name_txt = f" {name}" if name else ""
+            trading_log.log_config(f"전략 할당: [{code}]{name_txt} ({preset['name']}) | TP:{use_tp}% SL:{use_sl}%")
         self._save_all_states()
         return True
     
@@ -1021,7 +1031,7 @@ class VibeStrategy:
             vibe = self.current_market_vibe
             result = self.ai_advisor.simulate_preset_strategy(code, name, vibe, detail, news)
             if result:
-                self.assign_preset(code, result["preset_id"], result["tp"], result["sl"], result["reason"], result.get("lifetime_mins"))
+                self.assign_preset(code, result["preset_id"], result["tp"], result["sl"], result["reason"], result.get("lifetime_mins"), name=name)
                 return result
         except Exception as e:
             log_error(f"자동 프리셋 할당 오류: {e}")

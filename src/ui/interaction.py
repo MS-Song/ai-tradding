@@ -381,7 +381,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                     sel_id = sid_raw.strip().zfill(2)
                                     if sel_id in PRESET_STRATEGIES:
                                         if sel_id == '00':
-                                            strategy.assign_preset(code, '00')
+                                            strategy.assign_preset(code, '00', name=name)
                                             dm.add_trading_log(f"🔄 [{name}] 표준 전략 복귀")
                                             dm.show_status(f"🔄 표준 복귀")
                                         else:
@@ -389,9 +389,10 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                             res = strategy.ai_advisor.simulate_preset_strategy(code, name, strategy.current_market_vibe, detail, news)
                                             tp = res['tp'] if res else PRESET_STRATEGIES[sel_id]['default_tp']
                                             sl = res['sl'] if res else PRESET_STRATEGIES[sel_id]['default_sl']
-                                            strategy.assign_preset(code, sel_id, tp, sl, res['reason'] if res else '')
+                                            strategy.assign_preset(code, sel_id, tp, sl, res['reason'] if res else '', name=name)
                                             dm.add_trading_log(f"✅ [{name}] {PRESET_STRATEGIES[sel_id]['name']} TP:{tp:+.1f}% SL:{sl:.1f}%")
                                             dm.show_status(f"✅ {PRESET_STRATEGIES[sel_id]['name']} 적용")
+
                                     else: dm.show_status("⚠️ 무효한 번호", True)
                             finally: dm.clear_busy()
 
