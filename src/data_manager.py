@@ -180,28 +180,58 @@ class DataManager:
                         for r in auto_res: self.add_trading_log(f"🤖 자동: {r}")
                     
                     if self.strategy.bear_config.get("auto_mode", False) and self.cached_recommendations:
-                        r = self.cached_recommendations[0]
-                        p = self.api.get_inquire_price(r['code'])
-                        if p:
-                            qty = math.floor(r['suggested_amt'] / p['price'])
-                            if qty > 0:
-                                success, msg = self.api.order_market(r['code'], qty, True)
-                                if success:
-                                    msg_txt = f"자동{r['type']}: {r['name']} {qty}주"
-                                    self.strategy.last_avg_down_msg = f"[{datetime.now().strftime('%H:%M')}] {msg_txt}"
-                                    self.strategy.record_buy(r['code'], p['price'])
-                                    self.add_trading_log(f"🤖 {msg_txt}")
-                                    self.update_all_data(is_virtual, force=True)
+                        # --- 물타기/불타기 자동 매매 실행 (bear/bull auto_mode 독립 제어) ---
+                        for rec in self.cached_recommendations:
+                            rec_type = rec.get('type')
+                            is_auto_enabled = False
+                            if rec_type == "물타기" and self.strategy.bear_config.get("auto_mode", False):
+                                is_auto_enabled = True
+                            elif rec_type == "불타기" and self.strategy.bull_config.get("auto_mode", False):
+                                is_auto_enabled = True
+
+                            if not is_auto_enabled:
+                                continue
+
+                            code_r = rec['code']
+
+                            # [핑퐁 방지] 익절/손절 후 2시간(7200초) 이내 자동 재진입 금지
+                            _curr_t = time.time()
+                            _last_sell_t = self.strategy.last_sell_times.get(code_r, 0)
+                            _last_sl_t   = self.strategy.last_sl_times.get(code_r, 0)
+                            _last_exit_t = max(_last_sell_t, _last_sl_t)
+                            _COOLDOWN_BUY = 7200  # 2시간
+
+                            if _curr_t - _last_exit_t < _COOLDOWN_BUY:
+                                _rem_min = int((_COOLDOWN_BUY - (_curr_t - _last_exit_t)) / 60)
+                                _exit_type = "익절" if _last_sell_t >= _last_sl_t else "손절"
+                                self.add_log(f"🔒 재진입쿨다운({_exit_type}): {rec['name']} 잔여 {_rem_min}분")
+                                self.add_trading_log(
+                                    f"⏸ 스킵(재진입쿨다운/{_exit_type}후): {rec['name']}({code_r}) "
+                                    f"{rec_type} 조건충족 / 잔여 {_rem_min}분"
+                                )
+                            else:
+                                p = self.api.get_inquire_price(code_r)
+                                if p and p.get('price'):
+                                    qty = math.floor(rec['suggested_amt'] / p['price'])
+                                    if qty > 0:
+                                        success, msg = self.api.order_market(code_r, qty, True)
+                                        if success:
+                                            msg_txt = f"자동{rec_type}: {rec['name']} {qty}주"
+                                            self.strategy.last_avg_down_msg = f"[{datetime.now().strftime('%H:%M')}] {msg_txt}"
+                                            self.strategy.record_buy(code_r, p['price'])
+                                            self.add_trading_log(f"🤖 {msg_txt}")
+                                            self.update_all_data(is_virtual, force=True)
+                                            break  # 거래 후 데이터 동기화를 위해 루프 탈출
 
                     if self.strategy.auto_ai_trade and self.strategy.ai_recommendations:
                         top_ai = self.strategy.ai_recommendations[0]
-                        
-                        # [개편] 평시 장세(Bull/Neutral)에서 인버스 상품 추천 시 자동 매수 제외
+
+                        # 평시 장세(Bull/Neutral)에서 인버스 상품 추천 시 자동 매수 제외
                         skip_auto_buy = False
                         if top_ai.get('is_inverse', False) and "defensive" not in vibe.lower() and "bear" not in vibe.lower():
                             skip_auto_buy = True
                             self.add_log(f"보류: {top_ai['name']} (인버스 상품은 하락 방어장에서만 자동 매수)")
-                        
+
                         is_held = any(holding['pdno'] == top_ai['code'] for holding in self.cached_holdings)
                         if not is_held and not skip_auto_buy:
                             p = self.api.get_inquire_price(top_ai['code'])

@@ -851,7 +851,9 @@ class VibeStrategy:
         self.analyzer.ai_advisor = self.ai_advisor # 시장 장세 AI 검증 연결
         self.state_file = "trading_state.json"
         self.last_avg_down_msg = "없음"
-        self.last_sell_times: Dict[str, float] = {}
+        self.last_sell_times: Dict[str, float] = {}  # 익절 발생 시각 {code: timestamp}
+        self.last_sl_times: Dict[str, float] = {}     # 손절 발생 시각 {code: timestamp}
+        self.last_buy_times: Dict[str, float] = {}    # 불타기/물타기 발생 시각 {code: timestamp}
         self.ai_recommendations: List[dict] = []
         self.ai_briefing, self.ai_detailed_opinion = "", ""
         self.ai_holdings_opinion = ""  # 보유 종목 리포트 결과 저장
@@ -938,6 +940,8 @@ class VibeStrategy:
                     self.recovery_eng.last_avg_down_prices = d.get("last_avg_down_prices", {})
                     self.pyramid_eng.last_buy_prices = d.get("last_buy_prices", {})
                     self.last_sell_times = d.get("last_sell_times", {})
+                    self.last_sl_times = d.get("last_sl_times", {})      # 손절 시각
+                    self.last_buy_times = d.get("last_buy_times", {})    # 불타기/물타기 시각
                     self.last_avg_down_msg = d.get("last_avg_down_msg", "없음")
                     self.recommendation_history = d.get("recommendation_history", {})
                     self.preset_strategies = d.get("preset_strategies", {})
@@ -978,6 +982,8 @@ class VibeStrategy:
                 "last_avg_down_prices": self.recovery_eng.last_avg_down_prices,
                 "last_buy_prices": self.pyramid_eng.last_buy_prices,
                 "last_sell_times": self.last_sell_times,
+                "last_sl_times": self.last_sl_times,
+                "last_buy_times": self.last_buy_times,
                 "last_avg_down_msg": self.last_avg_down_msg,
                 "recommendation_history": self.recommendation_history,
                 "ai_config": self.ai_config,
@@ -1108,6 +1114,7 @@ class VibeStrategy:
     def record_buy(self, code, price):
         self.recovery_eng.last_avg_down_prices[code] = price
         self.pyramid_eng.last_buy_prices[code] = price
+        self.last_buy_times[code] = time.time()  # 불타기/물타기 시각 기록
         self._save_all_states()
 
     def update_ai_recommendations(self, themes, hot_raw, vol_raw, progress_cb: Optional[Callable] = None, on_item_found: Optional[Callable] = None):
@@ -1176,19 +1183,19 @@ class VibeStrategy:
             trig_bear = re.search(r"물타기\s*([+-]?[\d,.]+)", strat_line)
             trig_bull = re.search(r"불타기\s*([+-]?[\d,.]+)", strat_line)
             amt = re.search(r"금액\s*([\d,]+)\s*원", strat_line)
-            
+
             # 구버전 응답(추매) 호환성 지원
             if not trig_bull: trig_bull = re.search(r"추매\s*([+-]?[\d,.]+)", strat_line)
-            
+
             # 핵심 4개(익절/손절/물타기/불타기)는 반드시 있어야 함
             if not (tp and sl and trig_bear and trig_bull): return False
-            
+
             # 1. AI가 제안한 '최종 유효값' 파싱 (모든 수치에서 콤마 제거 후 float 변환)
             target_tp = abs(float(tp.group(1).replace(',', '')))
             target_sl = -abs(float(sl.group(1).replace(',', '')))
             target_trig_bear = -abs(float(trig_bear.group(1).replace(',', '')))
             target_trig_bull = abs(float(trig_bull.group(1).replace(',', '')))
-            
+
             # 금액 파싱: 실패 시 현재 설정값 유지 (AI가 비정형 텍스트를 보낸 경우 방어)
             if amt:
                 new_amt = int(amt.group(1).replace(',', ''))
@@ -1199,6 +1206,7 @@ class VibeStrategy:
                 # 금액 파싱 실패 → 현재 물타기 설정 금액 유지
                 new_amt = self.recovery_eng.config.get("average_down_amount", 500000)
                 log_error(f"AI 금액 파싱 실패 (원본: {strat_line}), 기존값 {new_amt:,}원 유지")
+
             
             # 2. 현재 Vibe에 따른 보정치 역산
             tp_mod, sl_mod = self.exit_mgr.get_vibe_modifiers(self.analyzer.kr_vibe)
@@ -1230,6 +1238,58 @@ class VibeStrategy:
             if not r: r = self.pyramid_eng.get_recommendation(h, self.analyzer.kr_vibe, self.analyzer.is_panic, False, tp)
             if r: recs.append(r)
         return recs
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 핑퐁 방지 & 긴급 조건 판단 유틸리티
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _is_in_partial_sell_cooldown(self, code: str, curr_t: float) -> bool:
+        """
+        익절 쿨다운(1시간) 체크.
+        불타기/물타기가 마지막 익절 이후에 발생한 경우 쿨다운을 자동 리셋 → 즉시 익절 허용.
+        (불타기 후 TP 도달 시 익절 블로킹 방지)
+        """
+        last_sell_t = self.last_sell_times.get(code, 0)
+        last_buy_t  = self.last_buy_times.get(code, 0)
+        # 불타기/물타기가 마지막 익절보다 더 최신 → 쿨다운 리셋
+        if last_buy_t > last_sell_t:
+            return False
+        return (curr_t - last_sell_t) < 3600  # 1시간
+
+    def _is_emergency_exit(self, rt: float, tp: float, vol_spike: bool,
+                           phase: dict, after_buy: bool = False) -> Tuple[bool, str]:
+        """
+        익절 쿨다운 바이패스 긴급 조건.
+          after_buy=True  (불타기 직후): 기준 완화  TP+2.0%, vol+1.0%
+          after_buy=False (일반 쿨다운): 기준 엄격  TP+3.0%, vol+1.5%
+        """
+        surplus_thr = 2.0 if after_buy else 3.0
+        vol_thr     = 1.0 if after_buy else 1.5
+        if rt >= tp + surplus_thr:
+            return True, f"급등초과+{rt - tp:.1f}%"
+        if vol_spike and rt >= tp + vol_thr:
+            return True, "거래량폭발"
+        if phase['id'] == 'P4' and rt >= 0.5:
+            return True, "장마감"
+        return False, ""
+
+    def _is_emergency_sl(self, rt: float, sl: float, is_panic: bool,
+                         vibe: str, phase: dict, after_avg_down: bool = False) -> Tuple[bool, str]:
+        """
+        물타기 직후 30분 유예 중에도 즉시 손절을 강제하는 긴급 조건.
+          after_avg_down=True  (물타기 직후): 기준 완화  SL-1.0%
+          after_avg_down=False (일반):        기준 엄격  SL-2.0%
+        """
+        extra = 1.0 if after_avg_down else 2.0
+        if rt <= sl - extra:
+            return True, f"추가급락{rt - sl:.1f}%"
+        if is_panic:
+            return True, "글로벌패닉"
+        if vibe.upper() == "DEFENSIVE":
+            return True, "방어모드전환"
+        if phase['id'] == 'P4' and rt < 0:
+            return True, "장마감청산"
+        return False, ""
 
     def run_cycle(self, market_trend="neutral", skip_trade=False):
         holdings = self.api.get_balance()
@@ -1295,18 +1355,72 @@ class VibeStrategy:
                                 results.append(f"P3 수익확정(50%): {item.get('prdt_name')}")
                                 self._save_all_states()
 
-            # 3. 기존 TP/SL 체크 로직
-            tp, sl, _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
+            # 3. 개선된 TP/SL 체크 (쿨다운 + 긴급 바이패스 포함)
+            tp, sl, vol_spike = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
             rt = float(item.get("evlu_pfls_rt", 0.0))
-            action, sell_qty = None, 0
+            action, sell_qty, action_reason = None, 0, ""
+            last_buy_t  = self.last_buy_times.get(code, 0)
+            last_sell_t = self.last_sell_times.get(code, 0)
+
             if rt >= tp:
-                if curr_t - self.last_sell_times.get(code, 0) > 3600: 
-                    action = "익절"; sell_qty = max(1, math.floor(int(item.get('hldg_qty', 0)) * 0.3))
-            elif rt <= sl: 
-                action = "손절"; sell_qty = int(item.get('hldg_qty', 0))
+                # ── 익절 판단 ──────────────────────────────────────────────
+                in_cooldown = self._is_in_partial_sell_cooldown(code, curr_t)
+                if not in_cooldown:
+                    # 쿨다운 없음: 정상 익절
+                    action = "익절"
+                    sell_qty = max(1, math.floor(int(item.get('hldg_qty', 0)) * 0.3))
+                else:
+                    # 쿨다운 중: 긴급 조건 충족 시만 바이패스
+                    after_buy = (last_buy_t > last_sell_t)  # 불타기/물타기가 더 최신?
+                    is_emg, emg_reason = self._is_emergency_exit(
+                        rt, tp, vol_spike, phase, after_buy)
+                    if is_emg:
+                        action, action_reason = "긴급익절", emg_reason
+                        sell_qty = max(1, math.floor(int(item.get('hldg_qty', 0)) * 0.3))
+                    else:
+                        # 스킵: 익절 쿨다운 중 + 긴급 조건 미충족
+                        _elapsed = curr_t - self.last_sell_times.get(code, 0)
+                        _rem_min = max(0, int((3600 - _elapsed) / 60))
+                        _ctx     = "불타기직후" if after_buy else "익절직후"
+                        results.append(
+                            f"⏸ 스킵(익절쿨다운/{_ctx}): {item.get('prdt_name')}({code}) "
+                            f"수익률 {rt:+.1f}% / TP {tp:+.1f}% / 잔여 {_rem_min}분"
+                        )
+
+            elif rt <= sl:
+                # ── 손절 판단 ──────────────────────────────────────────────
+                # 물타기 직후 30분(1800초) 이내: 즉각 손절 유예, 단 긴급 조건은 바이패스
+                after_avg_down = (
+                    (curr_t - last_buy_t) < 1800 and
+                    last_buy_t > last_sell_t  # 물타기/불타기가 마지막 익절보다 최신
+                )
+                if after_avg_down:
+                    is_emg, emg_reason = self._is_emergency_sl(
+                        rt, sl, self.analyzer.is_panic,
+                        self.analyzer.kr_vibe, phase, after_avg_down=True)
+                    if is_emg:
+                        action, action_reason = "긴급손절", emg_reason
+                        sell_qty = int(item.get('hldg_qty', 0))
+                    else:
+                        # 스킵: 물타기 직후 30분 유예 중 + 긴급 조건 미충족
+                        _rem_min = max(0, int((1800 - (curr_t - last_buy_t)) / 60))
+                        results.append(
+                            f"⏸ 스킵(물타기유예): {item.get('prdt_name')}({code}) "
+                            f"수익률 {rt:+.1f}% / SL {sl:.1f}% / 잔여 {_rem_min}분"
+                        )
+                else:
+                    # 일반 손절 (쿨다운 없음)
+                    action = "손절"
+                    sell_qty = int(item.get('hldg_qty', 0))
+
             if action and not skip_trade and sell_qty > 0:
                 success, msg = self.api.order_market(code, sell_qty, False)
                 if success:
-                    if action == "익절": self.last_sell_times[code] = curr_t; self._save_all_states()
-                    results.append(f"자동 {action}: {item.get('prdt_name')} {sell_qty}주")
+                    reason_str = f"({action_reason})" if action_reason else ""
+                    if "익절" in action:
+                        self.last_sell_times[code] = curr_t
+                    elif "손절" in action:
+                        self.last_sl_times[code] = curr_t
+                    self._save_all_states()
+                    results.append(f"자동 {action}{reason_str}: {item.get('prdt_name')} {sell_qty}주")
         return results
