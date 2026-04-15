@@ -248,7 +248,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     if rem > 0: buf.write(f"\033[K {dm.status_msg if dm.status_msg and (time.time()-dm.status_time<60) else ''}\n"); rem -= 1
     if rem > 0: buf.write(f"\033[K {dm.last_log_msg if dm.last_log_msg and (time.time()-dm.last_log_time<60) else ''}\n"); rem -= 1
     if rem > 0:
-        logs = dm.trading_logs; skip = len(logs) - (rem - 1)
+        logs = list(reversed(dm.trading_logs)); skip = len(logs) - (rem - 1)
         if skip > 0: buf.write(f"\033[K \033[90m... 💬 {skip}건의 로그 생략됨 ...\033[0m\n"); logs = logs[-(rem-1):]; rem -= 1
         for tl in logs:
             if rem <= 0: break
@@ -294,7 +294,8 @@ def draw_trading_logs(strategy, dm, tw, th):
     else:
         header = f"{align_kr('시간', 20)} | {align_kr('구분', 10)} | {align_kr('종목명', 14)} | {align_kr('체결가', 10)} | {align_kr('수량', 6)} | {align_kr('수익금', 12)} | 메모"
         buf.write("\033[1m" + header + "\033[0m\n" + "-" * tw + "\n")
-        for t in trades[:15]:
+        trade_max_height = int(th * 0.7)
+        for t in reversed(trades[-trade_max_height:]):
             t_type = t.get('type', 'Unknown')
             t_color = "\033[91m" if "매수" in t_type else "\033[94m" if "매도" in t_type or "익절" in t_type or "손절" in t_type else ""
             p_val = t.get('profit', 0)
