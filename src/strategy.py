@@ -907,12 +907,13 @@ class VibeStrategy:
         if code in self.exit_mgr.manual_thresholds:
             del self.exit_mgr.manual_thresholds[code]
             self._save_all_states()
-def apply_ai_strategy_to_all(self, data_manager):
-    """보유한 모든 종목에 AI 최적 전략 자동 할당"""
-    portfolio = data_manager.get_portfolio()
-    for code in portfolio:
-        strategy = self.auto_assign_preset(code, "")
-        # strategy는 내부에서 assign_preset를 호출하므로 여기서 별도 저장 필요 없음
+
+    def apply_ai_strategy_to_all(self, data_manager):
+        """보유한 모든 종목에 AI 최적 전략 자동 할당"""
+        portfolio = data_manager.get_portfolio()
+        for code in portfolio:
+            self.auto_assign_preset(code, "")
+            # assign_preset가 내부에서 저장을 처리하므로 여기서 별도 저장 필요 없음
 
     def determine_market_trend(self): return self.analyzer.update()
     def save_manual_thresholds(self): self._save_all_states()
@@ -1261,7 +1262,7 @@ def apply_ai_strategy_to_all(self, data_manager):
                     p_strat['deadline'] = None 
                     self._save_all_states()
 
-                # 2. Phase 3 (CONCLUSION): 수익권 50% 분할 매도 및 SL 상향
+                # 2. Phase 3 (CONCLUSION): 수익권 50% 분할 매도 및 SL 상향 (프리셋 종목)
                 if phase['id'] == "P3" and not p_strat.get('is_p3_processed'):
                     curr_rt = float(item.get("evlu_pfls_rt", 0.0))
                     if curr_rt >= 0.5:
@@ -1272,7 +1273,53 @@ def apply_ai_strategy_to_all(self, data_manager):
                                 p_strat['is_p3_processed'] = True
                                 # 남은 수량의 SL을 +0.2%(본전 보호)로 상향
                                 p_strat['sl'] = 0.2 
-                                results.append(f"P3 수익확정(50%): {item.get('prdt_name')}")
+                                results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')}")
+                                trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'),
+                                                      float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도")
+                                self._save_all_states()
+                        elif curr_rt >= 0.5:
+                            # skip_trade 시에도 처리된 것으로 마킹 (테스트 모드 등)
+                            p_strat['is_p3_processed'] = True
+
+            else:
+                # [핵심 수정] 프리셋 미설정 표준 종목에도 P3/P4 수익확정 로직 적용
+                # P3_global: 오늘 날짜별로 종목 처리 여부 추적
+                if not hasattr(self, '_p3_global_processed'):
+                    self._p3_global_processed = {}
+                p3_key = f"{today}_{code}"
+
+                # Phase 3: 수익권이면 50% 분할 매도 + 수동 SL을 본전(+0.2%)으로 상향
+                if phase['id'] == "P3" and p3_key not in self._p3_global_processed:
+                    curr_rt = float(item.get("evlu_pfls_rt", 0.0))
+                    if curr_rt >= 0.5:
+                        sell_qty = int(float(item.get('hldg_qty', 0))) // 2
+                        if sell_qty > 0 and not skip_trade:
+                            success, msg = self.api.order_market(code, sell_qty, False)
+                            if success:
+                                self._p3_global_processed[p3_key] = True
+                                # 수동 TP/SL에 본전 스탑 설정
+                                tp_cur, sl_cur, _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
+                                self.exit_mgr.manual_thresholds[code] = [tp_cur, 0.2]
+                                results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} | SL→본전(+0.2%)")
+                                trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'),
+                                                      float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도")
+                                self._save_all_states()
+                        else:
+                            self._p3_global_processed[p3_key] = True
+
+                # Phase 4: 손실권이면 전량 청산 (표준 종목)
+                elif phase['id'] == "P4":
+                    curr_rt = float(item.get("evlu_pfls_rt", 0.0))
+                    p4_key = f"p4_{today}_{code}"
+                    if curr_rt < 0 and p4_key not in self._p3_global_processed:
+                        sell_qty = int(float(item.get('hldg_qty', 0)))
+                        if sell_qty > 0 and not skip_trade:
+                            success, msg = self.api.order_market(code, sell_qty, False)
+                            if success:
+                                self._p3_global_processed[p4_key] = True
+                                results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')}")
+                                trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'),
+                                                      float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산")
                                 self._save_all_states()
 
             # 3. 개선된 TP/SL 체크 (쿨다운 + 긴급 바이패스 포함)

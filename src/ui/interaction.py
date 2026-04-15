@@ -373,8 +373,39 @@ def perform_interaction(key, api, strategy, dm, cycle):
                         auto = inp[3].lower() == 'y'; strategy.bull_config.update({"min_profit_to_pyramid": trig, "average_down_amount": amt, "max_investment_per_stock": lim, "auto_mode": auto}); strategy._save_all_states(); dm.show_status(f"✅ 불타기 설정 저장 완료 (자동:{'ON' if auto else 'OFF'})")
                     except: dm.show_status("❌ 입력 형식 오류", True)
         elif mode == '9':
-            res_code = input_with_esc("> 전략 적용할 보유 종목 번호 입력: ", tw)
-            if res_code and res_code.strip().isdigit():
+            res_code = input_with_esc("> 전략 적용할 종목 번호 입력 (엔터=전체 AI 일괄 할당): ", tw)
+            if res_code is None:
+                pass  # ESC: 취소
+            elif res_code.strip() == '':
+                # ── 빈 입력: 보유 전 종목 AI 일괄 전략 할당 ──────────────────
+                if not f_h:
+                    dm.show_status("⚠️ 보유 종목이 없습니다.", True)
+                else:
+                    total = len(f_h)
+                    dm.show_status(f"🧠 AI가 보유 {total}종목에 최적 전략을 일괄 할당합니다...")
+                    draw_tui(strategy, dm, cycle)
+                    success_cnt, fail_cnt = 0, 0
+                    def run_bulk_assign():
+                        nonlocal success_cnt, fail_cnt
+                        dm.set_busy("AI 일괄 전략 할당")
+                        try:
+                            for i, h in enumerate(f_h, 1):
+                                code, name = h['pdno'], h['prdt_name']
+                                dm.show_status(f"🧠 [{i}/{total}] {name} 전략 분석 중...")
+                                result = strategy.auto_assign_preset(code, name)
+                                if result:
+                                    success_cnt += 1
+                                    dm.add_trading_log(f"✅ [{name}] {result['preset_name']} TP:{result['tp']:+.1f}% SL:{result['sl']:.1f}%")
+                                else:
+                                    fail_cnt += 1
+                                    dm.add_trading_log(f"⚠️ [{name}] AI 전략 추천 실패 (표준 유지)")
+                                draw_tui(strategy, dm, cycle)
+                            dm.show_status(f"✅ AI 일괄 전략 할당 완료: {success_cnt}성공 / {fail_cnt}실패")
+                        finally:
+                            dm.clear_busy()
+                        draw_tui(strategy, dm, cycle)
+                    threading.Thread(target=run_bulk_assign, daemon=True).start()
+            elif res_code.strip().isdigit():
                 idx_num = int(res_code.strip())
                 if 0 < idx_num <= len(f_h):
                     h = f_h[idx_num - 1]; code, name = h['pdno'], h['prdt_name']; current_preset = strategy.get_preset_label(code)

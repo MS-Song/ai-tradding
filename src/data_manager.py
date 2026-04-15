@@ -123,24 +123,44 @@ class DataManager:
     # --- 데이터 업데이트 스레드 (지수 및 네이버 랭킹 전담: Naver/Yahoo) ---
     def index_update_worker(self):
         while True:
+            curr_t = time.time()
+
+            # 1) 시장 트렌드 분석 (실패해도 나머지 진행)
             try:
-                curr_t = time.time()
                 self.strategy.determine_market_trend()
-                h_raw = self.api.get_naver_hot_stocks(); v_raw = self.api.get_naver_volume_stocks()
-                themes = analyze_popular_themes(h_raw, v_raw)
-                self.strategy.update_ai_recommendations(themes, h_raw, v_raw, progress_cb=None)
-                self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
                 with self.data_lock:
                     self.cached_market_data = self.strategy.current_market_data
                     self.cached_vibe = self.strategy.current_market_vibe
                     self.cached_panic = self.strategy.global_panic
-                    self.cached_hot_raw = h_raw; self.cached_vol_raw = v_raw
-                self.last_times["index"] = curr_t; self.last_times["ranking"] = curr_t
+                self.last_times["index"] = curr_t
                 kospi_info = self.cached_market_data.get("KOSPI")
                 self.is_kr_market_active = kospi_info.get("status") == "02" if (kospi_info and "status" in kospi_info) else is_market_open()
             except Exception as e:
                 from src.logger import log_error
-                log_error(f"Index/Ranking Update Error: {e}")
+                log_error(f"Market Trend Update Error: {e}")
+
+            # 2) 네이버 인기/거래량 종목 수집 (실패해도 나머지 진행)
+            try:
+                h_raw = self.api.get_naver_hot_stocks()
+                v_raw = self.api.get_naver_volume_stocks()
+                themes = analyze_popular_themes(h_raw, v_raw)
+                with self.data_lock:
+                    self.cached_hot_raw = h_raw
+                    self.cached_vol_raw = v_raw
+                self.last_times["ranking"] = curr_t
+            except Exception as e:
+                from src.logger import log_error
+                log_error(f"Hot/Vol Ranking Update Error: {e}")
+                h_raw, v_raw, themes = self.cached_hot_raw, self.cached_vol_raw, []
+
+            # 3) AI 추천 갱신 (실패해도 루프 계속)
+            try:
+                self.strategy.update_ai_recommendations(themes, h_raw, v_raw, progress_cb=None)
+                self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
+            except Exception as e:
+                from src.logger import log_error
+                log_error(f"AI Rec Update Error: {e}")
+
             time.sleep(5)
 
     # --- 데이터 업데이트 스레드 (KIS API: 잔고/주문) ---

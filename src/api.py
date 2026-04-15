@@ -251,7 +251,7 @@ class KISAPI:
         try:
             url = "https://finance.naver.com/sise/lastsearch2.naver"
             res = requests.get(url, headers=self.headers, timeout=5)
-            if not BeautifulSoup: return []
+            if not BeautifulSoup: return self._hot_cache or []
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             table = soup.find('table', {'class': 'type_5'})
             if table:
@@ -260,16 +260,29 @@ class KISAPI:
                     if len(cols) > 5:
                         a = cols[1].find('a')
                         if a:
-                            name, code = a.text.strip(), a['href'].split('=')[-1]
-                            rate_txt = cols[5].text.strip().replace('%', '').replace('+', '')
                             try:
-                                rate = float(rate_txt)
-                                if cols[4].find('img') and 'down' in cols[4].find('img')['src'].lower(): rate = -rate        
-                            except: rate = 0.0
-                            results.append({"code": code, "name": name, "price": cols[3].text.replace(',','').strip(), "rate": rate, "mkt": "KSP" if int(code) < 300000 else "KDQ"})
-            self._hot_cache = results[:20]; self._last_hot_time = curr_t
-            return results[:20]
-        except: return []
+                                name = a.text.strip()
+                                code = a['href'].split('=')[-1].strip()
+                                if not code.isdigit(): continue  # 비정상 코드 건너뜀
+                                rate_txt = cols[5].text.strip().replace('%', '').replace('+', '')
+                                try:
+                                    rate = float(rate_txt)
+                                    if cols[4].find('img') and 'down' in cols[4].find('img')['src'].lower(): rate = -rate
+                                except: rate = 0.0
+                                price_txt = cols[3].text.replace(',', '').strip()
+                                mkt = "KSP" if int(code) < 300000 else "KDQ"
+                                results.append({"code": code, "name": name, "price": price_txt, "rate": rate, "mkt": mkt})
+                            except Exception: continue  # row 파싱 실패 시 건너뜀
+            if results:  # 성공적으로 수집된 경우에만 캐시 갱신
+                self._hot_cache = results[:20]
+                self._last_hot_time = curr_t
+            return self._hot_cache or []
+        except Exception as e:
+            try:
+                from src.logger import log_error
+                log_error(f"get_naver_hot_stocks Error: {e}")
+            except: pass
+            return self._hot_cache or []  # 실패 시 기존 캐시 반환
 
     def get_naver_volume_stocks(self) -> List[dict]:
         curr_t = time.time()
@@ -279,7 +292,7 @@ class KISAPI:
             for sosok in ["0", "1"]:
                 url = f"https://finance.naver.com/sise/sise_quant.naver?sosok={sosok}"
                 res = requests.get(url, headers=self.headers, timeout=5)
-                if not BeautifulSoup: return []
+                if not BeautifulSoup: return self._vol_cache or []
                 soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
                 table = soup.find('table', {'class': 'type_2'})
                 if table:
@@ -288,13 +301,25 @@ class KISAPI:
                         if len(cols) > 5:
                             a = cols[1].find('a')
                             if a:
-                                name, code = a.text.strip(), a['href'].split('=')[-1]
-                                rate_txt = cols[4].text.strip().replace('%', '').replace('+', '')
                                 try:
-                                    rate = float(rate_txt)
-                                    if cols[3].find('img') and 'down' in cols[3].find('img')['src'].lower(): rate = -rate        
-                                except: rate = 0.0
-                                results.append({"code": code, "name": name, "price": cols[2].text.replace(',','').strip(), "rate": rate, "mkt": "KSP" if sosok == "0" else "KDQ"})
-            self._vol_cache = results[:40]; self._last_vol_time = curr_t
-            return self._vol_cache
-        except: return []
+                                    name = a.text.strip()
+                                    code = a['href'].split('=')[-1].strip()
+                                    if not code.isdigit(): continue  # 비정상 코드 건너뜀
+                                    rate_txt = cols[4].text.strip().replace('%', '').replace('+', '')
+                                    try:
+                                        rate = float(rate_txt)
+                                        if cols[3].find('img') and 'down' in cols[3].find('img')['src'].lower(): rate = -rate
+                                    except: rate = 0.0
+                                    price_txt = cols[2].text.replace(',', '').strip()
+                                    results.append({"code": code, "name": name, "price": price_txt, "rate": rate, "mkt": "KSP" if sosok == "0" else "KDQ"})
+                                except Exception: continue  # row 파싱 실패 시 건너뜀
+            if results:  # 성공적으로 수집된 경우에만 캐시 갱신
+                self._vol_cache = results[:40]
+                self._last_vol_time = curr_t
+            return self._vol_cache or []
+        except Exception as e:
+            try:
+                from src.logger import log_error
+                log_error(f"get_naver_volume_stocks Error: {e}")
+            except: pass
+            return self._vol_cache or []  # 실패 시 기존 캐시 반환
