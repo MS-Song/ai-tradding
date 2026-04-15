@@ -306,7 +306,7 @@ def draw_trading_logs(strategy, dm, tw, th):
     if not trades:
         buf.write("  최근 거래 내역이 없습니다.\n")
     else:
-        header = f"{align_kr('시간', 20)} | {align_kr('구분', 10)} | {align_kr('종목명', 14)} | {align_kr('체결가', 10)} | {align_kr('수량', 6)} | {align_kr('수익금', 12)} | 메모"
+        header = f"{align_kr('시간', 20)} | {align_kr('구분', 10)} | {align_kr('종목명(코드)', 22)} | {align_kr('체결가', 10)} | {align_kr('수량', 6)} | {align_kr('수익금', 12)} | 메모"
         buf.write("\033[1m" + header + "\033[0m\n" + "-" * tw + "\n")
         trade_max_height = int(th * 0.7)
         for t in reversed(trades[-trade_max_height:]):
@@ -316,7 +316,12 @@ def draw_trading_logs(strategy, dm, tw, th):
             p_color = "\033[91m" if p_val > 0 else "\033[94m" if p_val < 0 else ""
             p_str = f"{p_color}{int(p_val):+,}원\033[0m" if p_val != 0 else "-"
             
-            line = f"{t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(t.get('name','-'), 14)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {t.get('memo', '')}"
+            # 종목명과 코드 결합하여 시인성 확보
+            name_val = t.get('name', '-')
+            code_val = t.get('code', '')
+            name_code_txt = f"[{code_val}] {name_val}" if code_val else name_val
+            
+            line = f"{t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(name_code_txt, 22)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {t.get('memo', '')}"
             buf.write(line + "\n")
             
     buf.write("\n" + "=" * tw + "\n\n")

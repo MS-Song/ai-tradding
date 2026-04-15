@@ -80,7 +80,7 @@ def draw_holdings_detail(strategy, dm, tw, th):
     if strategy.ai_holdings_opinion:
         for line in strategy.ai_holdings_opinion.split('\n'):
             if line.strip(): buf.write(f"  {line.strip()}\n")
-    else: buf.write(" ⚠️ 아직 생성된 보유 종목 분석 의견이 없습니다. '7:분석'을 실행하세요.\n")
+    else: buf.write(" ⚠️ 아직 생성된 보유 종목 분석 의견이 없습니다. '8:시황'을 실행하세요.\n")
     buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
     sys.stdout.write(buf.getvalue()); sys.stdout.flush()
     while not get_key_immediate(): time.sleep(0.1)
@@ -187,8 +187,16 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 elif mode == 'd': draw_recommendation_report(strategy, dm, tw, th)
                 elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw, th)
                 elif mode == '7':
-                    res = get_input(dm, "> 분석할 종목 코드(6자리) 입력: ", tw)
-                    if res and len(res.strip()) == 6: draw_stock_analysis(strategy, dm, res.strip(), tw, th)
+                    res = get_input(dm, "> 분석할 종목 번호 또는 코드(6자리) 입력: ", tw)
+                    target_code = ""
+                    if res:
+                        res = res.strip()
+                        if res.isdigit() and len(res) <= 3: # 번호(인덱스)
+                            idx = int(res)
+                            if 0 < idx <= len(f_h): target_code = f_h[idx-1]['pdno']
+                        elif len(res) == 6: # 종목코드
+                            target_code = res
+                    if target_code: draw_stock_analysis(strategy, dm, target_code, tw, th)
                 enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
             finally: 
                 dm.clear_busy()
@@ -341,8 +349,14 @@ def perform_interaction(key, api, strategy, dm, cycle):
                         dm.set_busy("AI 일괄 전략 할당")
                         try:
                             for i, h in enumerate(f_h, 1):
-                                dm.show_status(f"🧠 [{i}/{total}] {h['prdt_name']} 분석 중...")
-                                if strategy.auto_assign_preset(h['pdno'], h['prdt_name']): success += 1
+                                code, name = h['pdno'], h['prdt_name']
+                                dm.show_status(f"🧠 [{i}/{total}] {name} 분석 중...")
+                                result = strategy.auto_assign_preset(code, name)
+                                if result:
+                                    success += 1
+                                    dm.add_trading_log(f"✅ [{name}] {result['preset_name']} TP:{result['tp']:+.1f}% SL:{result['sl']:.1f}%")
+                                else:
+                                    dm.add_trading_log(f"⚠️ [{name}] AI 전략 추천 실패 (표준 유지)")
                             dm.show_status(f"✅ 일괄 할당 완료: {success}/{total}")
                         finally: dm.clear_busy()
                     command_queue.put((task_bulk, (), {}))
@@ -355,20 +369,32 @@ def perform_interaction(key, api, strategy, dm, cycle):
                         def task_single(sid_raw):
                             dm.set_busy("AI 전략 분석")
                             try:
-                                if sid_raw.strip() == '': strategy.auto_assign_preset(code, name); dm.show_status(f"✅ AI 추천 전략 적용")
+                                if sid_raw.strip() == '':
+                                    result = strategy.auto_assign_preset(code, name)
+                                    if result:
+                                        dm.add_trading_log(f"✅ [{name}] {result['preset_name']} TP:{result['tp']:+.1f}% SL:{result['sl']:.1f}%")
+                                        dm.show_status(f"✅ AI 추천 전략 적용")
+                                    else:
+                                        dm.add_trading_log(f"⚠️ [{name}] AI 전략 추천 실패")
+                                        dm.show_status(f"❌ AI 전략 추천 실패", True)
                                 else:
                                     sel_id = sid_raw.strip().zfill(2)
                                     if sel_id in PRESET_STRATEGIES:
-                                        if sel_id == '00': strategy.assign_preset(code, '00'); dm.show_status(f"🔄 표준 복귀")
+                                        if sel_id == '00':
+                                            strategy.assign_preset(code, '00')
+                                            dm.add_trading_log(f"🔄 [{name}] 표준 전략 복귀")
+                                            dm.show_status(f"🔄 표준 복귀")
                                         else:
                                             detail = api.get_naver_stock_detail(code); news = api.get_naver_stock_news(code)
                                             res = strategy.ai_advisor.simulate_preset_strategy(code, name, strategy.current_market_vibe, detail, news)
                                             tp = res['tp'] if res else PRESET_STRATEGIES[sel_id]['default_tp']
                                             sl = res['sl'] if res else PRESET_STRATEGIES[sel_id]['default_sl']
                                             strategy.assign_preset(code, sel_id, tp, sl, res['reason'] if res else '')
+                                            dm.add_trading_log(f"✅ [{name}] {PRESET_STRATEGIES[sel_id]['name']} TP:{tp:+.1f}% SL:{sl:.1f}%")
                                             dm.show_status(f"✅ {PRESET_STRATEGIES[sel_id]['name']} 적용")
                                     else: dm.show_status("⚠️ 무효한 번호", True)
                             finally: dm.clear_busy()
+
                         command_queue.put((task_single, (res_strat,), {}))
     except Exception as e:
         from src.logger import log_error
