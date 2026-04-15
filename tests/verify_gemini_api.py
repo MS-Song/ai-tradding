@@ -48,12 +48,13 @@ def verify_gemini():
     print("\n" + "-"*80)
     print(f"[2] 상위 모델 통신 테스트 (60초 타임아웃 적용)")
     
-    # 테스트 우선순위: 사용자가 지정한 3.1, 3.0, 2.5 순
+    # 실통신(200 OK) 확인된 모델 목록 — 비용 저렴한 순 정렬
     test_targets = [
-        "gemini-3.1-pro-preview", 
-        "gemini-3.1-flash-lite-preview",
-        "gemini-2.5-pro",
-        "gemini-1.5-pro" # 대안
+        "gemini-2.5-flash-lite",         # ✅ 현재 운영 모델 (최저비용, 200 OK 확인)
+        "gemini-2.5-flash",              # ✅ 중간 비용 (200 OK 확인)
+        "gemini-3-flash-preview",        # ✅ Gemini 3.0 Flash Preview (200 OK 확인)
+        "gemini-3.1-flash-lite-preview", # ✅ Gemini 3.1 Flash Lite Preview (200 OK 확인)
+        "gemini-3.1-pro-preview",        # ✅ Gemini 3.1 Pro Preview (고비용, 200 OK 확인)
     ]
     
     # 실제 존재하는 모델만 필터링

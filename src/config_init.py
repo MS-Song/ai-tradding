@@ -30,7 +30,8 @@ def get_config():
                 "amount_per_trade": int(env_data.get("AI_AMOUNT_PER_TRADE", 500000)),
                 "min_score": float(env_data.get("AI_MIN_SCORE", 60.0)),
                 "max_investment_per_stock": int(env_data.get("AI_MAX_INVESTMENT_PER_STOCK", 2000000)),
-                "auto_mode": env_data.get("AI_AUTO_MODE", "FALSE") == "TRUE"
+                "auto_mode": env_data.get("AI_AUTO_MODE", "FALSE") == "TRUE",
+                "auto_apply": env_data.get("AUTO_APPLY_AI_STRATEGY", "FALSE") == "TRUE"
             },
             "starter_kit": {
                 "budget_per_stock": int(env_data.get("STARTER_KIT_BUDGET", 1000000)),

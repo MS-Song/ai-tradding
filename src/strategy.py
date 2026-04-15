@@ -474,7 +474,7 @@ class VibeAlphaEngine:
 class GeminiAdvisor:
     def __init__(self, api):
         self.api = api
-        self.model_id = "gemini-3.1-flash-lite-preview"
+        self.model_id = "gemini-2.5-flash-lite"  # 비용 최적화: 실통신 확인된 2.5 Flash-Lite (최저비용 GA)
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
 
     def get_advice(self, market_data: dict, vibe: str, holdings: List[dict], current_config: dict, recs: List[dict] = None) -> Optional[str]:
@@ -948,9 +948,9 @@ class VibeStrategy:
                         if 'is_p3_processed' not in s: s['is_p3_processed'] = False
                     if "ai_config" in d: 
                         self.ai_config.update(d["ai_config"])
-                        # .env 우선순위 적용 (새로 추가된 필드 대응)
-                        if "auto_apply" not in d["ai_config"]:
-                            self.ai_config["auto_apply"] = self.base_config.get("ai_config", {}).get("auto_apply", False)
+                        # auto_apply는 S:셋업(.env)에서 설정하는 값이 항상 우선 적용됨
+                        # trading_state.json 값과 관계없이 .env(base_config) 값을 덮어씀
+                        self.ai_config["auto_apply"] = self.base_config.get("ai_config", {}).get("auto_apply", False)
                     if "bear_config" in d: self.recovery_eng.config.update(d["bear_config"])
                     if "bull_config" in d: self.bull_config.update(d["bull_config"])
                     self._last_closing_bet_date = d.get("last_closing_bet_date")
