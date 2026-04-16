@@ -291,29 +291,100 @@ class VibeAlphaEngine:
         self._lock = threading.Lock()
 
     def analyze(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], min_score: float = 60.0, progress_cb: Optional[Callable] = None, kr_vibe: str = "Neutral", market_data: dict = None, on_item_found: Optional[Callable] = None) -> List[dict]:
-        # ... (상단 로직 생략) ...
-        try:
-            # 병렬 처리로 지표와 1차 점수 수집
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                list(executor.map(fetch_detail_and_score, candidates))
+        """인기/급증 테마 및 수급 분석을 통해 실시간 추천 종목/ETF 리스트 생성 (비동기 처리)"""
+        from src.theme_engine import get_theme_for_stock
 
-            # 1차 필터링된 종목 중 Top N개 선별
-            top_stocks = sorted(stocks_pool, key=lambda x: x['score'], reverse=True)[:10]
-            top_etfs = sorted(etfs_pool, key=lambda x: x['score'], reverse=True)[:3]
+        combined = hot_raw + vol_raw
+        candidates = []
+        seen = set()
+
+        # 테마 카운트 맵핑 (테마점수 산정용)
+        theme_count_map = {t['name']: t['count'] for t in themes}
+
+        for item in combined:
+            code = item['code']
+            if code in seen: continue
+            seen.add(code)
+            if not (len(code) == 6 and code.isdigit()): continue
+
+            # 해당 종목의 테마 결정
+            theme_name = get_theme_for_stock(code, item.get('name', ''))
+            theme_count = theme_count_map.get(theme_name, 1)
+            my_theme = {"name": theme_name, "count": theme_count}
+
+            is_hot = any(x['code'] == code for x in hot_raw)
+            candidates.append((item, my_theme, is_hot))
+
+        # 상세 데이터 수집 및 1차 점수 산정 (병렬 처리)
+        current = 0
+        total = len(candidates)
+        lock = threading.Lock()
+
+        stocks_pool, etfs_pool = [], []
+
+        def fetch_detail_and_score(cand):
+            nonlocal current
+            item, my_theme, is_hot = cand
+            code = item['code']
+
+            # 상세 데이터 수집 (캐시 활용)
+            detail = self.api.get_naver_stock_detail(code)
             
-            # 2차: AI 감성 분석 (Gemini Advisor 연동)
-            if self.ai_advisor and top_stocks:
-                total_ai = len(top_stocks)
-                curr_ai = 0
-                def apply_sentiment(stock_item):
-                    pass # AI 감성 분석 (실제 구현은 생략됨)
-                
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    list(executor.map(apply_sentiment, top_stocks))
-        except RuntimeError:
-            return [] # 종료 시 빈 리스트 반환
-        
-        # ... (이하 로직 유지) ...
+            # 입체 점수 산정 (장세 기반 보정 포함)
+            item_score = self._calculate_ai_score(item, my_theme, False, kr_vibe, market_data, detail, is_hot)
+
+            is_etf = any(ex in item['name'].upper() for ex in ["KODEX", "TIGER", "KBSTAR", "ACE", "RISE", "SOL", "HANARO"])
+            is_inverse = "인버스" in item['name']
+
+            # 하락장/방어장에선 인버스 ETF 가점, 상승장에선 페널티
+            if is_inverse:
+                if kr_vibe.upper() in ["BEAR", "DEFENSIVE"]: item_score += 10.0
+                else: item_score -= 50.0
+
+            with lock:
+                current += 1
+                if progress_cb:
+                    progress_cb(current, total, f"분석 중: {item['name']}")
+
+            if item_score >= min_score:
+                res = {**item, "score": item_score, "theme": my_theme['name'], "is_gem": False, "reason": f"{my_theme['name']} 테마 수급 및 지표 우수"}
+                if not is_etf:
+                    with lock: stocks_pool.append(res)
+                    if on_item_found: on_item_found(res)
+                else:
+                    with lock: etfs_pool.append(res)
+                    if on_item_found: on_item_found(res)
+
+        # 병렬 처리로 지표와 1차 점수 수집
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            list(executor.map(fetch_detail_and_score, candidates))
+
+        # 1차 필터링된 종목 중 Top N개 선별
+        top_stocks = sorted(stocks_pool, key=lambda x: x['score'], reverse=True)[:10]
+        top_etfs = sorted(etfs_pool, key=lambda x: x['score'], reverse=True)[:3]
+
+        # 2차: AI 감성 분석 (Gemini Advisor 연동)
+        if self.ai_advisor and top_stocks:
+            total_ai = len(top_stocks)
+            def apply_sentiment(stock_item):
+                news = self.api.get_naver_stock_news(stock_item['code'])
+                if news:
+                    news_txt = " ".join(news[:5])
+                    # 간단한 호재/악재 키워드 매칭 (1차 필터링)
+                    pos = sum(1 for n in ["공급", "계약", "수주", "흑자", "상향", "독점", "MOU", "승인", "증설", "신공장", "투자", "상승", "기대", "호실적", "돌파", "편입", "추천"] if n in news_txt)
+                    neg = sum(1 for n in ["적자", "하향", "취소", "위반", "횡령", "조사", "금지", "급락", "우려", "경고", "불발", "결렬", "이탈", "매도", "축소", "중단"] if n in news_txt)
+                    stock_item['score'] += (pos * 2.0) - (neg * 3.0)
+                    if pos > 0: stock_item['reason'] = f"뉴스 모멘텀 포착 | {stock_item['reason']}"
+                    if pos > 3: stock_item['is_gem'] = True
+
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                list(executor.map(apply_sentiment, top_stocks))
+
+        # 최종 추천 리스트 확정 (8개 종목 + 2개 ETF)
+        final_stocks = sorted(top_stocks, key=lambda x: x['score'], reverse=True)[:8]
+        final_etfs = sorted(top_etfs, key=lambda x: x['score'], reverse=True)[:2]
+
+        return final_stocks + final_etfs
 
     def _calculate_ai_score(self, stock: dict, theme: dict, is_gem: bool, kr_vibe: str = "Neutral", market_data: dict = None, detail: dict = None, is_hot: bool = False) -> float:
         """종목별 입체 점수 산정 (테마 + 등락률 + 실시간 수급 모멘텀 + 펀더멘털 + 장세 기반 보정)"""
@@ -1016,8 +1087,7 @@ class VibeStrategy:
             # 표준 모드: 프리셋 해제 (기본 전략으로 복귀)
             if code in self.preset_strategies:
                 del self.preset_strategies[code]
-                name_txt = f" {name}" if name else ""
-                trading_log.log_config(f"전략 해제: [{code}]{name_txt} (표준 복귀)")
+                trading_log.log_config(f"전략 해제: [{code}]{name} -> 표준 복귀")
         else:
             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             use_tp = tp if tp is not None else preset["default_tp"]
@@ -1032,8 +1102,7 @@ class VibeStrategy:
                 "deadline": self._calculate_deadline(preset_id, now_str, lifetime_mins),
                 "is_p3_processed": False
             }
-            name_txt = f" {name}" if name else ""
-            trading_log.log_config(f"전략 할당: [{code}]{name_txt} ({preset['name']}) | TP:{use_tp}% SL:{use_sl}%")
+            trading_log.log_config(f"전략 할당: [{code}]{name} -> {preset['name']} | TP:{use_tp}% SL:{use_sl}%")
         self._save_all_states()
         return True
 

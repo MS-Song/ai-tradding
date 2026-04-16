@@ -169,6 +169,13 @@ def perform_interaction(key, api, strategy, dm, cycle):
     flush_input(); mode = (key[-1] if 'alt+' in key else key).lower()
     if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's']: return
     
+    # [수정] tw, th를 미리 계산하여 사용 가능하게 함
+    try:
+        size = os.get_terminal_size()
+        tw, th = size.columns, size.lines
+    except:
+        tw, th = 80, 24
+
     # [수정] 보유 종목 리스트를 미리 정의하여 모든 모드에서 참조 가능하게 함
     f_h = dm.cached_holdings if dm.ranking_filter == "ALL" else [h for h in dm.cached_holdings if get_market_name(h.get('pdno','')) == dm.ranking_filter]
 
@@ -212,19 +219,18 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 target_code = res
             
             if target_code:
-                def run_analysis_task():
+                def run_analysis_task(t_code):
                     dm.is_full_screen_active = True
                     dm.set_busy("종목 분석 중")
                     try:
                         restore_terminal_settings()
-                        size = os.get_terminal_size(); tw, th = size.columns, size.lines
-                        from src.ui.renderer import draw_stock_analysis
-                        draw_stock_analysis(strategy, dm, target_code, tw, th)
+                        size = os.get_terminal_size(); tw_a, th_a = size.columns, size.lines
+                        draw_stock_analysis(strategy, dm, t_code, tw_a, th_a)
                         enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
                     finally:
                         dm.clear_busy()
                         dm.is_full_screen_active = False
-                threading.Thread(target=run_analysis_task, daemon=True).start()
+                threading.Thread(target=run_analysis_task, args=(target_code,), daemon=True).start()
         return
 
     # 환경 설정

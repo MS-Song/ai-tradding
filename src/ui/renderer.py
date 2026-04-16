@@ -322,6 +322,11 @@ def draw_trading_logs(strategy, dm, tw, th):
     buf = io.StringIO(); buf.write("\033[H\033[2J")
     buf.write("\033[44;37m" + align_kr(" [TRADING HISTORY & SYSTEM LOGS] ", tw, 'center') + "\033[0m\n\n")
     
+    # [수정] 가용 높이 계산 (여유분 조정)
+    available_h = max(5, th - 10)
+    trade_h = int(available_h * 0.65)
+    config_h = int(available_h * 0.25)
+    
     buf.write("\033[1;93m [최근 거래 내역 (TRADE)]\033[0m\n")
     trades = trading_log.data.get("trades", [])
     if not trades:
@@ -329,21 +334,19 @@ def draw_trading_logs(strategy, dm, tw, th):
     else:
         header = f"{align_kr('시간', 20)} | {align_kr('구분', 10)} | {align_kr('종목명(코드)', 22)} | {align_kr('체결가', 10)} | {align_kr('수량', 6)} | {align_kr('수익금', 12)} | 메모"
         buf.write("\033[1m" + header + "\033[0m\n" + "-" * tw + "\n")
-        trade_max_height = int(th * 0.7)
-        for t in reversed(trades[-trade_max_height:]):
+        
+        # 최신 내역(0번 인덱스부터)을 순서대로 출력 (최신이 상단)
+        for t in trades[:trade_h]:
             t_type = t.get('type', 'Unknown')
             t_color = "\033[91m" if "매수" in t_type else "\033[94m" if "매도" in t_type or "익절" in t_type or "손절" in t_type else ""
             p_val = t.get('profit', 0)
             p_color = "\033[91m" if p_val > 0 else "\033[94m" if p_val < 0 else ""
             p_str = f"{p_color}{int(p_val):+,}원\033[0m" if p_val != 0 else "-"
-            
-            # 종목명과 코드 결합하여 시인성 확보
             name_val = t.get('name', '-')
             code_val = t.get('code', '')
             name_code_txt = f"[{code_val}] {name_val}" if code_val else name_val
-            
             line = f"{t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(name_code_txt, 22)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {t.get('memo', '')}"
-            buf.write(line + "\n")
+            buf.write(line[:tw] + "\n")
             
     buf.write("\n" + "=" * tw + "\n\n")
     buf.write("\033[1;96m [시스템 설정 및 전략 변경 (CONFIG)]\033[0m\n")
@@ -351,8 +354,9 @@ def draw_trading_logs(strategy, dm, tw, th):
     if not configs:
         buf.write("  변경 이력이 없습니다.\n")
     else:
-        for c in configs[:10]:
-            buf.write(f"  [{c.get('time', '-')}] {c.get('content', '')}\n")
+        # 최신 설정 변경 로그 순서대로 출력
+        for c in configs[:config_h]:
+            buf.write(f"  [{c.get('time', '-')}] {c.get('content', '')[:tw-25]}\n")
             
     buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
     sys.stdout.write(buf.getvalue()); sys.stdout.flush()
