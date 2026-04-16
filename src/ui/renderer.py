@@ -29,7 +29,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     version_text = "[AI TRADING SYSTEM ver 1.1.24]"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_text = f"분석: {strategy.analysis_status_msg}" if hasattr(strategy, 'analysis_status_msg') else "분석: -"
-    work_text = f"작업: {strategy.current_action if hasattr(strategy, 'current_action') else '-'}"
+    work_text = f"작업: {dm.global_busy_msg if hasattr(dm, 'global_busy_msg') and dm.global_busy_msg else '-'}"
     thread_count = threading.active_count()
     
     # 시간 정보: 년-월-일(요일-한글1자) 시:분:초
@@ -291,9 +291,11 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     while rem > 0: buf.write("\033[K\n"); rem -= 1
     lines = buf.getvalue().split('\n')
     if lines and not lines[-1]: lines.pop()
-    sys.stdout.write("\033[H")
-    for i in range(min(th, len(lines))): sys.stdout.write(lines[i] + "\033[K" + ("\n" if i < th-1 and i < len(lines)-1 else ""))
-    sys.stdout.flush(); buf.close()
+    with dm.ui_lock:
+        sys.stdout.write("\033[H")
+        for i in range(min(th, len(lines))): sys.stdout.write(lines[i] + "\033[K" + ("\n" if i < th-1 and i < len(lines)-1 else ""))
+        sys.stdout.flush()
+    buf.close()
 
 def draw_manual_page(tw, th):
     buf = io.StringIO(); buf.write("\033[H\033[2J")

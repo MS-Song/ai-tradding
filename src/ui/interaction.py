@@ -135,7 +135,6 @@ def draw_stock_analysis(strategy, dm, code, tw, th):
     else: sys.stdout.write("  - 최근 소식 없음\n")
     sys.stdout.write("-" * tw + "\n\n"); sys.stdout.flush()
     dm.show_status("🧠 AI가 분석을 위해 데이터를 확인 중입니다...")
-    sys.stdout.write("\033[1;95m 🤖 AI가 확인 중입니다... (데이터 분석)\033[0m\n"); sys.stdout.flush(); time.sleep(0.5)
     sys.stdout.write("\033[1;95m 🤖 AI가 확인 중입니다... (리포트 생성)\033[0m\n"); sys.stdout.flush()
     report = strategy.ai_advisor.get_stock_report_advice(code, name, detail, news)
     if report:
@@ -153,6 +152,8 @@ def get_input(dm, prompt, tw):
         dm.input_prompt = p
         dm.input_buffer = b
         dm.is_input_active = bool(p)
+        from src.ui.renderer import draw_tui
+        draw_tui(dm.strategy, dm, 0)
     res = input_with_esc(prompt, tw, callback=cb)
     dm.is_input_active = False
     return res
