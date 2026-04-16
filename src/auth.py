@@ -88,7 +88,24 @@ class KISAuth:
         try:
             res = requests.post(url, headers=headers, json=body, timeout=10)
             if res.status_code != 200:
-                logger.error(f"❌ 토큰 발급 실패 (HTTP {res.status_code}): {res.text}")
+                err_msg = ""
+                try: err_msg = res.json().get("error_description", res.text)
+                except: err_msg = res.text
+                logger.error(f"❌ 토큰 발급 실패 (HTTP {res.status_code}): {err_msg}")
+                
+                if hasattr(self, 'on_error_message') and self.on_error_message:
+                    self.on_error_message(f"토큰 발급 에러: {err_msg}")
+                
+                # 1분당 1회 초과 등의 에러면 3초 대기 후 한 번 재시도
+                if getattr(self, '_is_retrying', False) is False:
+                    self._is_retrying = True
+                    if hasattr(self, 'on_error_message') and self.on_error_message:
+                        self.on_error_message("토큰 발급 제한. 3초 후 재시도합니다...")
+                    time.sleep(3)
+                    result = self.generate_token()
+                    self._is_retrying = False
+                    return result
+                
                 return False
             
             data = res.json()
@@ -101,6 +118,8 @@ class KISAuth:
             return True
         except Exception as e:
             logger.error(f"❌ 토큰 발급 에러: {e}")
+            if hasattr(self, 'on_error_message') and self.on_error_message:
+                self.on_error_message(f"토큰 발급 예외: {str(e)}")
             return False
 
     def get_auth_headers(self):
