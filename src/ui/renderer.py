@@ -2,6 +2,7 @@ import os
 import sys
 import io
 import time
+import threading
 from datetime import datetime
 from src.utils import is_market_open, is_us_market_open, get_visual_width, align_kr, ANSI_ESCAPE, get_market_name, get_key_immediate
 from src.theme_engine import get_cached_themes
@@ -20,30 +21,46 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     now_dt = datetime.now()
     k_st, u_st = ("OPEN" if is_market_open() else "CLOSED"), ("OPEN" if is_us_market_open() else "CLOSED")
     
-    m_label = "전체" if dm.ranking_filter == "ALL" else "코스피" if dm.ranking_filter == "KSP" else "코스닥" if dm.ranking_filter == "KDQ" else "미국"
+    # 필터 및 업데이트 텍스트 제거하고 분석 상태를 헤더 오른쪽 끝에 배치
     h_l = f" [AI TRADING SYSTEM] | {now_dt.strftime('%Y-%m-%d %H:%M:%S')} | KR:{k_st} | US:{u_st}"
-    h_r = f" ⏱️최근 업데이트: {dm.last_update_time} | 필터: {m_label} "
     
-    busy_txt = ""
-    if dm.global_busy_msg:
-        dm.busy_anim_step = (dm.busy_anim_step + 1) % 4
-        dots = "." * (dm.busy_anim_step + 1)
-        busy_txt = f"\033[1;33m{dm.global_busy_msg}{dots}\033[0;37;44m"
+    # [수정] 헤더바 레이아웃: 좌측 정보 | 시간 정보(우측 끝 고정)
+    # 버전/상태/작업 정보를 왼쪽에 배치, 시간과 스레드 카운트를 오른쪽 끝에 배치
+    version_text = "[AI TRADING SYSTEM ver 1.1.24]"
+    market_text = f"KR:{k_st} | US:{u_st}"
+    status_text = f"분석: {strategy.analysis_status_msg}" if hasattr(strategy, 'analysis_status_msg') else "분석: -"
+    work_text = f"작업: {strategy.current_action if hasattr(strategy, 'current_action') else '-'}"
+    thread_count = threading.active_count()
     
-    total_h_w = get_visual_width(h_l) + get_visual_width(h_r)
-    space_between = max(0, tw - total_h_w)
-    
-    if busy_txt:
-        busy_plain = ANSI_ESCAPE.sub('', busy_txt)
-        busy_w = get_visual_width(busy_plain)
-        l_pad = max(0, (space_between - busy_w) // 2)
-        r_pad = max(0, space_between - busy_w - l_pad)
-        header_line = h_l + " " * l_pad + busy_txt + " " * r_pad + h_r
-    else:
-        header_line = h_l + " " * space_between + h_r
+    # 시간 정보: 년-월-일(요일-한글1자) 시:분:초
+    def get_korean_weekday(dt):
+        return ["월", "화", "수", "목", "금", "토", "일"][dt.weekday()]
 
-    final_w = get_visual_width(header_line)
-    if final_w < tw: header_line += " " * (tw - final_w)
+    def get_time_text(dt, level):
+        wd = get_korean_weekday(dt)
+        if level == 0: return dt.strftime(f'%Y-%m-%d({wd}) %H:%M:%S')
+        if level == 1: return dt.strftime(f'%m-%d({wd}) %H:%M:%S')
+        if level == 2: return dt.strftime('%m-%d %H:%M:%S')
+        if level == 3: return dt.strftime('%H:%M:%S')
+        return ""
+
+    # 시간 정보 최적화 (공간 부족 시 단위 축소)
+    time_level = 0
+    time_text = ""
+    while time_level < 4:
+        time_text = get_time_text(now_dt, time_level)
+        # 오른쪽 고정 영역: (쓰레드) 시간
+        right_side = f" ({thread_count:02d}) {time_text} "
+        left_side = f"{version_text} | {market_text} | {status_text} | {work_text}"
+        
+        # 전체 길이 계산
+        header_line = left_side + " " * max(1, tw - get_visual_width(left_side) - get_visual_width(right_side)) + right_side
+        
+        if get_visual_width(header_line) <= tw:
+            break
+        time_level += 1
+    
+    header_line = header_line[:tw]
     buf.write("\033[44m" + header_line + "\033[0m\n")
     
     with dm.data_lock:
@@ -181,26 +198,28 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         
         y_recs = strategy.yesterday_recs_processed
         if y_recs:
-            recs_to_show = y_recs[:10]
-            for i in range(0, len(recs_to_show), 5):
+            # 변동률 기준 내림차순 정렬 (높은 수익률이 먼저 오도록)
+            sorted_recs = sorted(y_recs, key=lambda x: x['change'], reverse=True)[:10]
+            for i in range(0, len(sorted_recs), 5):
                 line_parts = []
-                chunk = recs_to_show[i:i+5]
-                item_w = (tw - 15) // 5
+                chunk = sorted_recs[i:i+5]
+                item_w = (tw - 20) // 5
                 for r in chunk:
-                    color = "\033[91m" if r['change'] >= 0 else "\033[94m"
-                    name = r['name']
-                    tag = f"[{r['code']}]"
-                    chg_tag = f"({color}{r['change']:+0.2f}%\033[0m)"
-                    base_w = get_visual_width(tag) + 8
+                    name = r['name']; code = r['code']; chg = r['change']
+                    color = "\033[91m" if chg >= 0 else "\033[94m"
+                    rate_str = f"{chg:>+4.1f}%"
+                    tag = f"[{code}]"
                     
-                    while get_visual_width(name) + base_w > item_w and len(name) > 2:
+                    # 규격 맞춤: [코드]종목명(수익률)
+                    base_w = get_visual_width(tag) + 8 # [코드] + (수익률) + 여백
+                    while get_visual_width(name) + base_w > item_w and len(name) > 1:
                         name = name[:-1]
-                    
                     if len(name) < len(r['name']): name += ".."
-                    line_parts.append(f"{tag}{name}{chg_tag}")
+                    
+                    line_parts.append(f"{tag}{name}({color}{rate_str}\033[0m)")
                 
-                label = " ☀️ 전일 추천 성과: " if i == 0 else " " * 18
-                buf.write(align_kr(f"\033[90m{label}{' | '.join(line_parts)}", tw) + "\033[0m\n")
+                label = " ☀️  전일 추천 성과: " if i == 0 else " " * 18
+                buf.write(align_kr(f"{label}{' | '.join(line_parts)}", tw) + "\n")
         else:
             buf.write(align_kr("\033[90m 🔍 전일 추천 내역이 없습니다.", tw) + "\033[0m\n")
 

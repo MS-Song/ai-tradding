@@ -176,8 +176,15 @@ class DataManager:
         
         while True:
             try:
+                # [추가] 매매 선행 분석 대기
+                if not self.strategy.is_ready:
+                    self.show_status("시장 분석 중... 대기 중입니다.")
+                    time.sleep(2)
+                    continue
+
                 curr_t = time.time()
                 h, a = self.api.get_full_balance(force=True)
+
                 if h or a.get('total_asset', 0) > 0:
                     with self.data_lock:
                         self.cached_holdings = h; self.cached_asset = a
@@ -252,21 +259,33 @@ class DataManager:
                                             break  # 거래 후 데이터 동기화를 위해 루프 탈출
 
                     if self.strategy.auto_ai_trade and self.strategy.ai_recommendations:
-                        top_ai = self.strategy.ai_recommendations[0]
+                        for top_ai in self.strategy.ai_recommendations:
+                            # 1. 인버스 필터 (평시 장세에서 인버스 스킵)
+                            if top_ai.get('is_inverse', False) and "defensive" not in vibe.lower() and "bear" not in vibe.lower():
+                                continue
 
-                        # 평시 장세(Bull/Neutral)에서 인버스 상품 추천 시 자동 매수 제외
-                        skip_auto_buy = False
-                        if top_ai.get('is_inverse', False) and "defensive" not in vibe.lower() and "bear" not in vibe.lower():
-                            skip_auto_buy = True
-                            self.add_log(f"보류: {top_ai['name']} (인버스 상품은 하락 방어장에서만 자동 매수)")
+                            # 2. 보유 현황 및 투자 한도 체크
+                            holding_item = next((h for h in self.cached_holdings if h['pdno'] == top_ai['code']), None)
+                            curr_eval = float(holding_item.get('evlu_amt', 0)) if holding_item else 0
+                            
+                            a_cfg = self.strategy.ai_config
+                            trade_amt = a_cfg.get("amount_per_trade", 500000)
+                            max_inv = a_cfg.get("max_investment_per_stock", 2000000)
+                            
+                            # (현재 평가금 + 매수 예정액)이 한도를 초과하면 다음 순위 종목으로
+                            if curr_eval + (trade_amt * 0.95) > max_inv:
+                                continue
 
-                        is_held = any(holding['pdno'] == top_ai['code'] for holding in self.cached_holdings)
-                        if not is_held and not skip_auto_buy:
+                            # 3. AI 최종 매수 컨펌 (추가 필터링)
+                            is_confirmed, refuse_reason = self.strategy.confirm_buy_decision(top_ai['code'], top_ai['name'])
+                            if not is_confirmed:
+                                self.add_trading_log(f"⚠️ AI매수거절: {top_ai['name']} | 사유: {refuse_reason}")
+                                continue
+
+                            # 4. 매매 실행
                             p = self.api.get_inquire_price(top_ai['code'])
-                            if p:
-                                a_cfg = self.strategy.ai_config
-                                amt = a_cfg.get("amount_per_trade", 500000)
-                                qty = math.floor(amt / p['price'])
+                            if p and p.get('price'):
+                                qty = math.floor(trade_amt / p['price'])
                                 if qty > 0:
                                     success, msg = self.api.order_market(top_ai['code'], qty, True)
                                     if success:
@@ -278,9 +297,11 @@ class DataManager:
                                         if preset_result:
                                             self.add_trading_log(f"📋 전략 자동적용: [{preset_result['preset_name']}] TP:{preset_result['tp']:+.1f}% SL:{preset_result['sl']:.1f}%")
                                         self.update_all_data(is_virtual, force=True)
+                                        break # 한 루프에 한 종목씩 안전하게 처리
                                     else:
                                         if "잔고가 부족" in msg: self.strategy.auto_ai_trade = False
                                         self.add_log(f"AI매수 실패: {msg}")
+                                        # 매수 실패 시 다음 순위 종목 시도 가능하도록 함 (필요시 continue)
 
                 self.last_update_time = datetime.now().strftime('%H:%M:%S')
             except Exception as e:

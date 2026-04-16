@@ -63,6 +63,11 @@ def get_theme_for_stock(code: str, name: str) -> str:
         if any(kw.lower() in name.lower() for kw in keywords):
             return theme
             
+    # 3. ETF 판별 (기타로 분류되기 전 우선 체크)
+    etf_keywords = ["ETF", "KODEX", "TIGER", "RISE", "ACE", "SOL", "HANARO", "KOSEF", "KBSTAR", "ARIRANG", "WOORI", "HANA", "PLUS"]
+    if any(kw.lower() in name.upper() for kw in etf_keywords):
+        return "ETF"
+
     return "기타"
 
 def save_theme_data(theme_map: dict):

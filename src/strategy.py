@@ -672,6 +672,28 @@ class GeminiAdvisor:
             except Exception as e: log_error(f"프리셋 시뮬레이션 파싱 오류: {e}")
         return None
 
+    def final_buy_confirm(self, code: str, name: str, vibe: str, detail: dict, news: List[str]) -> Tuple[bool, str]:
+        """매수 직전 AI에게 최종 컨펌을 요청합니다."""
+        detail_txt = f"현재가: {detail.get('price', 'N/A')}, PER: {detail.get('per', 'N/A')}, PBR: {detail.get('pbr', 'N/A')}, 등락률: {detail.get('rate', 'N/A')}%"
+        prompt = f"""
+        최종 매수 결정: 아래 종목을 지금 바로 매수해야 할까요?
+        [종목] {name}({code}) | {detail_txt}
+        [시장 장세] {vibe}
+        [최신 뉴스] {", ".join(news[:3]) if news else "없음"}
+        
+        [답변 형식]
+        결정: Yes 또는 No
+        사유: 한 줄 요약 (No인 경우 필수)
+        """
+        answer = self._safe_gemini_call(prompt)
+        if answer:
+            decision_match = re.search(r"결정[:\s]*(Yes|No)", answer, re.I)
+            reason_match = re.search(r"사유[:\s]*(.*)", answer)
+            decision = decision_match.group(1).strip().capitalize() if decision_match else "No"
+            reason = reason_match.group(1).strip() if reason_match else "AI 판단 근거 부족"
+            return (decision == "Yes"), reason
+        return False, "API 호출 실패"
+
     def verify_market_vibe(self, current_data: dict, heuristic_vibe: str) -> Optional[str]:
         prompt = f"""
         실시간 데이터를 바탕으로 현재 시장 Vibe를 한 단어로 답변하세요.
@@ -724,6 +746,7 @@ class VibeStrategy:
         self.preset_strategies: Dict[str, dict] = {}
         self.yesterday_recs_processed: List[dict] = []
         self._last_closing_bet_date = None
+        self.rejected_stocks: Dict[str, str] = {} # [추가] 당일 매수 거절 종목 {code: reason}
         
         # AI 설정 초기화 (사용자 검증 기반: Group 1 수정 반영)
         self.ai_config = {
@@ -741,6 +764,18 @@ class VibeStrategy:
                 "gemini-3.1-pro-preview"
             ])
         }
+        
+        # [추가] 매매 선행 분석 상태 관리
+        self.is_ready = not self.ai_config.get("auto_mode", False)
+        self.is_analyzing = False
+        self.last_market_analysis_time = 0.0
+        self.analysis_interval = 20
+        self.analysis_status_msg = "초기화 중..."
+        self.current_action = "대기중" # [추가] 현재 실행 중인 액션 상태
+
+
+
+
         
         # 2. 영속 상태(state) 로드
         self._load_all_states()
@@ -910,12 +945,25 @@ class VibeStrategy:
             del self.exit_mgr.manual_thresholds[code]
             self._save_all_states()
 
-    def apply_ai_strategy_to_all(self, data_manager):
-        """보유한 모든 종목에 AI 최적 전략 자동 할당"""
-        portfolio = data_manager.get_portfolio()
-        for code in portfolio:
-            self.auto_assign_preset(code, "")
-            # assign_preset가 내부에서 저장을 처리하므로 여기서 별도 저장 필요 없음
+    def perform_full_market_analysis(self, retry=True) -> bool:
+        """시장 분석을 선행하여 수치를 적용하고 is_ready 상태를 제어합니다."""
+        self.current_action = "전략분석"
+        try:
+            # 8:시황 분석 및 적용 로직 캡슐화 (기존 8번 기능 핵심 부분)
+            self.analyzer.update()
+            self.apply_ai_strategy_to_all(None) # DataManager 참조 없이 수행 가능하도록 리팩토링 필요시 조정
+            self.last_market_analysis_time = time.time()
+            self.is_ready = True
+            logger.info("시장 분석 완료 및 전략 적용 성공")
+            self.current_action = "대기중"
+            return True
+        except Exception as e:
+            # [긴급 조치] 에러 발생 시 로그를 남기고 즉시 매매 모드로 진입(멈춤 방지)
+            log_error(f"시장 분석 실패 (진입 차단 해제): {e}")
+            self.is_ready = True 
+            self.current_action = "대기중"
+            return False
+
 
     def determine_market_trend(self): return self.analyzer.update()
     def save_manual_thresholds(self): self._save_all_states()
@@ -1025,19 +1073,27 @@ class VibeStrategy:
         self._save_all_states()
         return True
     
-    def auto_assign_preset(self, code: str, name: str) -> Optional[dict]:
-        """AI를 활용하여 종목에 최적 프리셋 전략 자동 할당 (자동매수 시 호출)"""
-        try:
-            detail = self.api.get_naver_stock_detail(code)
-            news = self.api.get_naver_stock_news(code)
-            vibe = self.current_market_vibe
-            result = self.ai_advisor.simulate_preset_strategy(code, name, vibe, detail, news)
-            if result:
-                self.assign_preset(code, result["preset_id"], result["tp"], result["sl"], result["reason"], result.get("lifetime_mins"), name=name)
-                return result
-        except Exception as e:
-            log_error(f"자동 프리셋 할당 오류: {e}")
-        return None
+    def confirm_buy_decision(self, code: str, name: str) -> Tuple[bool, str]:
+        """매수 전 AI에게 최종 의사를 묻고 거절 시 사유를 기록합니다."""
+        # 1. 이미 당일 거절된 종목인지 체크
+        if code in self.rejected_stocks:
+            return False, f"당일 매수 거절됨: {self.rejected_stocks[code]}"
+        
+        # 2. AI 최종 컨펌 요청
+        detail = self.api.get_naver_stock_detail(code)
+        news = self.api.get_naver_stock_news(code)
+        vibe = self.current_market_vibe
+        
+        is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, vibe, detail, news)
+        
+        if not is_confirmed:
+            self.rejected_stocks[code] = reason
+            self._save_all_states()
+            # 거절 로그 기록
+            trading_log.log_config(f"❌ AI 매수 거절: [{code}]{name} | 사유: {reason}")
+            return False, reason
+            
+        return True, "승인됨"
 
     def record_buy(self, code, price):
         self.recovery_eng.last_avg_down_prices[code] = price
@@ -1264,15 +1320,28 @@ class VibeStrategy:
             
             # [Task 4] 시간 기반 자동 매매 액션 구현
             if p_strat:
-                # 1. Time-Stop 체크: 데드라인 초과 시 TP 하향 (수익 보존)
+                # 1. Time-Stop 체크: 데드라인 초과 시 AI 기반 전략 재수립
                 if p_strat.get('deadline') and now_str > p_strat['deadline']:
-                    curr_rt = float(item.get("evlu_pfls_rt", 0.0))
-                    if curr_rt >= 0.5:
-                        p_strat['tp'] = max(0.5, curr_rt / 2.0)
-                        results.append(f"Time-Stop TP 하향: {item.get('prdt_name')} ({p_strat['tp']:.1f}%)")
-                    # 처리가 완료된 종목은 deadline을 None으로 설정하여 중복 실행 방지
-                    p_strat['deadline'] = None 
+                    logger.info(f"Time-Stop: {item.get('prdt_name')} 전략 만료, 재분석 실행")
+                    # 재분석 성공 시 새 전략 적용
+                    success = self.auto_assign_preset(code, item.get('prdt_name'))
+                    
+                    if not success:
+                        # 재수립 실패 시 기존 수익 보존 로직(Fallback) 수행
+                        logger.warning(f"전략 재수립 실패: {item.get('prdt_name')} 기존 로직으로 수익 보존")
+                        curr_rt = float(item.get("evlu_pfls_rt", 0.0))
+                        if curr_rt >= 0.5:
+                            p_strat['tp'] = max(0.5, curr_rt / 2.0)
+                            results.append(f"Time-Stop TP 하향(Fallback): {item.get('prdt_name')} ({p_strat['tp']:.1f}%)")
+                        
+                        # Fallback 적용 후 데드라인을 None으로 처리하여 무한 루프 방지
+                        p_strat['deadline'] = None 
+                    else:
+                        results.append(f"🔄 전략 자동 갱신: {item.get('prdt_name')}")
+                    
                     self._save_all_states()
+
+
 
                 # 2. Phase 3 (CONCLUSION): 수익권 50% 분할 매도 및 SL 상향 (프리셋 종목)
                 if phase['id'] == "P3" and not p_strat.get('is_p3_processed'):
@@ -1393,6 +1462,7 @@ class VibeStrategy:
                     sell_qty = int(item.get('hldg_qty', 0))
 
             if action and not skip_trade and sell_qty > 0:
+                self.current_action = f"{action}실행"
                 success, msg = self.api.order_market(code, sell_qty, False)
                 if success:
                     reason_str = f"({action_reason})" if action_reason else ""
@@ -1412,4 +1482,5 @@ class VibeStrategy:
                     
                     self._save_all_states()
                     results.append(f"자동 {action}{reason_str}: {item.get('prdt_name')} {sell_qty}주")
+                self.current_action = "대기중"
         return results
