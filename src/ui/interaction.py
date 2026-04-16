@@ -169,13 +169,16 @@ def perform_interaction(key, api, strategy, dm, cycle):
     flush_input(); mode = (key[-1] if 'alt+' in key else key).lower()
     if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's']: return
     
+    # [수정] 보유 종목 리스트를 미리 정의하여 모든 모드에서 참조 가능하게 함
+    f_h = dm.cached_holdings if dm.ranking_filter == "ALL" else [h for h in dm.cached_holdings if get_market_name(h.get('pdno','')) == dm.ranking_filter]
+
     # 즉시 종료
     if mode == 'q':
         restore_terminal_settings(); exit_alt_screen()
         print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다."); os._exit(0)
     
-    # 화면 전환 커맨드
-    if mode in ['m', 'l', 'b', 'd', 'h', '7']:
+    # 화면 전환 커맨드 (리포트/로그 등 즉시 전환)
+    if mode in ['m', 'l', 'b', 'd', 'h']:
         def run_display_task():
             dm.is_full_screen_active = True
             dm.set_busy(f"{mode} 처리")
@@ -189,22 +192,39 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 elif mode == 'b': draw_holdings_detail(strategy, dm, tw, th)
                 elif mode == 'd': draw_recommendation_report(strategy, dm, tw, th)
                 elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw, th)
-                elif mode == '7':
-                    res = get_input(dm, "> 분석할 종목 번호 또는 코드(6자리) 입력: ", tw)
-                    target_code = ""
-                    if res:
-                        res = res.strip()
-                        if res.isdigit() and len(res) <= 3: # 번호(인덱스)
-                            idx = int(res)
-                            if 0 < idx <= len(f_h): target_code = f_h[idx-1]['pdno']
-                        elif len(res) == 6: # 종목코드
-                            target_code = res
-                    if target_code: draw_stock_analysis(strategy, dm, target_code, tw, th)
                 enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
             finally: 
                 dm.clear_busy()
                 dm.is_full_screen_active = False
         threading.Thread(target=run_display_task, daemon=True).start()
+        return
+
+    # [수정] 7번(종목분석)은 입력을 먼저 받고 전체 화면으로 전환
+    if mode == '7':
+        res = get_input(dm, "> 분석할 종목 번호 또는 코드(6자리) 입력: ", tw)
+        if res:
+            res = res.strip()
+            target_code = ""
+            if res.isdigit() and len(res) <= 3: # 번호(인덱스)
+                idx = int(res)
+                if 0 < idx <= len(f_h): target_code = f_h[idx-1]['pdno']
+            elif len(res) == 6: # 종목코드
+                target_code = res
+            
+            if target_code:
+                def run_analysis_task():
+                    dm.is_full_screen_active = True
+                    dm.set_busy("종목 분석 중")
+                    try:
+                        restore_terminal_settings()
+                        size = os.get_terminal_size(); tw, th = size.columns, size.lines
+                        from src.ui.renderer import draw_stock_analysis
+                        draw_stock_analysis(strategy, dm, target_code, tw, th)
+                        enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
+                    finally:
+                        dm.clear_busy()
+                        dm.is_full_screen_active = False
+                threading.Thread(target=run_analysis_task, daemon=True).start()
         return
 
     # 환경 설정

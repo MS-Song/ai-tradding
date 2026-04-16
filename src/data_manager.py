@@ -9,6 +9,7 @@ class DataManager:
     def __init__(self, api, strategy):
         self.api = api
         self.strategy = strategy
+        self.is_running = True # [추가] 실행 상태 플래그
         
         # --- 전역 상태 및 데이터 캐시 ---
         self.status_msg = ""
@@ -128,7 +129,7 @@ class DataManager:
 
     # --- 데이터 업데이트 스레드 (지수 및 네이버 랭킹 전담: Naver/Yahoo) ---
     def index_update_worker(self):
-        while True:
+        while self.is_running:
             curr_t = time.time()
 
             # 1) 시장 트렌드 분석 (실패해도 나머지 진행)
@@ -141,6 +142,7 @@ class DataManager:
                 self.last_times["index"] = curr_t
                 kospi_info = self.cached_market_data.get("KOSPI")
                 self.is_kr_market_active = kospi_info.get("status") == "02" if (kospi_info and "status" in kospi_info) else is_market_open()
+            except RuntimeError: break # 종료 시 즉시 중단
             except Exception as e:
                 from src.logger import log_error
                 log_error(f"Market Trend Update Error: {e}")
@@ -154,6 +156,7 @@ class DataManager:
                     self.cached_hot_raw = h_raw
                     self.cached_vol_raw = v_raw
                 self.last_times["ranking"] = curr_t
+            except RuntimeError: break
             except Exception as e:
                 from src.logger import log_error
                 log_error(f"Hot/Vol Ranking Update Error: {e}")
@@ -163,6 +166,7 @@ class DataManager:
             try:
                 self.strategy.update_ai_recommendations(themes, h_raw, v_raw, progress_cb=None)
                 self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
+            except RuntimeError: break
             except Exception as e:
                 from src.logger import log_error
                 log_error(f"AI Rec Update Error: {e}")
@@ -174,7 +178,7 @@ class DataManager:
         import math
         self.update_all_data(is_virtual, force=True)
         
-        while True:
+        while self.is_running:
             try:
                 # [추가] 매매 선행 분석 대기
                 if not self.strategy.is_ready:
@@ -275,8 +279,17 @@ class DataManager:
                             # (현재 평가금 + 매수 예정액)이 한도를 초과하면 다음 순위 종목으로
                             if curr_eval + (trade_amt * 0.95) > max_inv:
                                 continue
+                            
+                            # [수정] 매수 쿨타임 체크 (10분으로 단축)
+                            last_buy_t = self.strategy.last_buy_times.get(top_ai['code'], 0)
+                            if time.time() - last_buy_t < 600: # 10분
+                                continue
 
-                            # 3. AI 최종 매수 컨펌 (추가 필터링)
+                            # [추가] 이미 거절된 종목은 로깅 없이 즉시 스킵
+                            if top_ai['code'] in self.strategy.rejected_stocks:
+                                continue
+
+                            # 3. AI 최종 매수 컨펌 (최초 거절 시에만 로깅됨)
                             is_confirmed, refuse_reason = self.strategy.confirm_buy_decision(top_ai['code'], top_ai['name'])
                             if not is_confirmed:
                                 self.add_trading_log(f"⚠️ AI매수거절: {top_ai['name']} | 사유: {refuse_reason}")
@@ -292,6 +305,8 @@ class DataManager:
                                         from src.logger import trading_log
                                         trading_log.log_trade("AI자율매수", top_ai['code'], top_ai['name'], p['price'], qty, "AI 추천 기반 자율 매수")
                                         self.add_trading_log(f"✨ AI자율매수: {top_ai['name']} {qty}주 선점")
+                                        # [중요] 매수 시각 기록하여 쿨타임 발동
+                                        self.strategy.record_buy(top_ai['code'], p['price'])
                                         # 자동 매수 성공 → 프리셋 전략 자동 할당
                                         preset_result = self.strategy.auto_assign_preset(top_ai['code'], top_ai['name'])
                                         if preset_result:
@@ -311,7 +326,7 @@ class DataManager:
 
     def theme_update_worker(self):
         """테마 데이터를 주기적으로 크롤링하여 파일로 저장 (Naver Finance)"""
-        while True:
+        while self.is_running:
             try:
                 from src.theme_engine import save_theme_data
                 self.set_busy("테마 데이터 수집")

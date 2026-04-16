@@ -45,26 +45,34 @@ def main():
             if not strategy.is_analyzing and (time.time() - strategy.last_market_analysis_time) > (interval * 60):
                 threading.Thread(target=strategy.perform_full_market_analysis, daemon=True).start()
             
-            # 종료 로직: 루프 내에서 직접 키 입력 확인
-            k = get_key_immediate()
-            if k == 'q':
-                try: tw = os.get_terminal_size().columns
-                except: tw = 110
-                sys.stdout.write("\033[H\033[2J" + align_kr(" 시스템을 종료합니다. 잠시만 기다려주세요... ", tw, 'center') + "\n")
-                sys.stdout.flush()
-                time.sleep(1)
-                break
-            elif k:
-                # 일반 입력 처리
-                if not dm.is_input_active:
-                    threading.Thread(target=perform_interaction, args=(k, api, strategy, dm, cycle), daemon=True).start()
-
             for i in range(10): # 약 5초마다 대기 (0.5s * 10)
+                # [수정] 전체 화면 모드(리포트/분석 등)일 때는 메인 TUI를 그리지 않고 키 입력도 대기함
+                if dm.is_full_screen_active:
+                    time.sleep(0.5)
+                    continue
+
                 draw_tui(strategy, dm, cycle)
-                # ... 기존 로직 유지 ...
+                
+                # 대기 루프 내부에서 키 입력을 수시로 체크하여 반응성 확보
+                k = get_key_immediate()
+                if k == 'q':
+                    dm.is_running = False # [추가] 백그라운드 스레드 정지 신호
+                    try: tw = os.get_terminal_size().columns
+                    except: tw = 110
+                    sys.stdout.write("\033[H\033[2J" + align_kr(" 시스템을 종료합니다. 잠시만 기다려주세요... ", tw, 'center') + "\n")
+                    sys.stdout.flush()
+                    time.sleep(1)
+                    return # main 함수 종료
+                elif k:
+                    if not dm.is_input_active:
+                        threading.Thread(target=perform_interaction, args=(k, api, strategy, dm, cycle), daemon=True).start()
+                
                 time.sleep(0.5)
-    except KeyboardInterrupt: pass
-    finally: restore_terminal_settings(); exit_alt_screen()
+    except KeyboardInterrupt: 
+        dm.is_running = False
+    finally: 
+        dm.is_running = False
+        restore_terminal_settings(); exit_alt_screen()
 
 if __name__ == "__main__":
     main()
