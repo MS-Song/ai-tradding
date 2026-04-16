@@ -306,7 +306,7 @@ class VibeAlphaEngine:
                 total_ai = len(top_stocks)
                 curr_ai = 0
                 def apply_sentiment(stock_item):
-                    # ... (생략) ...
+                    pass # AI 감성 분석 (실제 구현은 생략됨)
                 
                 with ThreadPoolExecutor(max_workers=5) as executor:
                     list(executor.map(apply_sentiment, top_stocks))
@@ -427,6 +427,7 @@ class GeminiAdvisor:
                 if res.status_code == 200:
                     result = res.json()
                     if 'candidates' in result and result['candidates']:
+                        self.last_used_model_id = model_id
                         return result['candidates'][0]['content']['parts'][0]['text'].strip()
                 last_error = f"HTTP {res.status_code}"
             except Exception as e:
@@ -594,9 +595,16 @@ class GeminiAdvisor:
 
     def final_buy_confirm(self, code: str, name: str, vibe: str, detail: dict, news: List[str]) -> Tuple[bool, str]:
         """매수 직전 AI에게 최종 컨펌을 요청합니다."""
-        detail_txt = f"현재가: {detail.get('price', 'N/A')}, PER: {detail.get('per', 'N/A')}, PBR: {detail.get('pbr', 'N/A')}, 등락률: {detail.get('rate', 'N/A')}%"
+        detail_txt = (f"현재가: {detail.get('price', 'N/A')}, 등락률: {detail.get('rate', 'N/A')}%, "
+                      f"시가총액: {detail.get('market_cap', 'N/A')}, "
+                      f"PER: {detail.get('per', 'N/A')}, PBR: {detail.get('pbr', 'N/A')}, "
+                      f"배당수익률: {detail.get('yield', 'N/A')}, 업종PER: {detail.get('sector_per', 'N/A')}")
+        
         prompt = f"""
         최종 매수 결정: 아래 종목을 지금 바로 매수해야 할까요?
+        ⚠️주의⚠️: 제공된 '현재가'는 과거 학습 데이터가 아닌 방금 조회한 가장 최신 실시간 시장 가격입니다. 
+        모델이 알고 있는 과거 데이터와 괴리가 있더라도 절대 데이터 오류나 가치평가 불가로 판단하지 말고, 주어진 실시간 가격을 신뢰하여 매수 여부를 결정하세요.
+
         [종목] {name}({code}) | {detail_txt}
         [시장 장세] {vibe}
         [최신 뉴스] {", ".join(news[:3]) if news else "없음"}
@@ -611,6 +619,22 @@ class GeminiAdvisor:
             reason_match = re.search(r"사유[:\s]*(.*)", answer)
             decision = decision_match.group(1).strip().capitalize() if decision_match else "No"
             reason = reason_match.group(1).strip() if reason_match else "AI 판단 근거 부족"
+
+            # 모델 Prefix 생성
+            model_prefix = "[AI]"
+            if hasattr(self, 'last_used_model_id') and self.last_used_model_id:
+                m_id = self.last_used_model_id.lower()
+                if "gemini-2.5-flash-lite" in m_id: prefix = "G2.5FL"
+                elif "gemini-2.5-flash" in m_id: prefix = "G2.5F"
+                elif "gemini-3.1-flash-lite" in m_id: prefix = "G3.1FL"
+                elif "gemini-3.1-pro" in m_id: prefix = "G3.1P"
+                elif "gemini-3-flash" in m_id: prefix = "G3.0F"
+                elif "gemini-3" in m_id: prefix = "G3.0"
+                elif "gemini-2" in m_id: prefix = "G2.X"
+                else: prefix = "GEMINI"
+                model_prefix = f"[{prefix}]"
+
+            reason = f"{model_prefix} {reason}"
             return (decision == "Yes"), reason
         return False, "API 호출 실패"
 
