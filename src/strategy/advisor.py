@@ -199,11 +199,27 @@ class GeminiAdvisor:
                 if sid_match and tp_match and sl_match:
                     sid = sid_match.group(1)
                     if sid not in PRESET_STRATEGIES or sid == "00": sid = "01"
+                    
+                    # 모델 Prefix 생성
+                    model_prefix = "[AI]"
+                    if hasattr(self, 'last_used_model_id') and self.last_used_model_id:
+                        m_id = self.last_used_model_id.lower()
+                        if "gemini-2.5-flash-lite" in m_id: prefix = "G2.5FL"
+                        elif "gemini-2.5-flash" in m_id: prefix = "G2.5F"
+                        elif "gemini-3.1-flash-lite" in m_id: prefix = "G3.1FL"
+                        elif "gemini-3.1-pro" in m_id: prefix = "G3.1P"
+                        elif "gemini-3-flash" in m_id: prefix = "G3.0F"
+                        elif "gemini-3" in m_id: prefix = "G3.0"
+                        elif "gemini-2" in m_id: prefix = "G2.X"
+                        else: prefix = "GEMINI"
+                        model_prefix = f"[{prefix}]"
+
+                    reason = reason_match.group(1).strip() if reason_match else "AI 분석 기반 자동 선정"
                     return {
                         "preset_id": sid, "preset_name": PRESET_STRATEGIES[sid]["name"],
                         "tp": abs(float(tp_match.group(1))), "sl": -abs(float(sl_match.group(1))),
                         "lifetime_mins": int(lt_match.group(1)) if lt_match else 120,
-                        "reason": reason_match.group(1).strip() if reason_match else "AI 분석 기반 자동 선정"
+                        "reason": f"{model_prefix} {reason}"
                     }
             except Exception as e: log_error(f"프리셋 시뮬레이션 파싱 오류: {e}")
         return None
@@ -267,3 +283,63 @@ class GeminiAdvisor:
             for v in ["BULL", "BEAR", "NEUTRAL", "DEFENSIVE"]:
                 if v in answer_up: return v.capitalize()
         return None
+
+    def closing_sell_confirm(self, code: str, name: str, vibe: str, rt: float, detail: dict, news: List[str]) -> Tuple[bool, str]:
+        """P4 장 마감 10분 전, 보유 종목의 익일 수익 전망을 AI가 판단하여 매도/유지 결정.
+        Returns: (should_sell: bool, reason: str)
+        """
+        detail_txt = (f"현재가: {detail.get('price', 'N/A')}, 등락률: {detail.get('rate', 'N/A')}%, "
+                      f"PER: {detail.get('per', 'N/A')}, PBR: {detail.get('pbr', 'N/A')}, "
+                      f"배당수익률: {detail.get('yield', 'N/A')}, 업종PER: {detail.get('sector_per', 'N/A')}")
+
+        prompt = f"""
+        장 마감 10분 전입니다. 보유 종목을 오늘 청산할지, 내일까지 보유할지 결정하세요.
+        ⚠️중요⚠️: 제공된 데이터는 방금 조회한 실시간 시장 데이터입니다. 과거 학습 데이터와 괴리가 있어도 주어진 데이터를 신뢰하세요.
+
+        [종목] {name}({code}) | 현재 수익률: {rt:+.2f}%
+        [지표] {detail_txt}
+        [시장 장세] {vibe}
+        [최신 뉴스] {", ".join(news[:3]) if news else "없음"}
+
+        [판단 기준]
+        1. 내일 추가 상승 모멘텀(뉴스 호재, 실적, 테마 지속)이 있는가?
+        2. 현재 밸류에이션(PER/PBR)이 추가 상승 여력을 지지하는가?
+        3. 시장 장세(Vibe)가 내일도 우호적인가?
+        4. 수익률이 소폭이거나 하락 전환 조짐이 있는가?
+        5. 오버나이트 리스크 대비 보유 가치가 있는가?
+
+        [규칙]
+        - 불확실하면 Sell (보수적 판단 우선)
+        - 강한 상승 모멘텀이 있고 밸류에이션이 합리적이면 Hold
+
+        [답변 형식]
+        결정: Sell 또는 Hold
+        사유: 한 줄 요약
+        """
+        answer = self._safe_gemini_call(prompt, timeout=30)
+        if answer:
+            decision_match = re.search(r"결정[:\s]*(Sell|Hold)", answer, re.I)
+            reason_match = re.search(r"사유[:\s]*(.*)", answer)
+            decision = decision_match.group(1).strip().capitalize() if decision_match else "Sell"
+            reason = reason_match.group(1).strip() if reason_match else "AI 판단 근거 부족"
+
+            # 모델 Prefix 생성
+            model_tag = self._get_model_tag()
+            reason = f"{model_tag} {reason}"
+            return (decision == "Sell"), reason
+        return True, "API 호출 실패 (보수적 매도)"
+
+    def _get_model_tag(self) -> str:
+        """마지막 사용된 Gemini 모델의 약어 태그를 반환합니다."""
+        if hasattr(self, 'last_used_model_id') and self.last_used_model_id:
+            m_id = self.last_used_model_id.lower()
+            if "gemini-2.5-flash-lite" in m_id: prefix = "G2.5FL"
+            elif "gemini-2.5-flash" in m_id: prefix = "G2.5F"
+            elif "gemini-3.1-flash-lite" in m_id: prefix = "G3.1FL"
+            elif "gemini-3.1-pro" in m_id: prefix = "G3.1P"
+            elif "gemini-3-flash" in m_id: prefix = "G3.0F"
+            elif "gemini-3" in m_id: prefix = "G3.0"
+            elif "gemini-2" in m_id: prefix = "G2.X"
+            else: prefix = "GEMINI"
+            return f"[{prefix}]"
+        return "[AI]"

@@ -64,28 +64,39 @@ def main():
                 
                 # 키 입력 감지 (0.05s 주기로 즉시 반응)
                 k = get_key_immediate()
-                if k == 'q':
+                # [수정] q / Q / ㅂ / ㅃ 모든 종료 키 즉시 반응
+                if k and k.lower() in ['q', 'ㅂ', 'ㅃ']:
                     dm.is_running = False
                     try: tw = os.get_terminal_size().columns
                     except: tw = 110
-                    sys.stdout.write("\033[H\033[2J" + align_kr(" 시스템을 종료합니다. 잠시만 기다려주세요... ", tw, 'center') + "\n")
+                    # TUI 정지 및 화면 청소 후 종료 알림
+                    restore_terminal_settings(); exit_alt_screen()
+                    sys.stdout.write("\033[H\033[2J" + align_kr(" 시스템을 안전하게 종료합니다. 잠시만 기다려주세요... ", tw, 'center') + "\n")
                     sys.stdout.flush()
                     time.sleep(1)
-                    return
+                    os._exit(0)
                 elif k and not dm.is_input_active:
+                    # [수정] 유효한 명령어 키인지 확인 (불필요한 '동작 준비 중' 방지)
+                    valid_cmds = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 's']
+                    if k.lower() not in valid_cmds:
+                        continue
+
                     # 커맨드 처리 중 중복 키 차단
                     if _command_busy:
-                        pass  # 처리 중 추가 입력 무시
+                        pass
                     else:
                         _command_busy = True
                         dm.show_status(f"⏳ [{k.upper()}] 동작 준비 중...")
-                        draw_tui(strategy, dm, cycle)  # 즉시 상태 표시 반영
+                        draw_tui(strategy, dm, cycle)
                         def _run_cmd(key=k):
                             nonlocal _command_busy
                             try:
                                 perform_interaction(key, api, strategy, dm, cycle)
                             finally:
                                 _command_busy = False
+                                # 동작이 끝났을 때 '준비 중' 메시지가 남아있으면 제거 (다른 상태 메시지가 없는 경우만)
+                                if "준비 중" in dm.status_msg:
+                                    dm.show_status("")
                         threading.Thread(target=_run_cmd, daemon=True).start()
                 
                 time.sleep(0.05)

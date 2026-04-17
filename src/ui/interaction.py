@@ -40,7 +40,7 @@ def draw_recommendation_report(strategy, dm, tw, th):
     else: buf.write("  분석된 시장 브리핑이 없습니다.\n")
     buf.write("\n" + "=" * tw + "\n\n")
     recs = strategy.ai_recommendations
-    if not recs: buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. 'A'를 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
+    if not recs: buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. '8'을 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
     else:
         buf.write("\033[1m" + f"{align_kr('테마', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 9)} | {align_kr('등락', 7)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('AI점수', 6)} | 발굴 근거" + "\033[0m\n")
         buf.write("-" * tw + "\n")
@@ -146,6 +146,80 @@ def draw_stock_analysis(strategy, dm, code, tw, th):
     while not get_key_immediate(): time.sleep(0.1)
     dm.show_status("✅ 분석 완료")
 
+def draw_ai_logs_report(strategy, dm, tw, th):
+    import io
+    import copy
+    buf = io.StringIO(); buf.write("\033[H\033[2J")
+    buf.write("\033[44;37m" + align_kr(" [AI DECISION & STRATEGY REASON LOGS] ", tw, 'center') + "\033[0m\n\n")
+    
+    # 1. 매수 거절 내역
+    buf.write("\033[1;91m" + " [AI 매수 거절 내역 (당일/최근 15건)]" + "\033[0m\n")
+    buf.write("-" * tw + "\n")
+    if not strategy.rejected_stocks:
+        buf.write("  최근 24시간 내 매수 거절 내역이 없습니다.\n")
+    else:
+        buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | 거절 사유 (Gemini Feedback)" + "\033[0m\n")
+        buf.write("-" * tw + "\n")
+        
+        with dm.data_lock:
+            rejected = copy.deepcopy(strategy.rejected_stocks)
+            
+        r_list = []
+        for code, data in rejected.items():
+            reason = data.get('reason', data) if isinstance(data, dict) else data
+            ts = data.get('time', 0) if isinstance(data, dict) else 0
+            r_list.append({"code": code, "reason": reason, "time": ts})
+        
+        # 시간 역순 정렬 후 최근 15건 슬라이싱
+        r_list.sort(key=lambda x: x['time'], reverse=True)
+        r_list = r_list[:15]
+        
+        for item in r_list:
+            code = item["code"]
+            reason = item["reason"]
+            rj_time = datetime.fromtimestamp(item["time"]).strftime('%H:%M:%S') if item["time"] > 0 else '??:??:??'
+            detail = strategy.api.get_naver_stock_detail(code)
+            name = detail.get('name', 'Unknown')
+            buf.write(f" {align_kr(rj_time, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {reason}\n")
+    
+    buf.write("\n" + "=" * tw + "\n\n")
+    
+    # 2. 종목별 전략 수립 사유
+    buf.write("\033[1;96m" + " [종목별 AI 전략 수립 근거 (최근 15건)]" + "\033[0m\n")
+    buf.write("-" * tw + "\n")
+    presets = strategy.preset_eng.preset_strategies
+    active_presets = {k: v for k, v in presets.items() if v.get('preset_id') != '00'}
+    
+    if not active_presets:
+        buf.write("  현재 AI 프리셋 전략이 할당된 종목이 없습니다.\n")
+    else:
+        buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('전략명', 12)} | 할당 근거 및 AI 분석" + "\033[0m\n")
+        buf.write("-" * tw + "\n")
+        with dm.data_lock:
+            p_items = copy.deepcopy(active_presets)
+            
+        p_list = []
+        for code, p in p_items.items():
+            buy_time = p.get('buy_time', '1970-01-01 00:00:00')
+            p_list.append({"code": code, "p": p, "buy_time": buy_time})
+            
+        # 시간(buy_time) 역순 정렬 후 최근 15건 슬라이싱
+        p_list.sort(key=lambda x: x['buy_time'], reverse=True)
+        p_list = p_list[:15]
+        
+        for item in p_list:
+            code = item["code"]
+            p = item["p"]
+            # YYYY-MM-DD HH:MM:SS 형식을 HH:MM:SS로 줄여 표시
+            b_time_str = p.get('buy_time', '??:??:??').split(' ')[-1] if 'buy_time' in p else '??:??:??'
+            name = strategy.api.get_naver_stock_detail(code).get('name', code)
+            buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {p.get('reason', 'AI 분석 기반 자동 선정')}\n")
+
+    buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
+    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+    while not get_key_immediate(): time.sleep(0.1)
+    buf.close()
+
 def get_input(dm, prompt, tw):
     """[Task 4] 입력 중에도 렌더링이 멈추지 않도록 콜백 연동"""
     def cb(p, b):
@@ -167,7 +241,11 @@ def perform_interaction(key, api, strategy, dm, cycle):
     from src.auth import KISAuth
     from dotenv import load_dotenv
     
-    flush_input(); mode = (key[-1] if 'alt+' in key else key).lower()
+    flush_input()
+    key_map = {'ㅂ': 'q', 'ㅃ': 'q', 'ㅅ': 's', 'ㄴ': 's', 'ㅈ': 's', 'ㅁ': 'a', 'ㅣ': 'l', 'ㅠ': 'b', 'ㅇ': 'd', 'ㅎ': 'h'}
+    mode = (key[-1] if 'alt+' in key else key).lower()
+    if mode in key_map: mode = key_map[mode]
+    
     if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's']: return
     
     # [수정] tw, th를 미리 계산하여 사용 가능하게 함
@@ -186,7 +264,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
         print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다."); os._exit(0)
     
     # 화면 전환 커맨드 (리포트/로그 등 즉시 전환)
-    if mode in ['m', 'l', 'b', 'd', 'h']:
+    if mode in ['m', 'l', 'b', 'd', 'h', 'a']:
         def run_display_task():
             dm.is_full_screen_active = True
             dm.set_busy(f"{mode} 처리")
@@ -200,6 +278,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 elif mode == 'b': draw_holdings_detail(strategy, dm, tw, th)
                 elif mode == 'd': draw_recommendation_report(strategy, dm, tw, th)
                 elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw, th)
+                elif mode == 'a': draw_ai_logs_report(strategy, dm, tw, th)
                 enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
             finally: 
                 dm.clear_busy()
@@ -242,9 +321,11 @@ def perform_interaction(key, api, strategy, dm, cycle):
         try:
             time.sleep(0.5)
             restore_terminal_settings(); exit_alt_screen()
+            os.system('cls' if os.name == 'nt' else 'clear')
             print("\n" + "="*60 + "\n ⚙️  KIS-Vibe-Trader 환경 설정 모드\n" + "="*60); flush_input()
             ensure_env(force=True); load_dotenv(override=True); config = get_config()
             new_auth = KISAuth(); api.auth = new_auth; api.domain = new_auth.domain; strategy.api = api
+            strategy.reload_config(config)
             enter_alt_screen(); set_terminal_raw(); dm.strategy.last_size = (0, 0)
             dm.show_status("✅ 환경 설정 완료")
             dm.update_all_data(new_auth.is_virtual, force=True)
@@ -330,7 +411,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     try: strategy.ai_config.update({"amount_per_trade": int(inp[0]), "max_investment_per_stock": int(inp[1]), "auto_mode": inp[2].lower() == 'y'}); strategy._save_all_states(); dm.show_status(f"✨ 설정 완료")
                     except: dm.show_status("❌ 입력 오류", True)
 
-        elif mode in ['a', '8']:
+        elif mode == '8':
             if not os.getenv("GOOGLE_API_KEY"): dm.show_status("⚠️ API Key 누락", True)
             else:
                 def task_ai():

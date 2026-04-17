@@ -190,21 +190,27 @@ class DataManager:
                 h, a = self.api.get_full_balance(force=True)
 
                 if h or a.get('total_asset', 0) > 0:
+                    # 1. 락 밖에서 필요한 데이터 미리 수집 (API 호출 등)
+                    temp_stock_info = {}
+                    for stock in h:
+                        code = stock.get('pdno')
+                        p_data = self.api.get_inquire_price(code) # API 호출 (락 외부)
+                        tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
+                        
+                        day_val = p_data.get('vrss', 0) if p_data else 0
+                        day_rate = p_data.get('ctrt', 0) if p_data else 0
+                        
+                        temp_stock_info[code] = {
+                            "tp": tp, "sl": sl, "spike": spike,
+                            "day_val": day_val, "day_rate": day_rate
+                        }
+
+                    # 2. 락 안에서는 캐시 업데이트만 수행 (최소한의 시간 점유)
                     with self.data_lock:
-                        self.cached_holdings = h; self.cached_asset = a
-                        for stock in h:
-                            code = stock.get('pdno')
-                            p_data = self.api.get_inquire_price(code)
-                            tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
-                            
-                            # 시세 API에서 가져온 전일 대비 데이터를 캐시에 저장
-                            day_val = p_data.get('vrss', 0) if p_data else 0
-                            day_rate = p_data.get('ctrt', 0) if p_data else 0
-                            
-                            self.cached_stock_info[code] = {
-                                "tp": tp, "sl": sl, "spike": spike,
-                                "day_val": day_val, "day_rate": day_rate
-                            }
+                        self.cached_holdings = h
+                        self.cached_asset = a
+                        self.cached_stock_info.update(temp_stock_info)
+                    
                     self.last_times["asset"] = curr_t
                     self.add_log(f"잔고 업데이트 완료 (Cash: {a['cash']:,}원)")
 

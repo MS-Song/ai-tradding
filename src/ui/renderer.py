@@ -26,7 +26,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     
     # [수정] 헤더바 레이아웃: 좌측 정보 | 시간 정보(우측 끝 고정)
     # 버전/상태/작업 정보를 왼쪽에 배치, 시간과 스레드 카운트를 오른쪽 끝에 배치
-    version_text = "[AI TRADING SYSTEM ver 1.1.24]"
+    version_text = "[AI TRADING SYSTEM ver 1.2.1]"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_text = f"분석: {strategy.analysis_status_msg}" if hasattr(strategy, 'analysis_status_msg') else "분석: -"
     work_text = f"작업: {dm.global_busy_msg if hasattr(dm, 'global_busy_msg') and dm.global_busy_msg else '-'}"
@@ -119,7 +119,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         ai_msg_formatted = f" \033[92m{ai_msg}\033[0m" if "일치" in ai_msg else (f" \033[93m{ai_msg}\033[0m" if ai_msg else "")
         status_line = f" VIBE: {v_c}{dm.cached_vibe}\033[0m{panic_txt} {vibe_desc}{phase_txt}{ai_msg_formatted}"
         buf.write(align_kr(status_line, tw) + "\n")
-        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 L:로그 | M:매뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
+        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 A:AI로그 L:로그 | M:매뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
         
         # [Task 4] 입력 모드 또는 AI 브리핑 영역 (커맨드 바로 아래 고정 위치)
         if dm.is_input_active:
@@ -148,22 +148,59 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         daily_c = "\033[91m" if daily_p > 0 else "\033[94m" if daily_p < 0 else "\033[0m"
         daily_txt = f" | 금일: {daily_c}{daily_p:+,}원\033[0m"
         
-        # [Task 9] Asset 라인 파이프 정렬 및 대문자 통일
-        buf.write(align_kr(f" ASSET | 총자산 {tot_eval:,.0f} (원금: {tot_prin:,.0f}, {tot_color}{tot_rt:+.2f}%\033[0m) | 예수금: {asset.get('cash', 0):,.0f} | 주식총액: {stk_eval:,.0f} ({stk_color}{stk_rt:+.2f}%\033[0m){daily_txt}", tw) + "\n")
-        
-        # [Task 9] 색상 적용 및 누적 집행 금액 표기
+        # [Task 9/10] Asset 및 설정 영역 정렬 개편 (파이프 라인 정렬)
         daily_amts = trading_log.get_daily_amounts()
         tp_cur, sl_cur, _ = strategy.get_dynamic_thresholds("BASE", dm.cached_vibe.lower())
-        buf.write(align_kr(f"{'* STRAT' if strategy.is_modified('STRAT') else ' STRAT '} | 기본 익절 \033[91m{strategy.base_tp:+.1f}%\033[0m (현재 \033[91m{tp_cur:+.1f}%\033[0m) | 손절 \033[94m{strategy.base_sl:+.1f}%\033[0m (현재 \033[94m{sl_cur:+.1f}%\033[0m)", tw) + "\n")
         
+        # 수정 표시용 마커
+        st_mark = '*' if strategy.is_modified('STRAT') else ' '
+        al_mark = '*' if strategy.is_modified('ALGO') else ' '
+        be_mark = '*' if strategy.is_modified('BEAR') else ' '
+        bu_mark = '*' if strategy.is_modified('BULL') else ' '
+
+        a_cfg = strategy.ai_config
+        b_cfg = strategy.bear_config
+        u_cfg = strategy.bull_config
+
+        auto_st_algo = "\033[93mON\033[0m" if a_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
         auto_st_bear = "\033[93mON\033[0m" if b_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
-        buf.write(align_kr(f"{'* BEAR ' if strategy.is_modified('BEAR') else ' BEAR  '} | 물타기 \033[94m{b_cfg.get('min_loss_to_buy'):+.1f}%\033[0m | 회당 {b_cfg.get('average_down_amount'):,}원 | 한도 {b_cfg.get('max_investment_per_stock'):,}원 | 자동: {auto_st_bear} | 누적: {daily_amts['BEAR']:,.0f}원", tw) + "\n")
-        
-        u_cfg = strategy.bull_config; auto_st_bull = "\033[93mON\033[0m" if u_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
-        buf.write(align_kr(f"{'* BULL ' if strategy.is_modified('BULL') else ' BULL  '} | 불타기 \033[91m+{u_cfg.get('min_profit_to_pyramid'):.1f}%\033[0m | 회당 {u_cfg.get('average_down_amount'):,}원 | 한도 {u_cfg.get('max_investment_per_stock'):,}원 | 자동: {auto_st_bull} | 누적: {daily_amts['BULL']:,.0f}원", tw) + "\n")
-        
-        a_cfg = strategy.ai_config; auto_st_algo = "\033[93mON\033[0m" if a_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
-        buf.write(align_kr(f"{'* ALGO ' if strategy.is_modified('ALGO') else ' ALGO  '} | AI자율매매 회당 {a_cfg.get('amount_per_trade'):,}원 | 한도 {a_cfg.get('max_investment_per_stock'):,}원 | 자동: {auto_st_algo} | 누적: {daily_amts['ALGO']:,.0f}원", tw) + "\n")
+        auto_st_bull = "\033[93mON\033[0m" if u_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
+
+        # 정렬 폭 정의 (L:라벨, C:컨텐츠)
+        L1, C1, L2, C2 = 8, 52, 8, 55
+
+        # Line 1: ASSET
+        asset_label = align_kr(" ASSET", L1)
+        seed = getattr(strategy, "base_seed_money", 0)
+        if seed > 0:
+            c_prof = tot_eval - seed
+            c_rt = (c_prof / seed) * 100
+            c_color = "\033[91m" if c_prof > 0 else "\033[94m" if c_prof < 0 else "\033[0m"
+            tot_info = f"총자산 {tot_eval:,.0f} (입금: {seed:,.0f}, {c_color}{c_rt:+.2f}%\033[0m)"
+        else:
+            tot_info = f"총자산 {tot_eval:,.0f} (원금: {tot_prin:,.0f}, {tot_color}{tot_rt:+.2f}%\033[0m)"
+            
+        cash_info = f"예수금: {asset.get('cash', 0):,.0f}"
+        stk_info = f"주식: {stk_eval:,.0f} ({stk_color}{stk_rt:+.2f}%\033[0m)"
+        daily_clean = daily_txt.replace(" | ", "").strip()
+        line_asset = f"{asset_label} | {align_kr(tot_info, C1)} | {align_kr(cash_info, 18)} | {align_kr(stk_info, 25)} | {daily_clean}"
+        buf.write(align_kr(line_asset, tw) + "\n")
+
+        # Line 2: STRAT + ALGO
+        strat_label = align_kr(f"{st_mark}STRAT", L1)
+        strat_info = f"TP:\033[91m{strategy.base_tp:+.1f}%\033[0m(\033[91m{tp_cur:+.1f}%\033[0m) SL:\033[94m{strategy.base_sl:+.1f}%\033[0m(\033[94m{sl_cur:+.1f}%\033[0m)"
+        algo_label = align_kr(f"{al_mark}ALGO", L2)
+        algo_info = f"[{auto_st_algo}] {a_cfg.get('amount_per_trade'):,}원/{a_cfg.get('max_investment_per_stock'):,}원 (누적:{daily_amts['ALGO']:,.0f})"
+        line_strat = f"{strat_label} | {align_kr(strat_info, C1)} | {algo_label} | {algo_info}"
+        buf.write(align_kr(line_strat, tw) + "\n")
+
+        # Line 3: BEAR + BULL
+        bear_label = align_kr(f"{be_mark}BEAR", L1)
+        bear_info = f"[{auto_st_bear}] TRG:\033[94m{b_cfg.get('min_loss_to_buy'):+.1f}%\033[0m {b_cfg.get('average_down_amount'):,}원/{b_cfg.get('max_investment_per_stock'):,}원 (누적:{daily_amts['BEAR']:,.0f})"
+        bull_label = align_kr(f"{bu_mark}BULL", L2)
+        bull_info = f"[{auto_st_bull}] TRG:\033[91m+{u_cfg.get('min_profit_to_pyramid'):.1f}%\033[0m {u_cfg.get('average_down_amount'):,}원/{u_cfg.get('max_investment_per_stock'):,}원 (누적:{daily_amts['BULL']:,.0f})"
+        line_bear = f"{bear_label} | {align_kr(bear_info, C1)} | {bull_label} | {bull_info}"
+        buf.write(align_kr(line_bear, tw) + "\n")
         buf.write("-" * tw + "\n")
 
         eff_w = tw - 4; w = [max(4, int(eff_w * 0.03)), max(5, int(eff_w * 0.04)), max(15, int(eff_w * 0.15)), max(10, int(eff_w * 0.09)), max(14, int(eff_w * 0.12)), max(10, int(eff_w * 0.08)), max(8, int(eff_w * 0.07)), max(10, int(eff_w * 0.08)), max(18, int(eff_w * 0.12)), max(10, int(eff_w * 0.07)), max(12, int(eff_w * 0.10)), max(6, int(eff_w * 0.05))]
@@ -304,7 +341,7 @@ def draw_manual_page(tw, th):
     buf.write("  - \033[91m🔥 Phase 1 (09:00~10:00) [공격]\033[0m: 변동성 극대화 구간. 익절 상향(+2%), 손절 완화(-1%).\n")
     buf.write("  - \033[92m⚖️ Phase 2 (10:00~14:30) [관망]\033[0m: 횡보 안정 구간. 익절/손절 강화(-1%)로 리스크 타이트하게 관리.\n")
     buf.write("  - \033[93m🏁 Phase 3 (14:30~15:10) [확정]\033[0m: 당일 수익 확정. 수익권 종목 50% 분할 매도 및 익절선 본전 상향.\n")
-    buf.write("  - \033[96m💤 Phase 4 (15:10~15:20) [준비]\033[0m: 익일 유망주 선취매. 시장 안심(Bull/Neutral) 상태에서만 신규 매수.\n\n")
+    buf.write("  - \033[96m💤 Phase 4 (15:10~15:30) [준비]\033[0m: AI가 보유 종목별 익일 전망을 판단하여 자동 청산/유지 결정.\n\n")
     buf.write("\033[1;93m 2. AI 동적 리스크 관리(Time-Stop)\033[0m\n")
     buf.write("  - \033[1m유효 시간(Lifetime)\033[0m: 전략 적용 시 AI가 종목의 모멘텀 수명을 예측하여 데드라인을 설정.\n")
     buf.write("  - \033[1m익절 보존\033[0m: 데드라인(REM:EXP) 경과 시 익절선을 현재 수익의 후반으로 최소 수익을 보존.\n")
@@ -330,7 +367,10 @@ def draw_trading_logs(strategy, dm, tw, th):
     config_h = int(available_h * 0.25)
     
     buf.write("\033[1;93m [최근 거래 내역 (TRADE)]\033[0m\n")
-    trades = trading_log.data.get("trades", [])
+    # [Task 4] 로그 데이터 접근 시 스레드 락 적용 및 복사본 사용 (안정성 확보)
+    import copy
+    with trading_log.lock:
+        trades = copy.deepcopy(trading_log.data.get("trades", []))
     if not trades:
         buf.write("  최근 거래 내역이 없습니다.\n")
     else:
@@ -352,7 +392,8 @@ def draw_trading_logs(strategy, dm, tw, th):
             
     buf.write("\n" + "=" * tw + "\n\n")
     buf.write("\033[1;96m [시스템 설정 및 전략 변경 (CONFIG)]\033[0m\n")
-    configs = trading_log.data.get("configs", [])
+    with trading_log.lock:
+        configs = copy.deepcopy(trading_log.data.get("configs", []))
     if not configs:
         buf.write("  변경 이력이 없습니다.\n")
     else:

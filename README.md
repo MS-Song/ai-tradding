@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Powered by Gemini](https://img.shields.io/badge/AI-Gemini%202.5%20Flash-blueviolet.svg)](https://aistudio.google.com/)
 [![Market](https://img.shields.io/badge/Market-Korea%20Stock-red.svg)](https://apiportal.koreainvestment.com/)
-[![Version](https://img.shields.io/badge/version-1.1-green.svg)](https://github.com/MS-Song/ai-tradding/releases)
+[![Version](https://img.shields.io/badge/version-1.2.1-green.svg)](https://github.com/MS-Song/ai-tradding/releases)
 
 > **"단순한 매매가 아닙니다. 시장의 흐름(Vibe)을 읽는 AI 자율 트레이딩 엔진입니다."**
 > KIS-Vibe-Trader는 시니어 아키텍트의 설계 사상이 반영된 객체지향형 트레이딩 시스템으로, 시장 감성(Vibe)과 AI 분석(Gemini)을 결합하여 최적의 매매 전략을 자율적으로 도출합니다.
@@ -20,8 +20,8 @@
 - **🛡️ 6-Pillar Architecture**: `ExitManager`, `MarketAnalyzer`, `RecoveryEngine`, `PyramidingEngine`, `VibeAlphaEngine`, `PresetStrategyEngine` 6대 핵심 모듈이 독립적이면서도 유기적으로 협력하여 자산을 안전하게 관리합니다.
 - **🕒 Time-based Market Phase**: 장 시작부터 마감까지 시간대별로 최적화된 매매 리듬(OFFENSIVE/CONVERGENCE 등 4단계)을 적용합니다. 익절/손절선을 시간대에 맞춰 자동으로 미세 보정합니다.
 - **🚀 Autonomous Trading (AUTO)**: AI가 발굴한 저평가/모멘텀 종목을 보합권 선취매 영역에서 스스로 매집하고, 동적 익절/손절 전략에 따라 자동으로 엑시트합니다.
-- **🔒 Anti-Ping-Pong Cooldown**: 익절/손절 후 **2시간 재진입 금지**, 익절 쿨다운 중 **긴급 바이패스 조건** (급등 초과·거래량 폭발·장 마감), 물타기 후 **30분 손절 유예 + 긴급 즉시 손절** 로직으로 연속 핑퐁 매매를 원천 차단합니다.
-- **📊 Real-time TUI Interface**: 터미널 기반의 직관적인 UI(TUI)를 통해 국내/해외 지수, 포트폴리오 상태, AI 추천 종목을 한눈에 파악할 수 있습니다.
+- **🔒 Anti-Ping-Pong Cooldown**: 익절/손절 후 **2시간 재진입 금지**, 매수 직후 **1시간 P4 장마감 청산 보호(종가베팅 보호)**, 물타기 후 **30분 손절 유예** 로직으로 연속 핑퐁 매매를 원천 차단합니다.
+- **📊 Real-time TUI Interface**: 터미널 기반의 직관적인 UI(TUI)를 통해 국내/해외 지수, 포트폴리오 상태, AI 추천 종목을 한눈에 파악할 수 있으며 누적 시드머니(Seed) 설정 기반의 **정확한 누적 수익률 평가**가 가능합니다.
 
 ---
 
@@ -95,7 +95,12 @@ python main.py
 
 ## 📝 Changelog
 
-### v1.1 (2026-04-15)
+### v1.2.1 (2026-04-17)
+- **자산 트래킹 개편**: 누적 입금액(Seed) 기반으로 정확한 누적 수익금과 수익률(%) 자동 계산 로직 도입 (`S` 셋업 메뉴 통합).
+- **P4 핑퐁 보호 로직**: 장 후반 매수한 '종가 베팅' 종목이 1시간 내 P4 마감 청산 대상에 편입되어 즉각 매도되는 모순을 해결하는 방어 로직 설계.
+- **스레드 안정성 확보**: 임시 로그 기록 파일 이름에 UUID 기반 Random Number를 덧붙여 다수 스레드(Data Fetch, UI Rendering, Log)에서 발생하는 동시 기록 충돌(Race Condition) 방지.
+
+### v1.1.24 (2026-04-16)
 - **핑퐁 매매 방지 시스템 구현**: 익절/손절 후 2시간 재진입 쿨다운 (`last_sell_times`, `last_sl_times`, `last_buy_times`)
 - **긴급 바이패스 로직 추가**: 급등·거래량폭발·장마감 시 쿨다운 우회 익절 (`_is_emergency_exit`)
 - **물타기 손절 유예**: 물타기 직후 30분 유예 + 긴급 즉시 손절 4가지 조건 (`_is_emergency_sl`)

@@ -37,7 +37,8 @@ def get_config():
             "starter_kit": {
                 "budget_per_stock": int(env_data.get("STARTER_KIT_BUDGET", 1000000)),
                 "stocks": env_data.get("STARTER_KIT_STOCKS", "005930,000660,035420,005380").split(",")
-            }
+            },
+            "base_seed_money": int(env_data.get("BASE_SEED_MONEY", 0))
         }
     }
 
@@ -87,12 +88,21 @@ def ensure_env(force=False):
             ("MAX_INVESTMENT_PER_STOCK", "종목당 최대 투자 한도 (원)", "2000000", "text"),
             ("RECOVERY_AUTO_MODE", "물타기 자동 실행 여부 (Y/N)", "FALSE", "bool"),
             
+            # 불타기(Pyramiding)
+            ("BULL_AVERAGE_DOWN_AMOUNT", "불타기 1회 추가 매수 금액 (원)", "500000", "text"),
+            ("MIN_PROFIT_TO_PYRAMID", "불타기 시작 수익률 (%)", "3.0", "text"),
+            ("BULL_MAX_INVESTMENT", "종목당 최대 불타기 한도 (원)", "25000000", "text"),
+            ("PYRAMID_AUTO_MODE", "불타기 자동 실행 여부 (Y/N)", "FALSE", "bool"),
+            
             # AI 추천(Vibe-Alpha)
             ("AI_AMOUNT_PER_TRADE", "AI 추천 1회 매수 금액 (원)", "500000", "text"),
             ("AI_MIN_SCORE", "AI 추천 진입 최소 점수 (0-100)", "60.0", "text"),
             ("AI_MAX_INVESTMENT_PER_STOCK", "AI 추천 종목당 최대 투자액 (원)", "2000000", "text"),
             ("AI_AUTO_MODE", "AI 자율 매수(AUTO) 모드 사용 (Y/N)", "FALSE", "bool"),
-            ("AUTO_APPLY_AI_STRATEGY", "AI 시황 분석 전략 자동 반영 여부 (Y/N)", "FALSE", "bool")
+            ("AUTO_APPLY_AI_STRATEGY", "AI 시황 분석 전략 자동 반영 여부 (Y/N)", "FALSE", "bool"),
+
+            # 자산 관리
+            ("BASE_SEED_MONEY", "총 누적 입금액(초기 시드 + 추가 입금액) (원)", "0", "text")
         ]
         
         for key, label, default, input_type in setup_keys:

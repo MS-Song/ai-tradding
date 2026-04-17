@@ -38,6 +38,7 @@ class VibeStrategy:
         self.analyzer.ai_advisor = self.ai_advisor
         
         self.last_avg_down_msg = "없음"
+        self.base_seed_money = 0
         self.last_sell_times: Dict[str, float] = {}
         self.last_sl_times: Dict[str, float] = {}
         self.last_buy_times: Dict[str, float] = {}
@@ -48,7 +49,7 @@ class VibeStrategy:
         self.yesterday_recs: List[dict] = []
         self.yesterday_recs_processed: List[dict] = []
         self._last_closing_bet_date = None
-        self.rejected_stocks: Dict[str, str] = {}
+        self.rejected_stocks: Dict[str, dict] = {} # {code: {"reason": reason, "time": timestamp}}
         
         self.ai_config = {
             "amount_per_trade": v_cfg.get("ai_config", {}).get("amount_per_trade", 500000),
@@ -90,6 +91,54 @@ class VibeStrategy:
     def _load_all_states(self): self.state_mgr.load_all_states()
     def _save_all_states(self): self.state_mgr.save_all_states()
     def refresh_yesterday_recs_performance(self, hot_raw, vol_raw): self.state_mgr.refresh_yesterday_recs_performance(hot_raw, vol_raw)
+
+    def reload_config(self, config: dict):
+        """실시간 환경 설정 반영을 위한 엔진 및 모듈 재로드"""
+        try:
+            self.base_config = config.get("vibe_strategy", {})
+            v_cfg = self.base_config
+            
+            # 1. 종료 엔진 초기화
+            self.exit_mgr.base_tp = v_cfg.get("take_profit_threshold", 5.0)
+            self.exit_mgr.base_sl = v_cfg.get("stop_loss_threshold", -5.0)
+            
+            # 2. 물타기 엔진 업데이트
+            self.recovery_eng.config = v_cfg.get("bear_market", {})
+            
+            # 3. 불타기 엔진 업데이트
+            bull_defaults = {"min_profit_to_pyramid": 3.0, "average_down_amount": 500000, "max_investment_per_stock": 25000000, "auto_mode": False}
+            self.bull_config = v_cfg.get("bull_market", {})
+            for k, v in bull_defaults.items():
+                if k not in self.bull_config:
+                    self.bull_config[k] = v
+            self.pyramid_eng.config = self.bull_config
+            
+            # 자산 관리
+            self.base_seed_money = v_cfg.get("base_seed_money", self.base_seed_money)
+            
+            # 4. AI 설정 업데이트
+            self.ai_config.update({
+                "amount_per_trade": v_cfg.get("ai_config", {}).get("amount_per_trade", 500000),
+                "min_score": v_cfg.get("ai_config", {}).get("min_score", 60.0),
+                "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
+                "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False),
+                "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
+                "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-2.5-flash")
+            })
+            
+            # 5. 하위 엔진에 전파
+            self.ai_advisor.config = self.ai_config
+            self.ai_advisor.preferred_model = self.ai_config.get("preferred_model", "gemini-2.5-flash")
+            self.ai_advisor.fallback_sequence = v_cfg.get("ai_config", {}).get("fallback_sequence", [
+                "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3-flash-preview",
+                "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview"
+            ])
+            
+            logger.info("🔧 시스템 설정이 실시간으로 동기화되었습니다.")
+            return True
+        except Exception as e:
+            log_error(f"설정 동기화 오류: {e}")
+            return False
 
     def is_modified(self, section: str) -> bool:
         if section == "STRAT": return (self.exit_mgr.base_tp != self.base_config.get("take_profit_threshold") or self.exit_mgr.base_sl != self.base_config.get("stop_loss_threshold"))
@@ -166,7 +215,7 @@ class VibeStrategy:
         now = datetime.now().time()
         if dtime(9, 0) <= now < dtime(10, 0): return {"id": "P1", "name": "OFFENSIVE", "tp_delta": 2.0, "sl_delta": -1.0}
         elif dtime(14, 30) <= now < dtime(15, 10): return {"id": "P3", "name": "CONCLUSION", "tp_delta": 0.0, "sl_delta": 0.0}
-        elif dtime(15, 10) <= now < dtime(15, 20): return {"id": "P4", "name": "PREPARATION", "tp_delta": 0.0, "sl_delta": 0.0}
+        elif dtime(15, 10) <= now < dtime(15, 30): return {"id": "P4", "name": "PREPARATION", "tp_delta": 0.0, "sl_delta": 0.0}
         elif dtime(10, 0) <= now < dtime(14, 30): return {"id": "P2", "name": "CONVERGENCE", "tp_delta": -1.0, "sl_delta": -1.0}
         return {"id": "IDLE", "name": "IDLE", "tp_delta": 0.0, "sl_delta": 0.0}
 
@@ -193,7 +242,13 @@ class VibeStrategy:
         return res
 
     def confirm_buy_decision(self, code: str, name: str) -> Tuple[bool, str]:
-        if code in self.rejected_stocks: return False, f"당일 매수 거절됨: {self.rejected_stocks[code]}"
+        # 1시간 경과한 거절 종목 자동 정리
+        self._cleanup_rejected_stocks()
+        
+        if code in self.rejected_stocks: 
+            reason_data = self.rejected_stocks[code]
+            reason = reason_data["reason"] if isinstance(reason_data, dict) else reason_data
+            return False, f"당일 매수 거절됨: {reason}"
         detail = self.api.get_naver_stock_detail(code)
         
         try: price = float(detail.get('price', 0))
@@ -208,11 +263,30 @@ class VibeStrategy:
             if "0원" in reason or "가격이 0" in reason:
                 return False, f"실시간 데이터 지연/오류 보류: {reason}"
                 
-            self.rejected_stocks[code] = reason
+            self.rejected_stocks[code] = {"reason": reason, "time": time.time()}
             self._save_all_states()
             trading_log.log_config(f"❌ AI 매수 거절: [{code}]{name} | 사유: {reason}")
             return False, reason
         return True, "승인됨"
+
+    def _cleanup_rejected_stocks(self):
+        """거절된 지 1시간이 지난 종목들을 목록에서 제거하여 재검토 가능케 함"""
+        now = time.time()
+        to_remove = []
+        for code, data in self.rejected_stocks.items():
+            if isinstance(data, dict) and "time" in data:
+                if now - data["time"] >= 3600: # 1시간 (3600초)
+                    to_remove.append(code)
+            elif not isinstance(data, dict):
+                # 구버전(문자열) 데이터는 일단 유지하되, 다음 저장 시점에 정리되도록 함
+                # 또는 지금 즉시 정리하고 싶다면 여기에 로직 추가 가능
+                pass
+        
+        if to_remove:
+            for code in to_remove:
+                if code in self.rejected_stocks: del self.rejected_stocks[code]
+            self._save_all_states()
+            logger.info(f"♻️ 거절 종목 재검토: {len(to_remove)}개 종목 거절 목록에서 제거됨")
 
     def record_buy(self, code, price):
         self.recovery_eng.last_avg_down_prices[code] = price
@@ -301,11 +375,16 @@ class VibeStrategy:
         return False, ""
 
     def run_cycle(self, market_trend="neutral", skip_trade=False):
+        # 1시간 경과한 거절 종목 자동 정리
+        self._cleanup_rejected_stocks()
+        
         holdings = self.api.get_balance()
         results, curr_t = [], time.time()
         phase = self.get_market_phase()
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         today = datetime.now().strftime('%Y-%m-%d')
+        if not hasattr(self, '_p3_global_processed'): self._p3_global_processed = {}
+        self._p4_ai_done_this_cycle = False
 
         if phase['id'] == "P4" and not self.global_panic and self.current_market_vibe.upper() in ["BULL", "NEUTRAL"] and self.auto_ai_trade:
             if getattr(self, "_last_closing_bet_date", None) != today and self.ai_recommendations:
@@ -322,6 +401,7 @@ class VibeStrategy:
                             self._last_closing_bet_date = today
                             results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
                             trading_log.log_trade("P4종가매수", code, name, float(top_rec.get('price', 0)), qty, "AI 추천 기반 종가 베팅")
+                            self.record_buy(code, float(top_rec.get('price', 0)))
                             self.auto_assign_preset(code, name)
                             self._save_all_states()
 
@@ -347,12 +427,12 @@ class VibeStrategy:
                     if sell_qty > 0 and not skip_trade:
                         if self.api.order_market(code, sell_qty, False)[0]:
                             p_strat['is_p3_processed'], p_strat['sl'] = True, 0.2
-                            results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')}")
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도")
+                            p3_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
+                            results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원)")
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도", profit=p3_profit)
                             self._save_all_states()
                     elif skip_trade: p_strat['is_p3_processed'] = True
             else:
-                if not hasattr(self, '_p3_global_processed'): self._p3_global_processed = {}
                 p3_key = f"{today}_{code}"
                 if phase['id'] == "P3" and p3_key not in self._p3_global_processed and float(item.get("evlu_pfls_rt", 0.0)) >= 0.5:
                     sell_qty = int(float(item.get('hldg_qty', 0))) // 2
@@ -361,17 +441,57 @@ class VibeStrategy:
                             self._p3_global_processed[p3_key] = True
                             tp_cur, sl_cur, _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
                             self.exit_mgr.manual_thresholds[code] = [tp_cur, 0.2]
-                            results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} | SL→본전(+0.2%)")
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도")
+                            p3_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
+                            results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원) | SL→본전(+0.2%)")
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도", profit=p3_profit)
                             self._save_all_states()
                     else: self._p3_global_processed[p3_key] = True
                 elif phase['id'] == "P4" and float(item.get("evlu_pfls_rt", 0.0)) < 0 and f"p4_{today}_{code}" not in self._p3_global_processed:
+                    if (curr_t - self.last_buy_times.get(code, 0)) < 3600:
+                        self._p3_global_processed[f"p4_{today}_{code}"] = True
+                        results.append(f"🛡️ 당일 매수 P4 보호: {item.get('prdt_name')}")
+                        continue
                     sell_qty = int(float(item.get('hldg_qty', 0)))
                     if sell_qty > 0 and not skip_trade and self.api.order_market(code, sell_qty, False)[0]:
                         self._p3_global_processed[f"p4_{today}_{code}"] = True
-                        results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')}")
-                        trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산")
+                        p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
+                        results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
+                        trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit)
                         self._save_all_states()
+
+            # ── P4 AI 장마감 판단 매도: 내일 수익 전망이 없는 종목 자동 청산 ──
+            if phase['id'] == 'P4' and not skip_trade and not self._p4_ai_done_this_cycle:
+                if (curr_t - self.last_buy_times.get(code, 0)) < 3600:
+                    continue  # 최근 1시간 이내 선취매된 종목은 AI 판단에서 제외 (오버나이트 목적)
+
+                p4_ai_key = f"p4_ai_{today}_{code}"
+                if p4_ai_key not in self._p3_global_processed:
+                    sell_qty = int(float(item.get('hldg_qty', 0)))
+                    rt = float(item.get("evlu_pfls_rt", 0.0))
+                    if sell_qty > 0:
+                        self._p4_ai_done_this_cycle = True  # 사이클당 1종목만 AI 호출 (API 부하 방지)
+                        self.current_action = "P4 AI판단"
+                        try:
+                            detail = self.api.get_naver_stock_detail(code)
+                            news = self.api.get_naver_stock_news(code)
+                            should_sell, reason = self.ai_advisor.closing_sell_confirm(
+                                code, item.get('prdt_name'), self.current_market_vibe, rt, detail, news
+                            )
+                            self._p3_global_processed[p4_ai_key] = True
+                            if should_sell:
+                                if self.api.order_market(code, sell_qty, False)[0]:
+                                    p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
+                                    results.append(f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
+                                    trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit)
+                                    trading_log.log_config(f"🤖 P4 AI 매도: [{code}]{item.get('prdt_name')} | {reason}")
+                                    self._save_all_states()
+                            else:
+                                results.append(f"🔒 P4 AI유지: {item.get('prdt_name')} | {reason[:30]}")
+                                trading_log.log_config(f"🔒 P4 AI 유지: [{code}]{item.get('prdt_name')} | {reason}")
+                        except Exception as e:
+                            log_error(f"P4 AI 매도 판단 오류 ({code}): {e}")
+                        finally:
+                            self.current_action = "대기중"
 
             tp, sl, vol_spike = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
             rt = float(item.get("evlu_pfls_rt", 0.0))
