@@ -276,8 +276,8 @@ class GeminiAdvisor:
         [규칙] 1.글로벌 침체/공포 시 'Defensive' 2.하락세 시 'Bear' 3.상승세 시 'Bull' 4.보합 시 'Neutral'
         오직 Bull, Bear, Neutral, Defensive 중 한 단어만 출력하세요.
         """
-        # 시장 Vibe 검증은 응답 속도가 중요하므로 짧은 타임아웃(10초) 적용하여 Fallback 전환 가속화
-        answer = self._safe_gemini_call(prompt, timeout=10)
+        # 시장 Vibe 검증은 응답 속도가 중요하나, API 지연을 고려하여 타임아웃 30초 적용
+        answer = self._safe_gemini_call(prompt, timeout=30)
         if answer:
             answer_up = answer.upper()
             for v in ["BULL", "BEAR", "NEUTRAL", "DEFENSIVE"]:

@@ -70,7 +70,13 @@ class DataManager:
             if hasattr(self.strategy, 'current_action') and self.strategy.current_action and self.strategy.current_action != "대기중":
                 statuses.append(self.strategy.current_action)
 
-            # 3. 기타 워커들 (INDEX, DATA 등)
+            # 3. Market 분석 상태 추가 (분석 중인 경우에만)
+            if hasattr(self.strategy, 'is_analyzing') and self.strategy.is_analyzing:
+                msg = getattr(self.strategy, 'analysis_status_msg', "")
+                if msg and msg != "분석 완료":
+                    statuses.append(msg)
+
+            # 4. 기타 워커들 (INDEX, DATA 등)
             other_statuses = [v for k, v in self._worker_statuses.items() if k != "GLOBAL"]
             if other_statuses:
                 # 중복된 메시지 제거 및 정렬

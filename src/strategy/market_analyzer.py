@@ -25,17 +25,16 @@ class MarketAnalyzer:
             "NAS_FUT": "NAS_FUT", "SPX_FUT": "SPX_FUT", "BTC_USD": "BTC_USD", "BTC_KRW": "BTC_KRW"
         }
         try:
-            with ThreadPoolExecutor(max_workers=len(symbol_map)) as executor:
-                future_to_symbol = {executor.submit(self.api.get_index_price, code): s for s, code in symbol_map.items()}
-                for future in as_completed(future_to_symbol):
-                    symbol = future_to_symbol[future]
-                    try:
-                        data = future.result()
-                        if data: self.current_data[symbol] = data
-                    except Exception as e:
-                        log_error(f"Index Fetch Error ({symbol}): {e}")
+            # [수정] 0.3초 간격으로 순차 조회하여 429 에러 방지 (백그라운드 스레드에서 실행됨)
+            for s, code in symbol_map.items():
+                try:
+                    data = self.api.get_index_price(code)
+                    if data: self.current_data[s] = data
+                    time.sleep(0.3) # 0.3초 간격 유지 (사용자 요청 사항)
+                except Exception as e:
+                    log_error(f"Index Fetch Error ({s}): {e}")
         except RuntimeError:
-            return self.kr_vibe, self.is_panic # 종료 중이면 이전 상태 유지
+            return self.kr_vibe, self.is_panic 
         # 1차 평가 (알고리즘 기반 휴리스틱)
         heuristic_vibe = self._check_circuit_breaker()
         if heuristic_vibe == "Neutral":

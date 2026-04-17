@@ -26,9 +26,10 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     
     # [수정] 헤더바 레이아웃: 좌측 정보 | 시간 정보(우측 끝 고정)
     # 버전/상태/작업 정보를 왼쪽에 배치, 시간과 스레드 카운트를 오른쪽 끝에 배치
-    version_text = "[AI TRADING SYSTEM ver 1.2.1]"
+    is_v = getattr(strategy.api.auth, 'is_virtual', True)
+    mode_tag = " [모의]" if is_v else " [실전]"
+    version_text = f"[AI TRADING SYSTEM ver 1.2.1]{mode_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
-    status_text = f"분석: {strategy.analysis_status_msg}" if hasattr(strategy, 'analysis_status_msg') else "분석: -"
     work_text = f"작업: {dm.global_busy_msg if hasattr(dm, 'global_busy_msg') and dm.global_busy_msg else '-'}"
     thread_count = threading.active_count()
     
@@ -51,7 +52,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         time_text = get_time_text(now_dt, time_level)
         # 오른쪽 고정 영역: (쓰레드) 시간
         right_side = f" ({thread_count:02d}) {time_text} "
-        left_side = f"{version_text} | {market_text} | {status_text} | {work_text}"
+        left_side = f"{version_text} | {market_text} | {work_text}"
         
         # 전체 길이 계산
         header_line = left_side + " " * max(1, tw - get_visual_width(left_side) - get_visual_width(right_side)) + right_side
