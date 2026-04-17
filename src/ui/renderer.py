@@ -267,7 +267,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         ai_mode_label = "AUTO" if strategy.auto_ai_trade else "MANUAL"
         buf.write(
             f"\033[1;93m{align_kr('🔥 실시간 인기 종목', col_w)}\033[0m ｜ "
-            f"\033[1;96m{align_kr('📊 거래량 급증 종목', col_w)}\033[0m ｜ "
+            f"\033[1;96m{align_kr('📊 거래량 상위 종목', col_w)}\033[0m ｜ "
             f"\033[1;92m{align_kr(f'✨ AI 추천 [{ai_mode_label}]', col_w)}\033[0m\n"
         )
         buf.write("─" * tw + "\n")

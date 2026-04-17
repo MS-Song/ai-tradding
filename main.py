@@ -21,6 +21,9 @@ def main():
     ensure_env(); load_dotenv(); config = get_config(); init_terminal()
     auth = KISAuth(); api = KISAPI(auth); strategy = VibeStrategy(api, config)
     
+    dm = DataManager(api, strategy)
+    auth.on_error_message = lambda msg: dm.show_status(msg, is_error=True)
+    
     # [수정] 프로그램 시작 시 시황 분석을 백그라운드 스레드로 실행
     def background_analysis():
         strategy.is_analyzing = True
@@ -28,15 +31,16 @@ def main():
         strategy.perform_full_market_analysis()
         strategy.is_analyzing = False
         strategy.analysis_status_msg = "분석 완료"
+        perform_interaction('8', api, strategy, dm, 0)
     threading.Thread(target=background_analysis, daemon=True).start()
     
-    dm = DataManager(api, strategy)
-    auth.on_error_message = lambda msg: dm.show_status(msg, is_error=True)
     enter_alt_screen()
     dm.start_workers(auth.is_virtual)
     set_terminal_raw()
     try:
         cycle = 0
+        _command_busy = False  # 키 중복 처리 방지 플래그
+        _tui_tick = 0          # TUI 렌더링 주기 제어 카운터
         while True:
             cycle += 1
             if not auth.is_token_valid(): auth.generate_token()
@@ -46,29 +50,45 @@ def main():
             if not strategy.is_analyzing and (time.time() - strategy.last_market_analysis_time) > (interval * 60):
                 threading.Thread(target=strategy.perform_full_market_analysis, daemon=True).start()
             
-            for i in range(10): # 약 5초마다 대기 (0.5s * 10)
-                # [수정] 전체 화면 모드(리포트/분석 등)일 때는 메인 TUI를 그리지 않고 키 입력도 대기함
+            # 5초 = 100 tick × 0.05s / TUI는 10tick(0.5s)마다 1번 렌더링
+            for i in range(100):
+                # [수정] 전체 화면 모드일 때는 메인 TUI 렌더링 및 키 입력 건너뜀
                 if dm.is_full_screen_active:
-                    time.sleep(0.5)
+                    time.sleep(0.05)
                     continue
 
-                draw_tui(strategy, dm, cycle)
+                # TUI 렌더링: 0.5초 주기 유지 (10 tick 마다)
+                _tui_tick += 1
+                if _tui_tick % 10 == 0:
+                    draw_tui(strategy, dm, cycle)
                 
-                # 대기 루프 내부에서 키 입력을 수시로 체크하여 반응성 확보
+                # 키 입력 감지 (0.05s 주기로 즉시 반응)
                 k = get_key_immediate()
                 if k == 'q':
-                    dm.is_running = False # [추가] 백그라운드 스레드 정지 신호
+                    dm.is_running = False
                     try: tw = os.get_terminal_size().columns
                     except: tw = 110
                     sys.stdout.write("\033[H\033[2J" + align_kr(" 시스템을 종료합니다. 잠시만 기다려주세요... ", tw, 'center') + "\n")
                     sys.stdout.flush()
                     time.sleep(1)
-                    return # main 함수 종료
-                elif k:
-                    if not dm.is_input_active:
-                        threading.Thread(target=perform_interaction, args=(k, api, strategy, dm, cycle), daemon=True).start()
+                    return
+                elif k and not dm.is_input_active:
+                    # 커맨드 처리 중 중복 키 차단
+                    if _command_busy:
+                        pass  # 처리 중 추가 입력 무시
+                    else:
+                        _command_busy = True
+                        dm.show_status(f"⏳ [{k.upper()}] 동작 준비 중...")
+                        draw_tui(strategy, dm, cycle)  # 즉시 상태 표시 반영
+                        def _run_cmd(key=k):
+                            nonlocal _command_busy
+                            try:
+                                perform_interaction(key, api, strategy, dm, cycle)
+                            finally:
+                                _command_busy = False
+                        threading.Thread(target=_run_cmd, daemon=True).start()
                 
-                time.sleep(0.5)
+                time.sleep(0.05)
     except KeyboardInterrupt: 
         dm.is_running = False
     finally: 

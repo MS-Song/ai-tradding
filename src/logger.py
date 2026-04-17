@@ -3,6 +3,7 @@ import sys
 import io
 import os
 import json
+import threading
 from datetime import datetime
 
 # --- 1. 기본 로깅 설정 ---
@@ -64,11 +65,19 @@ class TradingLogManager:
                 self.data = {"trades": [], "configs": []}
 
     def _save(self):
-        try:
-            with open(self.log_file, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=4, ensure_ascii=False)
-        except Exception as e:
-            log_error(f"TradingLog 저장 실패: {e}")
+        """원자적 쓰기: tmp파일 기록 후 os.replace()로 교체 → 부분 쓰기 방지.
+        별도 스레드로 실행되어 메인 루프 블로킹을 차단."""
+        def _do():
+            tmp = self.log_file + ".tmp"
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(self.data, f, indent=4, ensure_ascii=False)
+                os.replace(tmp, self.log_file)
+            except Exception as e:
+                try: os.remove(tmp)
+                except: pass
+                log_error(f"TradingLog 저장 실패: {e}")
+        threading.Thread(target=_do, daemon=True, name="LogSaveWorker").start()
 
     def log_trade(self, trade_type, code, name, price, qty, memo="", profit=0.0):
         """실제 체결 데이터를 기록 (TRADE). 매도 시 profit(수익금) 포함 가능"""
@@ -84,8 +93,6 @@ class TradingLogManager:
             "profit": float(profit)
         }
         self.data["trades"].insert(0, log_entry) # 최신순
-        # 최근 200개까지만 유지 (성능 고려)
-        self.data["trades"] = self.data["trades"][:200]
         self._save()
         
         # 텍스트 로그 파일에도 동시 기록
@@ -97,10 +104,22 @@ class TradingLogManager:
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {"time": now, "content": content}
         self.data["configs"].insert(0, log_entry) # 최신순
-        # 최근 50개까지만 유지
-        self.data["configs"] = self.data["configs"][:50]
         self._save()
         logger.info(f"[CONFIG] {content}")
+
+    def cleanup(self, days_to_keep=2):
+        """영업일 기준 n일 로그만 남기고 삭제"""
+        from src.utils import get_business_days_ago
+        threshold_date = get_business_days_ago(days_to_keep).strftime('%Y-%m-%d')
+        
+        original_trade_count = len(self.data.get("trades", []))
+        self.data["trades"] = [t for t in self.data.get("trades", []) if t["time"] >= threshold_date]
+        self.data["configs"] = [c for c in self.data.get("configs", []) if c["time"] >= threshold_date]
+        
+        if len(self.data["trades"]) != original_trade_count:
+            self._save()
+            return True
+        return False
 
     def get_daily_profit(self):
         """금일 발생한 TRADE 로그 중 profit을 모두 합산 (요구사항 9)"""
@@ -137,3 +156,32 @@ def log_trade(msg):
 def log_error(msg):
     """에러 관련 명시적 로그"""
     logger.error(msg)
+
+def cleanup_text_log(file_path, days_to_keep=2):
+    """텍스트 로그 파일을 영업일 기준 n일치만 남기고 정리"""
+    from src.utils import get_business_days_ago
+    if not os.path.exists(file_path): return False
+    
+    threshold_date = get_business_days_ago(days_to_keep).strftime('%Y-%m-%d')
+    cleaned = False
+    
+    try:
+        # FileHandler가 파일을 잡고 있을 수 있으므로 주의해서 처리
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        new_lines = []
+        for line in lines:
+            if len(line) >= 10:
+                date_part = line[:10]
+                if date_part >= threshold_date:
+                    new_lines.append(line)
+        
+        if len(new_lines) != len(lines):
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+            cleaned = True
+    except Exception as e:
+        log_error(f"로그 정리 실패 ({file_path}): {e}")
+    
+    return cleaned

@@ -21,6 +21,10 @@ class KISAPI:
         self._detail_cache = {} # {code: (timestamp, data)}
         self._cache_duration = 60
         self._detail_cache_duration = 3600 # 펀더멘털 데이터는 1시간 캐시
+        self._index_cache = {}           # {iscd: (timestamp, data)}
+        self._index_src = "yahoo"        # 현재 활성 소스: yahoo | naver_api | naver_crawl
+        self._index_src_fail_counts = {"yahoo": 0, "naver_api": 0, "naver_crawl": 0}
+        self._index_src_disable_until = {"yahoo": 0, "naver_api": 0, "naver_crawl": 0}
     def _safe_float(self, val):
         try:
             if val is None or str(val).strip() == "": return 0.0
@@ -149,22 +153,142 @@ class KISAPI:
             return False, data.get("msg1", "오류")
         except Exception as e: return False, f"API 오류: {e}"
 
-    def get_index_price(self, iscd="0001"):
-        symbol_map = {"KOSPI": "^KS11", "KOSDAQ": "^KQ11", "KPI200": "069500.KS", "VOSPI": "^VIX", "FX_USDKRW": "USDKRW=X",
-                      "DOW": "^DJI", "NASDAQ": "^IXIC", "S&P500": "^GSPC", "NAS_FUT": "NQ=F", "SPX_FUT": "ES=F",
+    # ─────────────────────────────────────────────────────────────────
+    # 지수 데이터 수집 3-소스 구조: yahoo → naver_api → naver_crawl
+    # 각 소스가 실패하면 fail_count 증가 → 3회 초과 시 10분 차단
+    # ─────────────────────────────────────────────────────────────────
+    def _index_src_fetch_yahoo(self, iscd: str) -> Optional[dict]:
+        """소스 1: Yahoo Finance v8 chart API"""
+        import re
+        symbol_map = {"KOSPI": "^KS11", "KOSDAQ": "^KQ11", "KPI200": "069500.KS",
+                      "VOSPI": "^VIX", "FX_USDKRW": "USDKRW=X",
+                      "DOW": "^DJI", "NASDAQ": "^IXIC", "S&P500": "^GSPC",
+                      "NAS_FUT": "NQ=F", "SPX_FUT": "ES=F",
                       "BTC_USD": "BTC-USD", "BTC_KRW": "BTC-KRW"}
         symbol = symbol_map.get(iscd, iscd)
-        try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
-            res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
-            data = res.json()
-            if 'chart' in data and data['chart']['result']:
-                meta = data['chart']['result'][0]['meta']
-                curr_p = meta.get('regularMarketPrice', meta.get('chartPreviousClose', 0))
-                prev_c = meta.get('previousClose', 0)
-                rate = ((curr_p - prev_c) / prev_c * 100) if prev_c != 0 else 0
-                return {"name": iscd, "price": curr_p, "rate": rate}
-        except: pass
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
+        res = requests.get(url, headers=self.headers, timeout=5)
+        if res.status_code == 429:
+            raise ConnectionError(f"Yahoo Finance 429 Rate Limit ({iscd})")
+        res.raise_for_status()
+        data = res.json()
+        if not (data.get('chart', {}).get('result')): return None
+        meta = data['chart']['result'][0]['meta']
+        curr_p = meta.get('regularMarketPrice', meta.get('chartPreviousClose', 0))
+        prev_c = meta.get('previousClose', 0)
+        rate = ((curr_p - prev_c) / prev_c * 100) if prev_c else 0
+        return {"name": iscd, "price": curr_p, "rate": rate}
+
+    def _index_src_fetch_naver_api(self, iscd: str) -> Optional[dict]:
+        """소스 2: 네이버 금융 모바일 JSON API / 업비트 공개 API"""
+        kr_map = {"KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KPI200": "KPI200"}
+        if iscd in kr_map:
+            url = f"https://m.stock.naver.com/api/index/{kr_map[iscd]}/basic"
+            res = requests.get(url, headers=self.headers, timeout=5)
+            res.raise_for_status()
+            d = res.json()
+            return {"name": iscd, "price": float(d['closePrice'].replace(',', '')),
+                    "rate": float(d['fluctuationsRatio'])}
+        if iscd in ["BTC_USD", "BTC_KRW"]:
+            res = requests.get("https://api.upbit.com/v1/ticker?markets=KRW-BTC",
+                               headers=self.headers, timeout=5)
+            res.raise_for_status()
+            d = res.json()[0]
+            return {"name": iscd, "price": d['trade_price'],
+                    "rate": round(d['signed_change_rate'] * 100, 4)}
+        return None  # 해당 소스에서 지원하지 않는 지수
+
+    def _index_src_fetch_naver_crawl(self, iscd: str) -> Optional[dict]:
+        """소스 3: 네이버 금융 HTML 크롤링 (글로벌 지수 / 환율)"""
+        import re
+        if not BeautifulSoup: return None
+
+        def _parse_naver_world(symbol_str):
+            url = f"https://finance.naver.com/world/sise.naver?symbol={symbol_str}"
+            res = requests.get(url, headers=self.headers, timeout=6)
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+            p_str = soup.find('p', {'class': 'no_today'}).text.strip()
+            p_val = float(re.search(r'[\d,.]+', p_str).group().replace(',', ''))
+            r_str = soup.find('p', {'class': 'no_exday'}).text
+            m = re.search(r'([\d.]+)\s*%', r_str)
+            r_val = float(m.group(1)) if m else 0.0
+            if '하락' in r_str and r_val > 0: r_val = -r_val
+            return {"name": iscd, "price": p_val, "rate": r_val}
+
+        world_map = {"DOW": "DJI@DJI", "NASDAQ": "NAS@IXIC", "S&P500": "SPI@SPX",
+                     "NAS_FUT": "NAS@NASFUT", "SPX_FUT": "SPI@SPXFUT"}
+        if iscd in world_map:
+            return _parse_naver_world(world_map[iscd])
+
+        if iscd == "FX_USDKRW":
+            url = "https://finance.naver.com/marketindex/exchangeDetail.naver?marketindexCd=FX_USDKRW"
+            res = requests.get(url, headers=self.headers, timeout=6)
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+            p_val = float(re.search(r'[\d,.]+', soup.find('p', {'class': 'no_today'}).text).group().replace(',', ''))
+            r_str = soup.find('p', {'class': 'no_exday'}).text
+            m = re.search(r'([\d.]+)\s*%', r_str)
+            r_val = float(m.group(1)) if m else 0.0
+            if '하락' in r_str and r_val > 0: r_val = -r_val
+            return {"name": iscd, "price": p_val, "rate": r_val}
+
+        if iscd == "VOSPI":
+            url = "https://finance.naver.com/world/sise.naver?symbol=VIX@VIX"
+            return _parse_naver_world("VIX@VIX")
+
+        return None  # 해당 소스에서 지원하지 않는 지수
+
+    def get_index_price(self, iscd: str = "0001") -> Optional[dict]:
+        """지수 데이터 수집 오케스트레이터: yahoo → naver_api → naver_crawl 순서로 시도.
+        소스 실패 시 fail_count 증가, 3회 초과 시 해당 소스를 10분간 차단하고 다음 소스로 전환.
+        모든 소스 실패 시 만료된 캐시를 최종 폴백으로 반환."""
+        from src.logger import log_error
+        curr_t = time.time()
+
+        # 60초 캐시 체크
+        cached = self._index_cache.get(iscd)
+        if cached and (curr_t - cached[0]) < 60:
+            return cached[1]
+
+        SOURCES = [
+            ("yahoo",        self._index_src_fetch_yahoo),
+            ("naver_api",    self._index_src_fetch_naver_api),
+            ("naver_crawl",  self._index_src_fetch_naver_crawl),
+        ]
+        prev_src = self._index_src
+
+        for src_name, fetch_fn in SOURCES:
+            # 차단 중인 소스 건너뜀
+            if curr_t < self._index_src_disable_until.get(src_name, 0):
+                continue
+            try:
+                result = fetch_fn(iscd)
+                if result is None:
+                    continue  # 해당 소스가 이 지수를 지원하지 않음 → 다음 소스로
+                # 성공 처리
+                self._index_src_fail_counts[src_name] = 0
+                self._index_cache[iscd] = (curr_t, result)
+                if src_name != prev_src:
+                    self._index_src = src_name
+                    log_error(f"[INDEX_SRC_SWITCH] {iscd}: {prev_src} → {src_name} 로 전환 성공")
+                return result
+            except ConnectionError as ce:
+                # 429 전용 로그
+                log_error(f"[INDEX_429] {src_name} | {iscd} | {ce}")
+                self._index_src_fail_counts[src_name] = self._index_src_fail_counts.get(src_name, 0) + 1
+                if self._index_src_fail_counts[src_name] >= 3:
+                    self._index_src_disable_until[src_name] = curr_t + 600  # 10분 차단
+                    log_error(f"[INDEX_SRC_BLOCK] {src_name} 3회 연속 실패 → 10분 차단")
+            except Exception as e:
+                log_error(f"[INDEX_ERR] {src_name} | {iscd} | {type(e).__name__}: {e}")
+                self._index_src_fail_counts[src_name] = self._index_src_fail_counts.get(src_name, 0) + 1
+                if self._index_src_fail_counts[src_name] >= 3:
+                    self._index_src_disable_until[src_name] = curr_t + 600
+                    log_error(f"[INDEX_SRC_BLOCK] {src_name} 3회 연속 실패 → 10분 차단")
+
+        # 모든 소스 실패 → 만료된 캐시라도 반환
+        if cached:
+            log_error(f"[INDEX_CACHE_FALLBACK] {iscd}: 모든 소스 실패, 만료 캐시 반환")
+            return cached[1]
         return None
 
     def get_naver_stock_detail(self, code: str) -> dict:
@@ -289,8 +413,9 @@ class KISAPI:
         if self._vol_cache and (curr_t - self._last_vol_time < 60): return self._vol_cache
         results = []
         try:
+            # 네이버 금융 NXT 시스템 URL로 변경
             for sosok in ["0", "1"]:
-                url = f"https://finance.naver.com/sise/sise_quant.naver?sosok={sosok}"
+                url = f"https://finance.naver.com/sise/nxt_sise_quant.naver?sosok={sosok}"
                 res = requests.get(url, headers=self.headers, timeout=5)
                 if not BeautifulSoup: return self._vol_cache or []
                 soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
@@ -316,6 +441,9 @@ class KISAPI:
             if results:  # 성공적으로 수집된 경우에만 캐시 갱신
                 self._vol_cache = results[:40]
                 self._last_vol_time = curr_t
+            else:
+                # 데이터가 없는 경우 (장 시작 전 등)
+                pass
             return self._vol_cache or []
         except Exception as e:
             try:

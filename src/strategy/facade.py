@@ -195,9 +195,19 @@ class VibeStrategy:
     def confirm_buy_decision(self, code: str, name: str) -> Tuple[bool, str]:
         if code in self.rejected_stocks: return False, f"당일 매수 거절됨: {self.rejected_stocks[code]}"
         detail = self.api.get_naver_stock_detail(code)
+        
+        try: price = float(detail.get('price', 0))
+        except: price = 0.0
+        
+        if price == 0.0:
+            return False, "실시간 데이터 오류: 시세 0원 (보류)"
+            
         news = self.api.get_naver_stock_news(code)
         is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news)
         if not is_confirmed:
+            if "0원" in reason or "가격이 0" in reason:
+                return False, f"실시간 데이터 지연/오류 보류: {reason}"
+                
             self.rejected_stocks[code] = reason
             self._save_all_states()
             trading_log.log_config(f"❌ AI 매수 거절: [{code}]{name} | 사유: {reason}")

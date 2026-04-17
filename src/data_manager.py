@@ -345,7 +345,39 @@ class DataManager:
             # 테마 데이터는 6시간마다 갱신
             time.sleep(6 * 3600)
 
+    def log_cleanup_worker(self):
+        """로그 파일을 주기적으로 정리 (1시간 주기, 영업일 기준 2일치 유지)"""
+        while self.is_running:
+            try:
+                from src.logger import trading_log, cleanup_text_log
+                self.set_busy("로그 정리 중")
+                self.add_log("로그 파일 정리를 시작합니다...")
+                
+                # 1. trading_logs.json 정리
+                j_cleaned = trading_log.cleanup(days_to_keep=2)
+                
+                # 2. error.log 정리
+                e_cleaned = cleanup_text_log("error.log", days_to_keep=2)
+                
+                # 3. trading.log 정리
+                t_cleaned = cleanup_text_log("trading.log", days_to_keep=2)
+                
+                if j_cleaned or e_cleaned or t_cleaned:
+                    self.add_log("오래된 로그 파일 정리를 완료했습니다.")
+                else:
+                    self.add_log("로그 파일이 이미 최신 상태입니다.")
+                    
+            except Exception as e:
+                from src.logger import log_error
+                log_error(f"Log Cleanup Worker Error: {e}")
+            finally:
+                self.clear_busy()
+            
+            # 1시간 대기
+            time.sleep(3600)
+
     def start_workers(self, is_virtual):
         threading.Thread(target=self.index_update_worker, daemon=True).start()
         threading.Thread(target=self.data_update_worker, args=(is_virtual,), daemon=True).start()
         threading.Thread(target=self.theme_update_worker, daemon=True).start()
+        threading.Thread(target=self.log_cleanup_worker, daemon=True).start()

@@ -98,9 +98,10 @@ class VibeAlphaEngine:
             with ThreadPoolExecutor(max_workers=5) as executor:
                 list(executor.map(apply_sentiment, top_stocks))
 
-        # 최종 추천 리스트 확정 (8개 종목 + 2개 ETF)
-        final_stocks = sorted(top_stocks, key=lambda x: x['score'], reverse=True)[:8]
+        # 최종 추천 리스트 확정 (총 10개, ETF가 부족할 경우 종목으로 채움)
         final_etfs = sorted(top_etfs, key=lambda x: x['score'], reverse=True)[:2]
+        needed_stocks = 10 - len(final_etfs)
+        final_stocks = sorted(top_stocks, key=lambda x: x['score'], reverse=True)[:needed_stocks]
 
         return final_stocks + final_etfs
 
