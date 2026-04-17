@@ -5,6 +5,7 @@ import unicodedata
 import signal
 import re
 import atexit
+import functools
 from datetime import datetime, time as dtime
 
 # ────────────────────────────────────────────────────────────
@@ -150,6 +151,36 @@ def input_with_esc(prompt, tw, callback=None):
             input_str += k
             if callback: callback(prompt, input_str)
         time.sleep(0.01)
+
+# --- 신규: API 안정성 장치 ---
+def retry_api(max_retries=3, delay=1.2, backoff=2.0, exceptions=(Exception,)):
+    """API 호출 재시도를 위한 데코레이터. 지수 백오프 적용.
+    KIS API의 Rate Limit(초당 호출 제한) 및 네트워크 불안정 대응 목적."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            retries = 0
+            curr_delay = delay
+            last_exception = None
+            while retries < max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    retries += 1
+                    last_exception = e
+                    # 로깅 시 순환 참조 방지를 위해 지연 임포트
+                    from src.logger import log_error
+                    log_error(f"⚠️ API 재시도 {retries}/{max_retries} ({func.__name__}): {e}")
+                    
+                    if retries < max_retries:
+                        time.sleep(curr_delay)
+                        curr_delay *= backoff
+            
+            if last_exception:
+                raise last_exception
+            return None
+        return wrapper
+    return decorator
 
 # --- 유틸리티 함수 ---
 def get_business_days_ago(n):

@@ -87,7 +87,7 @@ class TradingLogManager:
         
         threading.Thread(target=_do, args=(data_to_save,), daemon=True, name="LogSaveWorker").start()
 
-    def log_trade(self, trade_type, code, name, price, qty, memo="", profit=0.0):
+    def log_trade(self, trade_type, code, name, price, qty, memo="", profit=0.0, model_id=""):
         """실제 체결 데이터를 기록 (TRADE). 매도 시 profit(수익금) 포함 가능"""
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {
@@ -98,7 +98,8 @@ class TradingLogManager:
             "price": float(price), 
             "qty": int(qty), 
             "memo": memo,
-            "profit": float(profit)
+            "profit": float(profit),
+            "model_id": model_id  # [Phase 2 추가]
         }
         with self.lock:
             self.data["trades"].insert(0, log_entry) # 최신순
@@ -106,7 +107,8 @@ class TradingLogManager:
         
         # 텍스트 로그 파일에도 동시 기록
         p_str = f" | 수익: {int(profit):+,}원" if profit != 0 else ""
-        logger.info(f"[TRADE] {trade_type} | {name}({code}) | {int(price):,}원 | {qty}주 | {memo}{p_str}")
+        m_str = f" | 모델: {model_id}" if model_id else ""
+        logger.info(f"[TRADE] {trade_type} | {name}({code}) | {int(price):,}원 | {qty}주 | {memo}{p_str}{m_str}")
 
     def log_config(self, content):
         """환경 설정 및 전략 변경을 기록 (CONFIG)"""
@@ -162,6 +164,56 @@ class TradingLogManager:
                     elif "AI자율매수" in t_type:
                         amounts["ALGO"] += amt
         return amounts
+
+    def get_top_profitable_stocks(self, limit=5):
+        """누적 수익금이 높은 상위 종목 집계 ([Phase 4])"""
+        stock_stats = {}
+        with self.lock:
+            for t in self.data.get("trades", []):
+                code = t.get("code")
+                if not code: continue
+                profit = t.get("profit", 0.0)
+                if any(x in t.get("type", "") for x in ["익절", "손절", "청산", "확정", "매도"]):
+                    if code not in stock_stats:
+                        stock_stats[code] = {"name": t.get("name", "Unknown"), "total_profit": 0.0, "count": 0}
+                    stock_stats[code]["total_profit"] += profit
+                    stock_stats[code]["count"] += 1
+        
+        # 수익금 순 정렬
+        sorted_stats = sorted(stock_stats.items(), key=lambda x: x[1]["total_profit"], reverse=True)
+        return sorted_stats[:limit]
+
+    def get_model_performance(self):
+        """모델별 승률 및 수익금 집계 ([Phase 4])"""
+        model_stats = {}
+        with self.lock:
+            for t in self.data.get("trades", []):
+                m_id = t.get("model_id", "")
+                if not m_id: continue
+                
+                # 모델명 정규화
+                m_id_low = m_id.lower()
+                if "gemini-2.1-flash-lite" in m_id_low: m_name = "G2.1FL"
+                elif "gemini-2.5-flash-lite" in m_id_low: m_name = "G2.5FL"
+                elif "gemini-2.5-flash" in m_id_low: m_name = "G2.5F"
+                elif "gemini-3-flash" in m_id_low: m_name = "G3.0F"
+                elif "gemini-3.1-flash-lite" in m_id_low: m_name = "G3.1FL"
+                elif "gemini-3.1-pro" in m_id_low: m_name = "G3.1P"
+                else: m_name = m_id[:8]
+                
+                if m_name not in model_stats:
+                    model_stats[m_name] = {"total_trades": 0, "wins": 0, "total_profit": 0.0, "buy_count": 0}
+                
+                t_type = t.get("type", "")
+                if "매수" in t_type:
+                    model_stats[m_name]["buy_count"] += 1
+                elif any(x in t_type for x in ["익절", "손절", "청산", "확정"]):
+                    model_stats[m_name]["total_trades"] += 1
+                    profit = float(t.get("profit", 0.0))
+                    model_stats[m_name]["total_profit"] += profit
+                    if profit > 0:
+                        model_stats[m_name]["wins"] += 1
+        return model_stats
 
 # 전역 인스턴스
 trading_log = TradingLogManager()

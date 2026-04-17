@@ -12,7 +12,11 @@ from src.strategy.recovery_engine import RecoveryEngine
 from src.strategy.pyramiding_engine import PyramidingEngine
 from src.strategy.alpha_engine import VibeAlphaEngine
 from src.strategy.advisor import GeminiAdvisor
+from src.strategy.indicator_engine import IndicatorEngine
+from src.strategy.rebalance_engine import RebalanceEngine
 from src.strategy.preset_engine import PresetStrategyEngine
+from src.strategy.preset_engine import PresetStrategyEngine
+from src.strategy.risk_manager import RiskManager
 from src.strategy.state_manager import StateManager
 from src.strategy.constants import PRESET_STRATEGIES
 
@@ -39,9 +43,12 @@ class VibeStrategy:
         
         self.last_avg_down_msg = "없음"
         self.base_seed_money = v_cfg.get("base_seed_money", 0)
+        self.last_avg_down_prices = {}
+        self.last_buy_prices = {}
         self.last_sell_times: Dict[str, float] = {}
         self.last_sl_times: Dict[str, float] = {}
         self.last_buy_times: Dict[str, float] = {}
+        self.last_buy_models: Dict[str, str] = {}
         self.ai_recommendations: List[dict] = []
         self.ai_briefing, self.ai_detailed_opinion = "", ""
         self.ai_holdings_opinion = ""
@@ -50,6 +57,8 @@ class VibeStrategy:
         self.yesterday_recs_processed: List[dict] = []
         self._last_closing_bet_date = None
         self.rejected_stocks: Dict[str, dict] = {} # {code: {"reason": reason, "time": timestamp}}
+        self.start_day_asset = 0.0
+        self.last_asset_date = ""
         
         self.ai_config = {
             "amount_per_trade": v_cfg.get("ai_config", {}).get("amount_per_trade", 500000),
@@ -73,6 +82,9 @@ class VibeStrategy:
 
         # Initialize engines that depend on VibeStrategy state
         self.state_mgr = StateManager(self, "trading_state.json")
+        self.risk_mgr = RiskManager(api, v_cfg.get("risk_config", {}))
+        self.indicator_eng = IndicatorEngine()
+        self.rebalance_eng = RebalanceEngine(api, self.ai_advisor)
         self.preset_eng = PresetStrategyEngine(self.ai_advisor, api, lambda: self.current_market_vibe, self._save_all_states)
         
         # Load state
@@ -241,6 +253,10 @@ class VibeStrategy:
         self.current_action = "대기중"
         return res
 
+    def check_rebalance(self, holdings: List[dict], total_asset: float, force: bool = False) -> Optional[str]:
+        """리밸런싱 분석을 수행합니다. ([Phase 4])"""
+        return self.rebalance_eng.analyze_and_suggest(holdings, total_asset, force=force)
+
     def confirm_buy_decision(self, code: str, name: str) -> Tuple[bool, str]:
         # 1시간 경과한 거절 종목 자동 정리
         self._cleanup_rejected_stocks()
@@ -258,7 +274,15 @@ class VibeStrategy:
             return False, "실시간 데이터 오류: 시세 0원 (보류)"
             
         news = self.api.get_naver_stock_news(code)
-        is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news)
+
+        # [Phase 2] 기술적 지표 체크 루틴 추가 (Confirm 직전)
+        indicators = {}
+        try:
+            candles = self.api.get_minute_chart_price(code)
+            if candles: indicators = self.indicator_eng.get_all_indicators(candles)
+        except: pass
+
+        is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news, indicators=indicators)
         if not is_confirmed:
             if "0원" in reason or "가격이 0" in reason:
                 return False, f"실시간 데이터 지연/오류 보류: {reason}"
@@ -267,6 +291,11 @@ class VibeStrategy:
             self._save_all_states()
             trading_log.log_config(f"❌ AI 매수 거절: [{code}]{name} | 사유: {reason}")
             return False, reason
+        
+        # 승인 시 마지막 사용 모델 기록
+        if is_confirmed and hasattr(self.ai_advisor, 'last_used_model_id'):
+            self.last_buy_models[code] = self.ai_advisor.last_used_model_id
+
         return True, "승인됨"
 
     def _cleanup_rejected_stocks(self):
@@ -292,6 +321,11 @@ class VibeStrategy:
         self.recovery_eng.last_avg_down_prices[code] = price
         self.pyramid_eng.last_buy_prices[code] = price
         self.last_buy_times[code] = time.time()
+        
+        # record_buy 시점에 현재 Advisor가 사용한 모델을 매핑 (추천/베팅 등)
+        if hasattr(self.ai_advisor, 'last_used_model_id'):
+            self.last_buy_models[code] = self.ai_advisor.last_used_model_id
+            
         self._save_all_states()
 
     def update_ai_recommendations(self, themes, hot_raw, vol_raw, progress_cb: Optional[Callable] = None, on_item_found: Optional[Callable] = None):
@@ -307,8 +341,17 @@ class VibeStrategy:
         if self.analyzer.kr_vibe.upper() == "DEFENSIVE": base_sl = -3.0
         current_cfg = {"base_tp": self.exit_mgr.base_tp, "base_sl": base_sl, "bear_trig": max(self.recovery_eng.config.get("min_loss_to_buy"), base_sl + 1.0), "bull_trig": self.bull_config.get("min_profit_to_pyramid", 3.0), "ai_amt": self.ai_config["amount_per_trade"]}
         
+        
+        # [Phase 2] 추천 후보 종목들에 대한 기술적 지표 수집
+        candidate_indicators = {}
+        for r in self.ai_recommendations[:5]:
+            try:
+                candles = self.api.get_minute_chart_price(r['code'])
+                if candles: candidate_indicators[r['code']] = self.indicator_eng.get_all_indicators(candles)
+            except: pass
+
         with ThreadPoolExecutor(max_workers=3) as executor:
-            future_briefing = executor.submit(self.ai_advisor.get_advice, self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg, self.ai_recommendations)
+            future_briefing = executor.submit(self.ai_advisor.get_advice, self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg, self.ai_recommendations, indicators=candidate_indicators)
             future_detailed = executor.submit(self.ai_advisor.get_detailed_report_advice, self.ai_recommendations, self.analyzer.kr_vibe, progress_cb=progress_cb)
             future_holdings = executor.submit(self.ai_advisor.get_holdings_report_advice, holdings, self.analyzer.kr_vibe, self.analyzer.current_data, progress_cb=progress_cb) if holdings else None
             
@@ -331,6 +374,23 @@ class VibeStrategy:
             if not (tp and sl and trig_bear and trig_bull): return False
             target_tp, target_sl = abs(float(tp.group(1).replace(',', ''))), -abs(float(sl.group(1).replace(',', '')))
             target_trig_bear, target_trig_bull = -abs(float(trig_bear.group(1).replace(',', ''))), abs(float(trig_bull.group(1).replace(',', '')))
+
+            # [Logic Link] 트리거 정합성 검증 및 강제 보정 (GEMINI.md 준수)
+            # 물타기(Bear)는 항상 손절선보다 높아야 함
+            if target_trig_bear <= target_sl:
+                orig_bear = target_trig_bear
+                target_trig_bear = min(-1.0, target_sl + 1.0) # 최소 -1.0% 또는 손절선 + 1.0%
+                trading_log.log_config(f"🛡️ 물타기 보정: {orig_bear}% -> {target_trig_bear}% (손절 {target_sl}% 충돌)")
+            elif (target_trig_bear - target_sl) < 1.0:
+                target_trig_bear = target_sl + 1.0
+
+            # 불타기(Bull)는 항상 익절선보다 낮아야 함
+            if target_trig_bull >= target_tp:
+                orig_bull = target_trig_bull
+                target_trig_bull = max(1.0, target_tp - 1.0) # 최소 1.0% 또는 익절선 - 1.0%
+                trading_log.log_config(f"🛡️ 불타기 보정: {orig_bull}% -> {target_trig_bull}% (익절 {target_tp}% 충돌)")
+            elif (target_tp - target_trig_bull) < 1.0:
+                target_trig_bull = target_tp - 1.0
 
             if amt:
                 new_amt = int(amt.group(1).replace(',', ''))
@@ -385,6 +445,10 @@ class VibeStrategy:
         today = datetime.now().strftime('%Y-%m-%d')
         if not hasattr(self, '_p3_global_processed'): self._p3_global_processed = {}
         self._p4_ai_done_this_cycle = False
+        
+        # ── Phase 1: 리스크 관리 (서킷 브레이커) ──
+        if self.risk_mgr.check_circuit_breaker(self.api.get_full_balance()[1] if not skip_trade else {}):
+            return [f"🛑 리스크 상한 도달: {self.risk_mgr.halt_reason} (매매 중단)"]
 
         if phase['id'] == "P4" and not self.global_panic and self.current_market_vibe.upper() in ["BULL", "NEUTRAL"] and self.auto_ai_trade:
             if getattr(self, "_last_closing_bet_date", None) != today and self.ai_recommendations:
@@ -400,7 +464,8 @@ class VibeStrategy:
                         if success:
                             self._last_closing_bet_date = today
                             results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
-                            trading_log.log_trade("P4종가매수", code, name, float(top_rec.get('price', 0)), qty, "AI 추천 기반 종가 베팅")
+                            m_id = self.ai_advisor.last_used_model_id if hasattr(self.ai_advisor, 'last_used_model_id') else ""
+                            trading_log.log_trade("P4종가매수", code, name, float(top_rec.get('price', 0)), qty, "AI 추천 기반 종가 베팅", model_id=m_id)
                             self.record_buy(code, float(top_rec.get('price', 0)))
                             self.auto_assign_preset(code, name)
                             self._save_all_states()
@@ -429,7 +494,8 @@ class VibeStrategy:
                             p_strat['is_p3_processed'], p_strat['sl'] = True, 0.2
                             p3_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원)")
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도", profit=p3_profit)
+                            m_id = self.last_buy_models.get(code, "")
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도", profit=p3_profit, model_id=m_id)
                             self._save_all_states()
                     elif skip_trade: p_strat['is_p3_processed'] = True
             else:
@@ -443,7 +509,8 @@ class VibeStrategy:
                             self.exit_mgr.manual_thresholds[code] = [tp_cur, 0.2]
                             p3_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원) | SL→본전(+0.2%)")
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도", profit=p3_profit)
+                            m_id = self.last_buy_models.get(code, "")
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도", profit=p3_profit, model_id=m_id)
                             self._save_all_states()
                     else: self._p3_global_processed[p3_key] = True
                 elif phase['id'] == "P4" and float(item.get("evlu_pfls_rt", 0.0)) < 0 and f"p4_{today}_{code}" not in self._p3_global_processed:
@@ -456,7 +523,8 @@ class VibeStrategy:
                         self._p3_global_processed[f"p4_{today}_{code}"] = True
                         p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                         results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
-                        trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit)
+                        m_id = self.last_buy_models.get(code, "")
+                        trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit, model_id=m_id)
                         self._save_all_states()
 
             # ── P4 AI 장마감 판단 매도: 내일 수익 전망이 없는 종목 자동 청산 ──
@@ -482,7 +550,8 @@ class VibeStrategy:
                                 if self.api.order_market(code, sell_qty, False)[0]:
                                     p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                                     results.append(f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
-                                    trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit)
+                                    m_id = self.last_buy_models.get(code, "")
+                                    trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit, model_id=m_id)
                                     trading_log.log_config(f"🤖 P4 AI 매도: [{code}]{item.get('prdt_name')} | {reason}")
                                     self._save_all_states()
                             else:
@@ -515,7 +584,8 @@ class VibeStrategy:
                 if self.api.order_market(code, sell_qty, False)[0]:
                     if "익절" in action: self.last_sell_times[code] = curr_t
                     elif "손절" in action: self.last_sl_times[code] = curr_t
-                    trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty)
+                    m_id = self.last_buy_models.get(code, "")
+                    trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id=m_id)
                     self._save_all_states()
                     results.append(f"자동 {action}{f'({action_reason})' if action_reason else ''}: {item.get('prdt_name')} {sell_qty}주")
                 self.current_action = "대기중"

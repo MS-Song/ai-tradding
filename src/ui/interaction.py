@@ -133,6 +133,15 @@ def draw_stock_analysis(strategy, dm, code, tw, th):
     if news:
         for n in news[:3]: sys.stdout.write(f"  - {n}\n")
     else: sys.stdout.write("  - 최근 소식 없음\n")
+    
+    # [Phase 3] 기술적 차트 시각화 추가
+    dm.show_status(f"📊 {code} 차트 데이터를 렌더링 중입니다...")
+    candles = strategy.api.get_minute_chart_price(code)
+    if candles:
+        from src.strategy.chart_renderer import ChartRenderer
+        chart_txt = ChartRenderer.render_candle_chart(candles, width=tw-15, height=12, title=f"[{name}] 기술적 흐름 (분봉)")
+        sys.stdout.write("\n" + chart_txt + "\n\n")
+    
     sys.stdout.write("-" * tw + "\n\n"); sys.stdout.flush()
     dm.show_status("🧠 AI가 분석을 위해 데이터를 확인 중입니다...")
     sys.stdout.write("\033[1;95m 🤖 AI가 확인 중입니다... (리포트 생성)\033[0m\n"); sys.stdout.flush()
@@ -150,10 +159,10 @@ def draw_ai_logs_report(strategy, dm, tw, th):
     import io
     import copy
     buf = io.StringIO(); buf.write("\033[H\033[2J")
-    buf.write("\033[44;37m" + align_kr(" [AI DECISION & STRATEGY REASON LOGS] ", tw, 'center') + "\033[0m\n\n")
+    buf.write("\033[44;37m" + align_kr(" [AI DECISION & STRATEGY REASON LOGS] ", tw, 'center') + "\033[0m\n")
     
     # 1. 매수 거절 내역
-    buf.write("\033[1;91m" + " [AI 매수 거절 내역 (당일/최근 15건)]" + "\033[0m\n")
+    buf.write("\033[1;91m" + " [AI 매수 거절 내역 (당일/최근 10건)]" + "\033[0m\n")
     buf.write("-" * tw + "\n")
     if not strategy.rejected_stocks:
         buf.write("  최근 24시간 내 매수 거절 내역이 없습니다.\n")
@@ -170,9 +179,9 @@ def draw_ai_logs_report(strategy, dm, tw, th):
             ts = data.get('time', 0) if isinstance(data, dict) else 0
             r_list.append({"code": code, "reason": reason, "time": ts})
         
-        # 시간 역순 정렬 후 최근 15건 슬라이싱
+        # 시간 역순 정렬 후 최근 10건 슬라이싱 (공간 확보)
         r_list.sort(key=lambda x: x['time'], reverse=True)
-        r_list = r_list[:15]
+        r_list = r_list[:10]
         
         for item in r_list:
             code = item["code"]
@@ -182,10 +191,10 @@ def draw_ai_logs_report(strategy, dm, tw, th):
             name = detail.get('name', 'Unknown')
             buf.write(f" {align_kr(rj_time, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {reason}\n")
     
-    buf.write("\n" + "=" * tw + "\n\n")
+    buf.write("=" * tw + "\n")
     
     # 2. 종목별 전략 수립 사유
-    buf.write("\033[1;96m" + " [종목별 AI 전략 수립 근거 (최근 15건)]" + "\033[0m\n")
+    buf.write("\033[1;96m" + " [종목별 AI 전략 수립 근거 (최근 10건)]" + "\033[0m\n")
     buf.write("-" * tw + "\n")
     presets = strategy.preset_eng.preset_strategies
     active_presets = {k: v for k, v in presets.items() if v.get('preset_id') != '00'}
@@ -203,9 +212,9 @@ def draw_ai_logs_report(strategy, dm, tw, th):
             buy_time = p.get('buy_time', '1970-01-01 00:00:00')
             p_list.append({"code": code, "p": p, "buy_time": buy_time})
             
-        # 시간(buy_time) 역순 정렬 후 최근 15건 슬라이싱
+        # 시간(buy_time) 역순 정렬 후 최근 10건 슬라이싱
         p_list.sort(key=lambda x: x['buy_time'], reverse=True)
-        p_list = p_list[:15]
+        p_list = p_list[:10]
         
         for item in p_list:
             code = item["code"]
@@ -215,9 +224,66 @@ def draw_ai_logs_report(strategy, dm, tw, th):
             name = strategy.api.get_naver_stock_detail(code).get('name', code)
             buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {p.get('reason', 'AI 분석 기반 자동 선정')}\n")
 
-    buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
+    buf.write("=" * tw + "\n")
+    
+    buf.write("-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
     sys.stdout.write(buf.getvalue()); sys.stdout.flush()
     while not get_key_immediate(): time.sleep(0.1)
+    buf.close()
+
+def draw_performance_report(strategy, dm, tw, th):
+    import io
+    from src.logger import trading_log
+    buf = io.StringIO(); buf.write("\033[H\033[2J")
+    buf.write("\033[44;37m" + align_kr(" [AI TRADING PERFORMANCE DASHBOARD] ", tw, 'center') + "\033[0m\n\n")
+    
+    # 1. 수익금 TOP 5 (Hall of Fame)
+    top_stocks = trading_log.get_top_profitable_stocks(5)
+    buf.write("\033[1;93m" + " [종목별 누적 수익금 TOP 5 (Hall of Fame)]" + "\033[0m\n")
+    buf.write("-" * tw + "\n")
+    if not top_stocks:
+        buf.write("  누적 수익 데이터를 수집 중입니다.\n")
+    else:
+        buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 16)} | {align_kr('누적수익금', 16)} | 매매횟수" + "\033[0m\n")
+        for i, (code, s) in enumerate(top_stocks, 1):
+            color = "\033[91m" if s['total_profit'] > 0 else "\033[94m"
+            buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:16], 16)} | {color}{align_kr(f'{int(s['total_profit']):+,}원', 16, 'right')}\033[0m | {s['count']}회\n")
+            
+    buf.write("\n" + "=" * tw + "\n\n")
+    
+    # 2. 모델별 통합 성과 (A/B Stats)
+    model_stats = trading_log.get_model_performance()
+    buf.write("\033[1;96m" + " [AI 모델별 통합 승률 및 성과 지표]" + "\033[0m\n")
+    buf.write("-" * tw + "\n")
+    if not model_stats:
+        buf.write("  모델별 성과 데이터가 없습니다.\n")
+    else:
+        buf.write("\033[1m" + f" {align_kr('모델', 10)} | {align_kr('매수건', 8)} | {align_kr('매도건', 8)} | {align_kr('WIN RATE', 12)} | {align_kr('누적수익금', 16)}" + "\033[0m\n")
+        for m, s in model_stats.items():
+            win_rate = (s['wins'] / s['total_trades'] * 100) if s['total_trades'] > 0 else 0
+            w_color = "\033[91m" if win_rate >= 50 else "\033[94m"
+            p_color = "\033[91m" if s['total_profit'] > 0 else "\033[94m"
+            buf.write(f" {align_kr(m, 10)} | {align_kr(str(s['buy_count']), 8, 'right')} | {align_kr(str(s['total_trades']), 8, 'right')} | {w_color}{align_kr(f'{win_rate:.1f}%', 12, 'right')}\033[0m | {p_color}{align_kr(f'{int(s['total_profit']):+,}원', 16, 'right')}\033[0m\n")
+
+    buf.write("\n" + "=" * tw + "\n\n")
+    
+    # 3. AI 리밸런싱 제안
+    buf.write("\033[1;92m" + " [AI 포트폴리오 리밸런싱 지능형 제안]" + "\033[0m\n")
+    buf.write("-" * tw + "\n")
+    if hasattr(strategy, "rebalance_eng"):
+        advice = strategy.rebalance_eng.get_advice()
+        for line in advice.split('\n'):
+            if line.strip(): buf.write(f"  {line.strip()}\n")
+    else: buf.write("  리밸런싱 분석 중...\n")
+
+    buf.write("\n" + "-" * tw + "\n" + align_kr(" 'R'을 눌러 분석 갱신 | 아무 키나 누르면 돌아갑니다. ", tw, 'center') + "\n")
+    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+    while True:
+        k = get_key_immediate()
+        if k:
+            if k.lower() == 'r': return 'R'
+            break
+        time.sleep(0.1)
     buf.close()
 
 def get_input(dm, prompt, tw):
@@ -242,11 +308,11 @@ def perform_interaction(key, api, strategy, dm, cycle):
     from dotenv import load_dotenv
     
     flush_input()
-    key_map = {'ㅂ': 'q', 'ㅃ': 'q', 'ㅅ': 's', 'ㄴ': 's', 'ㅈ': 's', 'ㅁ': 'a', 'ㅣ': 'l', 'ㅠ': 'b', 'ㅇ': 'd', 'ㅎ': 'h'}
+    key_map = {'ㅂ': 'q', 'ㅃ': 'q', 'ㅅ': 's', 'ㄴ': 's', 'ㅈ': 's', 'ㅁ': 'a', 'ㅣ': 'l', 'ㅠ': 'b', 'ㅇ': 'd', 'ㅎ': 'h', 'ㅔ': 'p', 'ㅖ': 'p'}
     mode = (key[-1] if 'alt+' in key else key).lower()
     if mode in key_map: mode = key_map[mode]
     
-    if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's']: return
+    if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p']: return
     
     # [수정] tw, th를 미리 계산하여 사용 가능하게 함
     try:
@@ -264,7 +330,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
         print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다."); os._exit(0)
     
     # 화면 전환 커맨드 (리포트/로그 등 즉시 전환)
-    if mode in ['m', 'l', 'b', 'd', 'h', 'a']:
+    if mode in ['m', 'l', 'b', 'd', 'h', 'a', 'p']:
         def run_display_task():
             dm.is_full_screen_active = True
             dm.set_busy(f"{mode} 처리")
@@ -279,6 +345,14 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 elif mode == 'd': draw_recommendation_report(strategy, dm, tw, th)
                 elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw, th)
                 elif mode == 'a': draw_ai_logs_report(strategy, dm, tw, th)
+                elif mode == 'p':
+                    res = draw_performance_report(strategy, dm, tw, th)
+                    if res == 'R':
+                        dm.set_busy("리밸런싱 분석 중")
+                        strategy.check_rebalance(dm.cached_holdings, dm.cached_asset['total_asset'], force=True)
+                        dm.clear_busy()
+                        # 리포트 재진입 로직은 interaction 구조상 재호출 필요
+                        draw_performance_report(strategy, dm, tw, th)
                 enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
             finally: 
                 dm.clear_busy()

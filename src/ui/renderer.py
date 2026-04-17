@@ -120,7 +120,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         ai_msg_formatted = f" \033[92m{ai_msg}\033[0m" if "일치" in ai_msg else (f" \033[93m{ai_msg}\033[0m" if ai_msg else "")
         status_line = f" VIBE: {v_c}{dm.cached_vibe}\033[0m{panic_txt} {vibe_desc}{phase_txt}{ai_msg_formatted}"
         buf.write(align_kr(status_line, tw) + "\n")
-        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 B:보유 D:추천 H:인기 A:AI로그 L:로그 | M:매뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
+        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 P:성과 B:보유 D:추천 H:인기 A:AI로그 L:로그 | M:매뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
         
         # [Task 4] 입력 모드 또는 AI 브리핑 영역 (커맨드 바로 아래 고정 위치)
         if dm.is_input_active:
@@ -146,8 +146,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         
         from src.logger import trading_log
         daily_p = trading_log.get_daily_profit()
-        daily_c = "\033[91m" if daily_p > 0 else "\033[94m" if daily_p < 0 else "\033[0m"
-        daily_txt = f" | 금일: {daily_c}{daily_p:+,}원\033[0m"
+        daily_c = "\033[91m" if daily_p > 0 else ("\033[94m" if daily_p < 0 else "\033[93m")
         
         # [Task 9/10] Asset 및 설정 영역 정렬 개편 (파이프 라인 정렬)
         daily_amts = trading_log.get_daily_amounts()
@@ -170,22 +169,31 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         # 정렬 폭 정의 (L:라벨, C:컨텐츠)
         L1, C1, L2, C2 = 8, 52, 8, 55
 
-        # Line 1: ASSET
-        asset_label = align_kr(" ASSET", L1)
+        # Line 1: ASSET & RISK 통합 (사용자 피드백 반영: 순서 및 레이아웃 최적화)
+        label = align_kr(" ASSET", L1)
         seed = getattr(strategy, "base_seed_money", 0)
         if seed > 0:
             c_prof = tot_eval - seed
             c_rt = (c_prof / seed) * 100
             c_color = "\033[91m" if c_prof > 0 else "\033[94m" if c_prof < 0 else "\033[0m"
-            tot_info = f"총자산 {tot_eval:,.0f} (입금: {seed:,.0f}, {c_color}{c_rt:+.2f}%\033[0m)"
+            tot_info = f"총자산 {tot_eval:,.0f} ({c_color}{c_rt:+.2f}%\033[0m) (입금: {seed:,.0f})"
         else:
-            tot_info = f"총자산 {tot_eval:,.0f} (원금: {tot_prin:,.0f}, {tot_color}{tot_rt:+.2f}%\033[0m)"
+            tot_info = f"총자산 {tot_eval:,.0f} ({tot_color}{tot_rt:+.2f}%\033[0m)"
             
+        pnl_rate = asset.get('daily_pnl_rate', 0.0)
+        pnl_color = "\033[91m" if pnl_rate > 0 else ("\033[94m" if pnl_rate < 0 else "\033[93m")
+        halted = strategy.risk_mgr.is_halted
+        risk_st = "\033[41;97m!HALTED!\033[0m" if halted else "\033[92mNORMAL\033[0m"
+        
         cash_info = f"예수금: {asset.get('cash', 0):,.0f}"
-        stk_info = f"주식: {stk_eval:,.0f} ({stk_color}{stk_rt:+.2f}%\033[0m)"
-        daily_clean = daily_txt.replace(" | ", "").strip()
-        line_asset = f"{asset_label} | {align_kr(tot_info, C1)} | {align_kr(cash_info, 18)} | {align_kr(stk_info, 25)} | {daily_clean}"
-        buf.write(align_kr(line_asset, tw) + "\n")
+        stk_info = f"주식: {stk_eval:,.0f}"
+        daily_info = f"{daily_c}{daily_p:+,}원\033[0m ({pnl_color}{pnl_rate:+.2f}%\033[0m)"
+        
+        # [순서 변경] 총자산 -> 예수금 -> 주식 -> 일일 -> 리스크
+        limit_val = strategy.risk_mgr.max_daily_loss_rate
+        risk_active_info = f"{risk_st} (한도:-{limit_val}%)"
+        line_combined = f"{label} | {tot_info} | {cash_info} | {stk_info} | 일일: {daily_info} | 리스크: {risk_active_info}"
+        buf.write(align_kr(line_combined, tw) + "\n")
 
         # Line 2: STRAT + ALGO
         strat_label = align_kr(f"{st_mark}STRAT", L1)
@@ -315,6 +323,20 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 f"{fmt_r(vol_list[i] if i < len(vol_list) else None)} ｜ "
                 f"{fmt_ai(ai_recs[i] if i < len(ai_recs) else None)}\n"
             )
+
+        # [Phase 3] 실시간 캔들 차트 대시보드 (하단 상시 노출)
+        if hasattr(dm, 'cached_chart_data') and dm.cached_chart_data.get("candles"):
+            from src.strategy.chart_renderer import ChartRenderer
+            chart_h = 7 # 7줄 고정 (공간 효율성)
+            chart_txt = ChartRenderer.render_candle_chart(
+                dm.cached_chart_data["candles"], 
+                width=tw-15, 
+                height=chart_h, 
+                title=f"LIVE CHART: {dm.cached_chart_data['name']}({dm.cached_chart_data['code']})"
+            )
+            buf.write("-" * tw + "\n")
+            for line in chart_txt.split('\n'):
+                buf.write(align_kr(line, tw) + "\n")
     
     rem = th - buf.getvalue().count('\n')
     if rem > 0: buf.write(f"\033[K {dm.status_msg if dm.status_msg and (time.time()-dm.status_time<60) else ''}\n"); rem -= 1

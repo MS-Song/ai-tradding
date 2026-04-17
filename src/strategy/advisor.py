@@ -17,9 +17,9 @@ class GeminiAdvisor:
         self.config = ai_config or {}
         self.preferred_model = self.config.get("preferred_model", "gemini-2.5-flash")
         self.fallback_sequence = self.config.get("fallback_sequence", [
-            "gemini-2.5-flash",
+            "gemini-2.1-flash-lite", # 가장 저렴한 모델 우선
             "gemini-2.5-flash-lite",
-            "gemini-3-flash-preview",
+            "gemini-2.5-flash",
             "gemini-3.1-flash-lite-preview",
             "gemini-3.1-pro-preview"
         ])
@@ -53,31 +53,35 @@ class GeminiAdvisor:
             
         return None
 
-    def get_advice(self, market_data: dict, vibe: str, holdings: List[dict], current_config: dict, recs: List[dict] = None) -> Optional[str]:
-        holdings_txt = "\n".join([f"- {h['prdt_name']}({h['pdno']}): 수익률 {h['evlu_pfls_rt']}%" for h in holdings])
+    def get_advice(self, market_data: dict, vibe: str, holdings: List[dict], current_config: dict, recs: List[dict] = None, indicators: dict = None) -> Optional[str]:
+        # [Phase 3] 토큰 절감을 위한 데이터 요약
+        holdings_txt = "\n".join([f"- {h['prdt_name']}({h['pdno']}): {h['evlu_pfls_rt']}%" for h in holdings[:5]]) # 상위 5개만
         recs_txt = ""
         if recs:
-            recs_txt = "\n".join([f"- {r['name']}({r['code']}): 1주당 현재가 {int(float(r.get('price',0))):,}원, 금일 등락 {r.get('rate',0):+.1f}%" for r in recs[:5]])
+            recs_txt = "\n".join([f"- {r['name']}({r['code']}): {int(float(r.get('price',0)))}원, {r.get('rate',0):+.1f}%" for r in recs[:3]]) # 상위 3개만
+
+        indicators_txt = ""
+        if indicators:
+            indicators_txt = "\n        [Quant Summary]"
+            for code, ind in indicators.items():
+                bb = ind.get('bb', {})
+                indicators_txt += f" {code}: RSI {ind.get('rsi', 0):.0f}, %b {bb.get('percent_b', 0):.1f}"
 
         prompt_text = f"""
-        당신은 월스트리트 수석 퀀트 트레이더입니다. 아래의 **[실시간 데이터]**만을 근거로 전략을 브리핑하세요.
-        [실시간 데이터]
-        - 시장Vibe: {vibe}
-        - 현재 지수 상태: {json.dumps(market_data)}
-        - 현재 포트폴리오: {holdings_txt if holdings else "보유 종목 없음"}
-        - 신규 추천 후보: {recs_txt if recs_txt else "추천 후보 없음"}
-        - 시스템 매수 설정 금액: {current_config.get('ai_amt'):,}원
-        [필수 규칙]
-        1. 추천주의 매수가격은 '1주당 현재가'의 ±3% 이내에서만 제안.
-        2. (매수 권장 금액)이 (추천주 1주당 현재가)보다 작으면 추천 불가.
-        3. 추가매수(물타기) 지점 > 손절선(SL), 불타기지점 < 익절선(TP).
-        4. AI[액션]과 AI[추천]은 각각 단 1줄로 요약.
-        [답변 형식]
-        AI[시장]: 요약
+        당신은 포트폴리오 관리자입니다. 아래 정보로 간결한 전략을 제시하세요. 불필요한 공백/수식어 금지.
+        - 지수: {json.dumps(market_data)} | Vibe: {vibe}
+        - 포트: {holdings_txt if holdings else "None"}
+        - 추천: {recs_txt if recs_txt else "None"} {indicators_txt}
+        - 매수: {current_config.get('ai_amt'):,}원
+        [형식 - 엄수]
+        AI[시장]: 요약 (15자 이내)
         AI[전략]: 익절 +X.X%, 손절 -Y.Y%, 물타기 -Z.Z%, 불타기 +W.W%, 금액 N원
-        AI[액션]: 요약 (1줄)
-        AI[추천]: 종목명(코드), 권장매수가 N원, 예상매수주수 M주 (1줄)
-        한국어로 대답하세요.
+        AI[액션]: 대응 지침 (20자 이내)
+        AI[추천]: 종목명(코드), 권장가 N원, M주 (상세 사유 제외)
+        [제약]
+        1. |물타기|는 반드시 |손절|보다 작아야 함 (예: 손절 -5% -> 물타기 -4% 가능 / -6% 불가). 트리거가 겹치면 작동 안 함.
+        2. 불타기는 반드시 익절보다 작아야 함 (예: 익절 +5% -> 불타기 +4% 가능 / +6% 불가).
+        한국어 대답.
         """
         return self._safe_gemini_call(prompt_text) or "⚠️ AI 엔진 분석 실패 (모든 모델 시도함)"
 
@@ -224,19 +228,25 @@ class GeminiAdvisor:
             except Exception as e: log_error(f"프리셋 시뮬레이션 파싱 오류: {e}")
         return None
 
-    def final_buy_confirm(self, code: str, name: str, vibe: str, detail: dict, news: List[str]) -> Tuple[bool, str]:
+    def final_buy_confirm(self, code: str, name: str, vibe: str, detail: dict, news: List[str], indicators: dict = None) -> Tuple[bool, str]:
         """매수 직전 AI에게 최종 컨펌을 요청합니다."""
         detail_txt = (f"현재가: {detail.get('price', 'N/A')}, 등락률: {detail.get('rate', 'N/A')}%, "
                       f"시가총액: {detail.get('market_cap', 'N/A')}, "
                       f"PER: {detail.get('per', 'N/A')}, PBR: {detail.get('pbr', 'N/A')}, "
                       f"배당수익률: {detail.get('yield', 'N/A')}, 업종PER: {detail.get('sector_per', 'N/A')}")
         
+        ind_txt = ""
+        if indicators:
+            bb = indicators.get('bb', {})
+            macd = indicators.get('macd', {})
+            ind_txt = f"\n        [기술적 지표] RSI: {indicators.get('rsi', 0):.1f}, BB %b: {bb.get('percent_b', 0):.2f}, MACD Hist: {macd.get('hist', 0):.1f}"
+
         prompt = f"""
         최종 매수 결정: 아래 종목을 지금 바로 매수해야 할까요?
-        ⚠️주의⚠️: 제공된 '현재가'는 과거 학습 데이터가 아닌 방금 조회한 가장 최신 실시간 시장 가격입니다. 
-        모델이 알고 있는 과거 데이터와 괴리가 있더라도 절대 데이터 오류나 가치평가 불가로 판단하지 말고, 주어진 실시간 가격을 신뢰하여 매수 여부를 결정하세요.
+        ⚠️주의⚠️: 제공된 '현재가' 및 '기술적 지표'는 방금 조회한 가장 최신 실시간 데이터입니다. 
+        모델이 알고 있는 과거 데이터와 괴리가 있더라도 주어진 실시간 정보를 신뢰하여 매수 여부를 결정하세요.
 
-        [종목] {name}({code}) | {detail_txt}
+        [종목] {name}({code}) | {detail_txt} {ind_txt}
         [시장 장세] {vibe}
         [최신 뉴스] {", ".join(news[:3]) if news else "없음"}
         

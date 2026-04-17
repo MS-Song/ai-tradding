@@ -1,12 +1,18 @@
 import requests
 import json
 import time
+import random
 from typing import List, Tuple, Optional
 from src.auth import KISAuth
 try:
     from bs4 import BeautifulSoup
 except ImportError:
     BeautifulSoup = None
+
+import threading
+from urllib.parse import urlparse
+
+from src.utils import retry_api
 
 class KISAPI:
     def __init__(self, auth: KISAuth):
@@ -19,12 +25,29 @@ class KISAPI:
         self._hot_cache, self._last_hot_time = [], 0
         self._vol_cache, self._last_vol_time = [], 0
         self._detail_cache = {} # {code: (timestamp, data)}
+        self._chart_cache = {} # {code_type: (timestamp, data)}
         self._cache_duration = 60
         self._detail_cache_duration = 3600 # 펀더멘털 데이터는 1시간 캐시
         self._index_cache = {}           # {iscd: (timestamp, data)}
         self._index_src = "yahoo"        # 현재 활성 소스: yahoo | naver_api | naver_crawl
         self._index_src_fail_counts = {"yahoo": 0, "naver_api": 0, "naver_crawl": 0}
         self._index_src_disable_until = {"yahoo": 0, "naver_api": 0, "naver_crawl": 0}
+
+        # 도메인별 쓰로틀링 (Throttling) 설정
+        self._domain_lock = threading.Lock()
+        self._last_request_times = {} # {domain: timestamp}
+        self._min_interval = 0.8       # 동일 도메인 최소 요청 간격 (0.8초)
+
+    def _get_cached_chart(self, key: str, ttl: int = 300) -> Optional[List[dict]]:
+        """메모리 내 차트 데이터 캐시 조회 (기본 5분 유효)"""
+        if key in self._chart_cache:
+            ts, data = self._chart_cache[key]
+            if time.time() - ts < ttl: return data
+        return None
+
+    def _set_cached_chart(self, key: str, data: List[dict]):
+        self._chart_cache[key] = (time.time(), data)
+
     def _safe_float(self, val):
         try:
             if val is None or str(val).strip() == "": return 0.0
@@ -36,6 +59,26 @@ class KISAPI:
         else: time.sleep(1.1)
         return requests.request(method, url, **kwargs)
 
+    def _wait_for_domain_delta(self, url: str):
+        """동일 도메인에 대한 과도한 요청을 방지하기 위해 대기합니다. (Thread-safe)"""
+        try:
+            domain = urlparse(url).netloc
+            if not domain: return
+            
+            with self._domain_lock:
+                now = time.time()
+                last_time = self._last_request_times.get(domain, 0)
+                elapsed = now - last_time
+                
+                if elapsed < self._min_interval:
+                    wait_time = self._min_interval - elapsed
+                    time.sleep(wait_time)
+                    now = time.time() # sleep 후 시간 갱신
+                
+                self._last_request_times[domain] = now
+        except: pass
+
+    @retry_api(max_retries=3, delay=1.5)
     def get_full_balance(self, force=False) -> Tuple[List[dict], dict]:
         url = f"{self.domain}/uapi/domestic-stock/v1/trading/inquire-balance"
         headers = self.auth.get_auth_headers()
@@ -119,6 +162,7 @@ class KISAPI:
 
     def get_balance(self): return self.get_full_balance()[0]
 
+    @retry_api(max_retries=2, delay=1.2)
     def get_inquire_price(self, code: str) -> Optional[dict]:
         url = f"{self.domain}/uapi/domestic-stock/v1/quotations/inquire-price"
         headers = self.auth.get_auth_headers(); headers.update({"tr_id": "FHKST01010100"})
@@ -137,6 +181,7 @@ class KISAPI:
             }
         except: return None
 
+    @retry_api(max_retries=3, delay=2.0)
     def order_market(self, code: str, qty: int, is_buy: bool, price: int = 0) -> Tuple[bool, str]:
         url = f"{self.domain}/uapi/domestic-stock/v1/trading/order-cash"
         headers = self.auth.get_auth_headers()
@@ -153,6 +198,125 @@ class KISAPI:
             return False, data.get("msg1", "오류")
         except Exception as e: return False, f"API 오류: {e}"
 
+    @retry_api(max_retries=2, delay=2.0)
+    def get_daily_chart_price(self, code: str, start_date: str = "", end_date: str = "") -> List[dict]:
+        """국내주식 일봉 차트 조회 (FHKST03010100) + 캐싱 적용"""
+        cache_key = f"day_{code}_{start_date}_{end_date}"
+        cached = self._get_cached_chart(cache_key, ttl=1800) # 일봉은 30분 캐시
+        if cached: return cached
+
+        time.sleep(random.uniform(0.1, 0.3))
+        
+        url = f"{self.domain}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+        headers = self.auth.get_auth_headers()
+        headers.update({"tr_id": "FHKST03010100"})
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": code,
+            "FID_INPUT_DATE_1": start_date,
+            "FID_INPUT_DATE_2": end_date,
+            "FID_PERIOD_DIV_CODE": "D",
+            "FID_ORG_ADJ_PRC": "0"
+        }
+        try:
+            res = self._request("GET", url, headers=headers, params=params, timeout=10)
+            data = res.json()
+            if data.get("rt_cd") != "0": return []
+            result = data.get("output2", [])
+            if result: self._set_cached_chart(cache_key, result)
+            return result
+        except: return []
+
+    @retry_api(max_retries=2, delay=1.5)
+    def get_minute_chart_price(self, code: str, target_time: str = "") -> List[dict]:
+        """국내주식 분봉 차트 조회 (FHKST03010200) + 캐싱 및 지터 적용"""
+        cache_key = f"min_{code}_{target_time or 'now'}"
+        cached = self._get_cached_chart(cache_key)
+        if cached: return cached
+
+        # Anti-Blocking Jitter
+        time.sleep(random.uniform(0.1, 0.3))
+
+        url = f"{self.domain}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+        headers = self.auth.get_auth_headers()
+        headers.update({"tr_id": "FHKST03010200"})
+        if not target_time:
+            from datetime import datetime
+            target_time = datetime.now().strftime('%H%M%S')
+            if target_time > "153000": target_time = "153000"
+
+        params = {
+            "FID_ETC_CLS_CODE": "",
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": code,
+            "FID_INPUT_TM_1": target_time,
+            "FID_PW_RES_PRC": "0"
+        }
+        try:
+            res = self._request("GET", url, headers=headers, params=params, timeout=10)
+            data = res.json()
+            if data.get("rt_cd") != "0": 
+                # [Phase 3] KIS 실패 시 Naver Fallback
+                return self._get_naver_minute_chart_fallback(code)
+            result = data.get("output2", [])
+            if not result: return self._get_naver_minute_chart_fallback(code)
+            if result: self._set_cached_chart(cache_key, result)
+            return result
+        except: 
+            return self._get_naver_minute_chart_fallback(code)
+
+    def _get_naver_minute_chart_fallback(self, code: str) -> List[dict]:
+        """KIS API 실패 시 네이버 금융 모바일 API를 통해 분봉 데이터를 가져옵니다 (Anti-Blocking)."""
+        url = f"https://m.stock.naver.com/api/stock/{code}/chart/minute?count=60"
+        try:
+            time.sleep(random.uniform(0.2, 0.5)) # 분산 지터
+            res = requests.get(url, timeout=5)
+            if res.status_code != 200: return []
+            data = res.json()
+            
+            # 네이버 데이터를 KIS 형식(output2)으로 변환
+            # KIS 형식 필드: stck_clpr, stck_hgpr, stck_lwpr, stck_oprc, stck_cntg_vol
+            # Naver 형식: { "price": ..., "high": ..., "low": ..., "open": ..., "volume": ..., "time": ... }
+            converted = []
+            for item in reversed(data.get("items", [])): # KIS는 최신순
+                converted.append({
+                    "stck_clpr": str(item["close"]),
+                    "stck_hgpr": str(item["high"]),
+                    "stck_lwpr": str(item["low"]),
+                    "stck_oprc": str(item["open"]),
+                    "cntg_vol": str(item["volume"]),
+                    "stck_cntg_hour": item["time"][-6:] # HHMMSS
+                })
+            return converted
+        except: return []
+
+    def calculate_atr(self, code: str, period: int = 14) -> float:
+        """최근 n일간의 ATR(Average True Range)을 계산합니다."""
+        from datetime import datetime, timedelta
+        end_date = datetime.now().strftime('%Y%m%d')
+        start_date = (datetime.now() - timedelta(days=period + 10)).strftime('%Y%m%d')
+        
+        candles = self.get_daily_chart_price(code, start_date, end_date)
+        if len(candles) < period: return 0.0
+        
+        # candles는 최신순(역순)으로 오므로 정렬 필요 없음 (보통 KIS는 최신순)
+        # TR 계산: Max((H-L), abs(H-PC), abs(L-PC))
+        tr_list = []
+        for i in range(len(candles) - 1): # 마지막 데이터는 이전 종가가 없으므로 제외
+            curr = candles[i]
+            prev = candles[i+1]
+            
+            h = float(curr.get('stck_hgpr', 0))
+            l = float(curr.get('stck_lwpr', 0))
+            pc = float(prev.get('stck_clpr', 0))
+            
+            tr = max(h - l, abs(h - pc), abs(l - pc))
+            tr_list.append(tr)
+            if len(tr_list) >= period: break
+            
+        if not tr_list: return 0.0
+        return sum(tr_list) / len(tr_list)
+
     # ─────────────────────────────────────────────────────────────────
     # 지수 데이터 수집 3-소스 구조: yahoo → naver_api → naver_crawl
     # 각 소스가 실패하면 fail_count 증가 → 3회 초과 시 10분 차단
@@ -167,6 +331,7 @@ class KISAPI:
                       "BTC_USD": "BTC-USD", "BTC_KRW": "BTC-KRW"}
         symbol = symbol_map.get(iscd, iscd)
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
+        self._wait_for_domain_delta(url)
         res = requests.get(url, headers=self.headers, timeout=5)
         if res.status_code == 429:
             raise ConnectionError(f"Yahoo Finance 429 Rate Limit ({iscd})")
@@ -184,22 +349,25 @@ class KISAPI:
         kr_map = {"KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KPI200": "KPI200"}
         if iscd in kr_map:
             url = f"https://m.stock.naver.com/api/index/{kr_map[iscd]}/basic"
+            self._wait_for_domain_delta(url)
             res = requests.get(url, headers=self.headers, timeout=5)
             res.raise_for_status()
             d = res.json()
             return {"name": iscd, "price": float(d['closePrice'].replace(',', '')),
                     "rate": float(d['fluctuationsRatio'])}
         if iscd == "BTC_KRW":
-            res = requests.get("https://api.upbit.com/v1/ticker?markets=KRW-BTC",
-                               headers=self.headers, timeout=5)
+            url = "https://api.upbit.com/v1/ticker?markets=KRW-BTC"
+            self._wait_for_domain_delta(url)
+            res = requests.get(url, headers=self.headers, timeout=5)
             res.raise_for_status()
             d = res.json()[0]
             return {"name": iscd, "price": d['trade_price'],
                     "rate": round(d['signed_change_rate'] * 100, 4)}
         if iscd == "BTC_USD":
             # USDT-BTC를 USD 대용으로 활용
-            res = requests.get("https://api.upbit.com/v1/ticker?markets=USDT-BTC",
-                               headers=self.headers, timeout=5)
+            url = "https://api.upbit.com/v1/ticker?markets=USDT-BTC"
+            self._wait_for_domain_delta(url)
+            res = requests.get(url, headers=self.headers, timeout=5)
             res.raise_for_status()
             d = res.json()[0]
             return {"name": iscd, "price": d['trade_price'],
@@ -213,6 +381,7 @@ class KISAPI:
 
         def _parse_naver_world(symbol_str):
             url = f"https://finance.naver.com/world/sise.naver?symbol={symbol_str}"
+            self._wait_for_domain_delta(url)
             res = requests.get(url, headers=self.headers, timeout=6)
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             p_str = soup.find('p', {'class': 'no_today'}).text.strip()
@@ -230,6 +399,7 @@ class KISAPI:
 
         if iscd == "FX_USDKRW":
             url = "https://finance.naver.com/marketindex/exchangeDetail.naver?marketindexCd=FX_USDKRW"
+            self._wait_for_domain_delta(url)
             res = requests.get(url, headers=self.headers, timeout=6)
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             p_val = float(re.search(r'[\d,.]+', soup.find('p', {'class': 'no_today'}).text).group().replace(',', ''))
@@ -308,6 +478,7 @@ class KISAPI:
 
         try:
             url = f"https://finance.naver.com/item/main.naver?code={code}"
+            self._wait_for_domain_delta(url)
             res = requests.get(url, headers=self.headers, timeout=5)
             if not BeautifulSoup: return {}
             # euc-kr보다 호환성이 높은 cp949로 바이너리 직접 디코딩
@@ -363,6 +534,7 @@ class KISAPI:
         """네이버 금융 뉴스 섹션에서 최신 헤드라인 수집"""
         try:
             url = f"https://finance.naver.com/item/news.naver?code={code}"
+            self._wait_for_domain_delta(url)
             res = requests.get(url, headers=self.headers, timeout=5)
             if not BeautifulSoup: return []
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
@@ -382,6 +554,7 @@ class KISAPI:
         results = []
         try:
             url = "https://finance.naver.com/sise/lastsearch2.naver"
+            self._wait_for_domain_delta(url)
             res = requests.get(url, headers=self.headers, timeout=5)
             if not BeautifulSoup: return self._hot_cache or []
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
@@ -424,6 +597,7 @@ class KISAPI:
             # 네이버 금융 NXT 시스템 URL로 변경
             for sosok in ["0", "1"]:
                 url = f"https://finance.naver.com/sise/nxt_sise_quant.naver?sosok={sosok}"
+                self._wait_for_domain_delta(url)
                 res = requests.get(url, headers=self.headers, timeout=5)
                 if not BeautifulSoup: return self._vol_cache or []
                 soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
@@ -467,6 +641,7 @@ class KISAPI:
             # 1. 테마 리스트 페이지 (최대 10페이지까지 크롤링하여 전체 테마 확보)
             for page in range(1, 11):
                 url = f"https://finance.naver.com/sise/theme.naver?&page={page}"
+                self._wait_for_domain_delta(url)
                 res = requests.get(url, headers=self.headers, timeout=10)
                 if not BeautifulSoup: return {}
                 soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
@@ -487,7 +662,7 @@ class KISAPI:
                         # 2. 각 테마의 상세 페이지에서 종목 리스트 수집
                         try:
                             # 상세 페이지 요청 간격 조절 (부하 방지)
-                            time.sleep(0.1)
+                            self._wait_for_domain_delta(theme_url)
                             res_d = requests.get(theme_url, headers=self.headers, timeout=5)
                             soup_d = BeautifulSoup(res_d.content, 'html.parser', from_encoding='cp949')
                             

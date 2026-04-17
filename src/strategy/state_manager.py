@@ -84,7 +84,9 @@ class StateManager:
                     "preset_strategies": s.preset_eng.preset_strategies,
                     "last_closing_bet_date": getattr(s, "_last_closing_bet_date", None),
                     "rejected_stocks": s.rejected_stocks,
-                    "last_rejected_date": today
+                    "last_rejected_date": today,
+                    "start_day_asset": s.start_day_asset,
+                    "last_asset_date": s.last_asset_date
                 }
                 self._atomic_write(self.state_file, data)
             except Exception as e:
@@ -131,6 +133,8 @@ class StateManager:
                     if "bear_config" in d: s.recovery_eng.config.update(d["bear_config"])
                     if "bull_config" in d: s.bull_config.update(d["bull_config"])
                     s._last_closing_bet_date = d.get("last_closing_bet_date")
+                    s.start_day_asset = d.get("start_day_asset", 0.0)
+                    s.last_asset_date = d.get("last_asset_date", "")
             except Exception as e:
                 log_error(f"상태 파일 로드 실패: {e}")
 
