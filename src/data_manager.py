@@ -38,7 +38,8 @@ class DataManager:
         self.is_full_screen_active = False
         
         # --- 글로벌 진행 표시기 상태 ---
-        self.global_busy_msg = None
+        self._worker_statuses = {} # {worker_name: status_msg}
+        self._global_busy_msg = None
         self.busy_anim_step = 0
         
         self.data_lock = threading.Lock()
@@ -47,11 +48,44 @@ class DataManager:
         # 개별 갱신 시각 관리
         self.last_times = {"index": 0, "asset": 0, "ranking": 0}
 
-    def set_busy(self, msg):
-        self.global_busy_msg = msg
+    def set_busy(self, msg, worker="GLOBAL"):
+        with self.data_lock:
+            self._worker_statuses[worker] = msg
 
-    def clear_busy(self):
-        self.global_busy_msg = None
+    def clear_busy(self, worker="GLOBAL"):
+        with self.data_lock:
+            self._worker_statuses.pop(worker, None)
+
+    @property
+    def global_busy_msg(self):
+        with self.data_lock:
+            # Aggregate statuses
+            statuses = []
+            
+            # 1. GLOBAL이 최우선 (사용자 요청 작업)
+            if "GLOBAL" in self._worker_statuses:
+                statuses.append(self._worker_statuses["GLOBAL"])
+            
+            # 2. Strategy의 실시간 액션 (매매 등) - 대기중 제외
+            if hasattr(self.strategy, 'current_action') and self.strategy.current_action and self.strategy.current_action != "대기중":
+                statuses.append(self.strategy.current_action)
+
+            # 3. 기타 워커들 (INDEX, DATA 등)
+            other_statuses = [v for k, v in self._worker_statuses.items() if k != "GLOBAL"]
+            if other_statuses:
+                # 중복된 메시지 제거 및 정렬
+                for s in sorted(list(set(other_statuses))):
+                    if s not in statuses:
+                        statuses.append(s)
+            
+            if not statuses:
+                return None
+            
+            res = " | ".join(statuses)
+            # 너무 길면 축약
+            if len(res) > 35:
+                res = res[:32] + "..."
+            return res
 
     def show_status(self, msg, is_error=False):
         import os
@@ -134,6 +168,7 @@ class DataManager:
 
             # 1) 시장 트렌드 분석 (실패해도 나머지 진행)
             try:
+                self.set_busy("시장 분석", "INDEX")
                 self.strategy.determine_market_trend()
                 with self.data_lock:
                     self.cached_market_data = self.strategy.current_market_data
@@ -149,6 +184,7 @@ class DataManager:
 
             # 2) 네이버 인기/거래량 종목 수집 (실패해도 나머지 진행)
             try:
+                self.set_busy("종목 수집", "INDEX")
                 h_raw = self.api.get_naver_hot_stocks()
                 v_raw = self.api.get_naver_volume_stocks()
                 themes = analyze_popular_themes(h_raw, v_raw)
@@ -164,12 +200,16 @@ class DataManager:
 
             # 3) AI 추천 갱신 (실패해도 루프 계속)
             try:
-                self.strategy.update_ai_recommendations(themes, h_raw, v_raw, progress_cb=None)
+                def rec_prog_cb(c, t, msg=""):
+                    self.set_busy(f"AI분석({c}/{t})", "INDEX")
+                self.strategy.update_ai_recommendations(themes, h_raw, v_raw, progress_cb=rec_prog_cb)
                 self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
             except RuntimeError: break
             except Exception as e:
                 from src.logger import log_error
                 log_error(f"AI Rec Update Error: {e}")
+            finally:
+                self.clear_busy("INDEX")
 
             time.sleep(5)
 
@@ -187,6 +227,7 @@ class DataManager:
                     continue
 
                 curr_t = time.time()
+                self.set_busy("잔고 동기화", "DATA")
                 h, a = self.api.get_full_balance(force=True)
 
                 if h or a.get('total_asset', 0) > 0:
@@ -213,11 +254,13 @@ class DataManager:
                     
                     self.last_times["asset"] = curr_t
                     self.add_log(f"잔고 업데이트 완료 (Cash: {a['cash']:,}원)")
+                    self.clear_busy("DATA")
 
                 vibe = self.cached_vibe
                 self.cached_recommendations = self.strategy.get_buy_recommendations(market_trend=vibe.lower())
                 
                 if self.is_kr_market_active and not self.cached_panic:
+                    self.set_busy("매매 사이클", "DATA")
                     auto_res = self.strategy.run_cycle(market_trend=vibe.lower(), skip_trade=False)
                     if auto_res:
                         for r in auto_res: self.add_trading_log(f"🤖 자동: {r}")
@@ -328,6 +371,8 @@ class DataManager:
             except Exception as e:
                 from src.logger import log_error
                 log_error(f"Data Update Error: {e}")
+            finally:
+                self.clear_busy("DATA")
             time.sleep(5)
 
     def theme_update_worker(self):

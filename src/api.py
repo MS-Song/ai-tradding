@@ -189,8 +189,16 @@ class KISAPI:
             d = res.json()
             return {"name": iscd, "price": float(d['closePrice'].replace(',', '')),
                     "rate": float(d['fluctuationsRatio'])}
-        if iscd in ["BTC_USD", "BTC_KRW"]:
+        if iscd == "BTC_KRW":
             res = requests.get("https://api.upbit.com/v1/ticker?markets=KRW-BTC",
+                               headers=self.headers, timeout=5)
+            res.raise_for_status()
+            d = res.json()[0]
+            return {"name": iscd, "price": d['trade_price'],
+                    "rate": round(d['signed_change_rate'] * 100, 4)}
+        if iscd == "BTC_USD":
+            # USDT-BTC를 USD 대용으로 활용
+            res = requests.get("https://api.upbit.com/v1/ticker?markets=USDT-BTC",
                                headers=self.headers, timeout=5)
             res.raise_for_status()
             d = res.json()[0]

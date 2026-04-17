@@ -38,7 +38,7 @@ class VibeStrategy:
         self.analyzer.ai_advisor = self.ai_advisor
         
         self.last_avg_down_msg = "없음"
-        self.base_seed_money = 0
+        self.base_seed_money = v_cfg.get("base_seed_money", 0)
         self.last_sell_times: Dict[str, float] = {}
         self.last_sl_times: Dict[str, float] = {}
         self.last_buy_times: Dict[str, float] = {}
