@@ -3,6 +3,7 @@ import json
 import time
 import random
 from typing import List, Tuple, Optional
+from datetime import datetime
 from src.auth import KISAuth
 try:
     from bs4 import BeautifulSoup
@@ -27,7 +28,7 @@ class KISAPI:
         self._detail_cache = {} # {code: (timestamp, data)}
         self._chart_cache = {} # {code_type: (timestamp, data)}
         self._cache_duration = 60
-        self._detail_cache_duration = 3600 # 펀더멘털 데이터는 1시간 캐시
+        self._detail_cache_duration = 120 # 펀더멘털 데이터 실시간성 강화를 위해 2분 캐시
         self._index_cache = {}           # {iscd: (timestamp, data)}
         self._index_src = "yahoo"        # 현재 활성 소스: yahoo | naver_api | naver_crawl
         self._index_src_fail_counts = {"yahoo": 0, "naver_api": 0, "naver_crawl": 0}
@@ -36,7 +37,18 @@ class KISAPI:
         # 도메인별 쓰로틀링 (Throttling) 설정
         self._domain_lock = threading.Lock()
         self._last_request_times = {} # {domain: timestamp}
-        self._min_interval = 0.8       # 동일 도메인 최소 요청 간격 (0.8초)
+        self._min_interval = 0.33      # 초당 3회 초과 요청 방지 (0.33초 간격)
+
+    def _wait_for_domain_delta(self, url: str):
+        """동일 도메인에 대해 일정 시간 간격(self._min_interval)을 두고 호출하도록 제어"""
+        domain = urlparse(url).netloc
+        with self._domain_lock:
+            last_t = self._last_request_times.get(domain, 0)
+            now = time.time()
+            wait_t = last_t + self._min_interval - now
+            if wait_t > 0:
+                time.sleep(wait_t)
+            self._last_request_times[domain] = time.time()
 
     def _get_cached_chart(self, key: str, ttl: int = 300) -> Optional[List[dict]]:
         """메모리 내 차트 데이터 캐시 조회 (기본 5분 유효)"""
@@ -422,9 +434,9 @@ class KISAPI:
         from src.logger import log_error
         curr_t = time.time()
 
-        # 60초 캐시 체크
+        # 120초(2분) 캐시 체크
         cached = self._index_cache.get(iscd)
-        if cached and (curr_t - cached[0]) < 60:
+        if cached and (curr_t - cached[0]) < 120:
             return cached[1]
 
         SOURCES = [
@@ -469,8 +481,89 @@ class KISAPI:
             return cached[1]
         return None
 
+    def get_multiple_index_prices(self, symbol_map: dict) -> dict:
+        """여러 지수를 한 번에 효율적으로 조회 (Bulk). 야후 Bulk 및 업비트 멀티 티커 활용."""
+        results = {}
+        curr_t = time.time()
+        
+        # 1. 캐시 먼저 확인
+        to_fetch = []
+        for s, code in symbol_map.items():
+            cached = self._index_cache.get(code)
+            if cached and (curr_t - cached[0]) < 120:
+                results[s] = cached[1]
+            else:
+                to_fetch.append((s, code))
+        
+        if not to_fetch: return results
+
+        # 2. 업비트 코인 일괄 조회 (UPBIT)
+        coins = [code for s, code in to_fetch if code in ["BTC_USD", "BTC_KRW"]]
+        if coins:
+            try:
+                # 묻지마 조회 대신 필요한 마켓만 조합
+                markets = []
+                if "BTC_KRW" in coins: markets.append("KRW-BTC")
+                if "BTC_USD" in coins: markets.append("USDT-BTC")
+                
+                url = f"https://api.upbit.com/v1/ticker?markets={','.join(markets)}"
+                self._wait_for_domain_delta(url)
+                res = requests.get(url, timeout=5)
+                data = res.json()
+                for item in data:
+                    is_usd = item['market'] == "USDT-BTC"
+                    key = "BTC_USD" if is_usd else "BTC_KRW"
+                    val = {"name": key, "price": float(item['trade_price']), "rate": float(item['signed_change_rate']) * 100}
+                    self._index_cache[key] = (curr_t, val)
+                    # Mapping back to original symbols
+                    for s, code in to_fetch:
+                        if code == key: results[s] = val
+            except Exception as e:
+                log_error(f"UPBIT Bulk Error: {e}")
+
+        # 3. 야후 벌크 조회 (Yahoo Quote V7)
+        yahoo_codes = [code for s, code in to_fetch if code not in coins]
+        if yahoo_codes and self._index_src == "yahoo":
+            try:
+                # Yahoo 심볼 맵핑
+                yahoo_symbol_map = {
+                    "KOSPI": "^KS11", "KOSDAQ": "^KQ11", "KPI200": "^KS200", "VOSPI": "^VIX",
+                    "FX_USDKRW": "USDKRW=X", "DOW": "^DJI", "NASDAQ": "^IXIC", "S&P500": "^GSPC",
+                    "NAS_FUT": "NQ=F", "SPX_FUT": "ES=F"
+                }
+                targets = [yahoo_symbol_map.get(c, c) for c in yahoo_codes if c in yahoo_symbol_map]
+                if targets:
+                    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={','.join(targets)}"
+                    self._wait_for_domain_delta(url)
+                    res = requests.get(url, headers=self.headers, timeout=7)
+                    data = res.json()
+                    for quote in data.get('quoteResponse', {}).get('result', []):
+                        y_sym = quote.get('symbol')
+                        # 역맵핑
+                        found_code = next((k for k, v in yahoo_symbol_map.items() if v == y_sym), None)
+                        if found_code:
+                            val = {"name": found_code, "price": quote.get('regularMarketPrice', 0), 
+                                   "rate": quote.get('regularMarketChangePercent', 0)}
+                            self._index_cache [found_code] = (curr_t, val)
+                            for s, code in to_fetch:
+                                if code == found_code: results[s] = val
+            except Exception as e:
+                log_error(f"Yahoo Bulk Error: {e}")
+
+        # 4. 여전히 누락된 것들 (실패했거나 지원 종료된 소스) 개별 조회
+        for s, code in to_fetch:
+            if s not in results:
+                results[s] = self.get_index_price(code)
+                
+        return results
+
     def get_naver_stock_detail(self, code: str) -> dict:
         """네이버 금융 상세 페이지에서 핵심 시세 정보 및 펀더멘털 지표 수집 (캐시 적용)"""
+        now = datetime.now()
+        # 장 시작 3분 전(08:57 ~ 08:59)에는 캐시를 무조건 무효화하여 장 시작 시점의 실시간성에 대비
+        if now.hour == 8 and 57 <= now.minute <= 59:
+            self._detail_cache.clear()
+
         curr_t = time.time()
         if code in self._detail_cache:
             ts, data = self._detail_cache[code]
@@ -497,17 +590,29 @@ class KISAPI:
                 if p_tag: detail["price"] = p_tag.text.strip().replace(',', '').split()[0]
                 
                 # 등락률 파싱 (상승/하락/보합 케이스 대응)
-                rate_area = today.find('p', {'class': 'no_up'}) or today.find('p', {'class': 'no_down'}) or today.find('p', {'class': 'no_none'})
+                # 단일 find()는 첫 번째 p(보통 가격/차액)만 가져올 수 있으므로 전체 탐색
+                all_ps = today.find_all('p')
+                rate_area = None
+                for p in all_ps:
+                    if '%' in p.text:
+                        rate_area = p
+                        break
+                
                 if rate_area:
-                    rate_val = rate_area.find('span', {'class': 'blind'})
-                    if rate_val:
-                        r_txt = rate_val.text.strip()
-                        try:
-                            val_match = re.search(r'\d+\.\d+', r_txt)
-                            if val_match:
-                                val = float(val_match.group())
-                                detail["rate"] = val if "플러스" in r_txt else -val if "마이너스" in r_txt else 0.0
-                        except: pass
+                    try:
+                        # 퍼센트 기호 앞의 숫자 추출 (예: "+ 1.23 %" -> 1.23)
+                        val_match = re.search(r'([\d.]+)\s*%', rate_area.text)
+                        if val_match:
+                            val = float(val_match.group(1))
+                            # 클래스명 또는 텍스트 기반으로 부호 결정
+                            cls_str = str(rate_area.get('class', []))
+                            if 'no_up' in cls_str: detail["rate"] = val
+                            elif 'no_down' in cls_str: detail["rate"] = -val
+                            else:
+                                blind_txt = rate_area.find('span', {'class': 'blind'})
+                                r_txt = blind_txt.text.strip() if blind_txt else ""
+                                detail["rate"] = val if "플러스" in r_txt or "+" in rate_area.text else -val if "마이너스" in r_txt or "-" in rate_area.text else 0.0
+                    except: pass
 
             # 3. 펀더멘털 지표 및 시가총액 수집
             aside = soup.find('div', {'class': 'aside_invest_info'})
@@ -526,7 +631,9 @@ class KISAPI:
                 if cap_area and cap_area.find_next_sibling('td'):
                     detail["market_cap"] = cap_area.find_next_sibling('td').text.strip().replace('\t','').replace('\n','')
             
-            self._detail_cache[code] = (curr_t, detail)
+            # 가격이 0원인 경우는 일시적 오류(또는 장 시작 전)이므로 캐시하지 않음
+            if detail["price"] != "0" and detail["price"] != "":
+                self._detail_cache[code] = (curr_t, detail)
             return detail
         except: return {"name": "Error", "price": "0", "rate": 0.0, "per": "N/A", "pbr": "N/A", "yield": "N/A", "sector_per": "N/A", "market_cap": "N/A"}
 

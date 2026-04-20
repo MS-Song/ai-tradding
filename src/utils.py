@@ -137,19 +137,47 @@ def input_with_esc(prompt, tw, callback=None):
     input_str = ""
     while True:
         k = get_key_immediate()
-        if k == 'esc': 
-            if callback: callback("", "")
-            return None
-        elif k == '\r' or k == '\n':
-            if callback: callback("", "")
-            return input_str
-        elif k == '\b' or k == 'backspace' or k == '\x7f':
-            if len(input_str) > 0:
-                input_str = input_str[:-1]
-                if callback: callback(prompt, input_str)
-        elif k and len(k) == 1:
-            input_str += k
+        if k:
+            if k == 'esc': 
+                if callback: callback("", "")
+                return None
+            elif k == '\r' or k == '\n':
+                if callback: callback("", "")
+                return input_str
+            elif k == '\b' or k == 'backspace' or k == '\x7f':
+                if len(input_str) > 0:
+                    input_str = input_str[:-1]
+            elif len(k) == 1:
+                input_str += k
+            
+            # [수정] 붙여넣기 및 빠른 입력 시 버퍼에 쌓인 문자를 한꺼번에 처리
+            # 화면을 매 문자마다 다시 그리는(callback) 비용을 줄여 입력 유실 방지
+            while True:
+                has_more = False
+                if IS_WINDOWS:
+                    import msvcrt
+                    if msvcrt.kbhit(): has_more = True
+                else:
+                    import select
+                    if select.select([sys.stdin], [], [], 0)[0]: has_more = True
+                
+                if not has_more: break
+                
+                kb = get_key_immediate()
+                if not kb: break
+                if kb == 'esc': 
+                    if callback: callback("", "")
+                    return None
+                if kb == '\r' or kb == '\n':
+                    if callback: callback("", "")
+                    return input_str
+                if kb in ['\b', 'backspace', '\x7f']:
+                    if len(input_str) > 0: input_str = input_str[:-1]
+                elif len(kb) == 1:
+                    input_str += kb
+
             if callback: callback(prompt, input_str)
+            
         time.sleep(0.01)
 
 # --- 신규: API 안정성 장치 ---

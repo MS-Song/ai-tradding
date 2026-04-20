@@ -28,7 +28,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     # 버전/상태/작업 정보를 왼쪽에 배치, 시간과 스레드 카운트를 오른쪽 끝에 배치
     is_v = getattr(strategy.api.auth, 'is_virtual', True)
     mode_tag = " [모의]" if is_v else " [실전]"
-    version_text = f"[AI TRADING SYSTEM ver 1.2.1]{mode_tag}"
+    version_text = f"[AI TRADING SYSTEM ver 1.2.2]{mode_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     work_text = f"작업: {dm.global_busy_msg if hasattr(dm, 'global_busy_msg') and dm.global_busy_msg else '-'}"
     thread_count = threading.active_count()

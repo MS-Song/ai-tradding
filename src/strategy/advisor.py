@@ -68,19 +68,24 @@ class GeminiAdvisor:
                 indicators_txt += f" {code}: RSI {ind.get('rsi', 0):.0f}, %b {bb.get('percent_b', 0):.1f}"
 
         prompt_text = f"""
-        당신은 포트폴리오 관리자입니다. 아래 정보로 간결한 전략을 제시하세요. 불필요한 공백/수식어 금지.
+        당신은 시장의 흐름에 민감한 초단기 데이트레이더(Scalper)입니다. 오늘의 변동성만을 수익의 원천으로 삼습니다. 아래 정보로 간결한 전략을 제시하세요. 불필요한 공백/수식어 금지.
         - 지수: {json.dumps(market_data)} | Vibe: {vibe}
         - 포트: {holdings_txt if holdings else "None"}
         - 추천: {recs_txt if recs_txt else "None"} {indicators_txt}
         - 매수: {current_config.get('ai_amt'):,}원
+        [전략 가이드라인]
+        1. 장기적 기업 가치나 모호한 불확실성에 매몰되지 마세요. 
+        2. 지금 당장의 수급, 거래량, 차트 에너지가 확인되면 적극적으로 매수를 제안하세요. 
+        3. 리스크는 타이트한 손절선으로 방어하면 되므로, 진입 기회를 놓치지 않는 것이 중요합니다.
         [형식 - 엄수]
         AI[시장]: 요약 (15자 이내)
         AI[전략]: 익절 +X.X%, 손절 -Y.Y%, 물타기 -Z.Z%, 불타기 +W.W%, 금액 N원
         AI[액션]: 대응 지침 (20자 이내)
         AI[추천]: 종목명(코드), 권장가 N원, M주 (상세 사유 제외)
         [제약]
-        1. |물타기|는 반드시 |손절|보다 작아야 함 (예: 손절 -5% -> 물타기 -4% 가능 / -6% 불가). 트리거가 겹치면 작동 안 함.
-        2. 불타기는 반드시 익절보다 작아야 함 (예: 익절 +5% -> 불타기 +4% 가능 / +6% 불가).
+        1. |물타기|는 반드시 |손절|보다 작아야 함.
+        2. 불타기는 반드시 익절보다 작아야 함.
+        3. 실거래 수수료 및 슬리피지를 고려하여, 익절/손절 폭은 가급적 최소 2.0% 이상으로 넉넉하게 산정하세요.
         한국어 대답.
         """
         return self._safe_gemini_call(prompt_text) or "⚠️ AI 엔진 분석 실패 (모든 모델 시도함)"
@@ -115,9 +120,10 @@ class GeminiAdvisor:
         return self._safe_gemini_call(prompt) or "종목별 입체 분석 의견을 가져오지 못했습니다."
 
     def get_stock_report_advice(self, code: str, name: str, detail: dict, news: List[str]) -> Optional[str]:
+        rate = detail.get('rate', 0)
         prompt = f"""
         수석 투자 전략가로서 아래 종목에 대해 분석 리포트를 작성하세요.
-        [종목 정보] {name}({code}) | {int(float(detail.get('price', 0))):,}원 | PER {detail.get('per')}, PBR {detail.get('pbr')}
+        [종목 정보] {name}({code}) | {int(float(detail.get('price', 0))):,}원 ({rate:+.2f}%) | PER {detail.get('per')}, PBR {detail.get('pbr')}
         [뉴스 요약] {', '.join(news[:3]) if news else '소식 없음'}
         [필수 내용] 1.가격 변동 원인 2.모멘텀 진단 3.매수/매도 조언 4.한줄평
         전문가 어조, 한국어, 10~15줄.
@@ -228,7 +234,7 @@ class GeminiAdvisor:
             except Exception as e: log_error(f"프리셋 시뮬레이션 파싱 오류: {e}")
         return None
 
-    def final_buy_confirm(self, code: str, name: str, vibe: str, detail: dict, news: List[str], indicators: dict = None) -> Tuple[bool, str]:
+    def final_buy_confirm(self, code: str, name: str, vibe: str, detail: dict, news: List[str], indicators: dict = None, score: float = 0.0) -> Tuple[bool, str]:
         """매수 직전 AI에게 최종 컨펌을 요청합니다."""
         detail_txt = (f"현재가: {detail.get('price', 'N/A')}, 등락률: {detail.get('rate', 'N/A')}%, "
                       f"시가총액: {detail.get('market_cap', 'N/A')}, "
@@ -242,17 +248,23 @@ class GeminiAdvisor:
             ind_txt = f"\n        [기술적 지표] RSI: {indicators.get('rsi', 0):.1f}, BB %b: {bb.get('percent_b', 0):.2f}, MACD Hist: {macd.get('hist', 0):.1f}"
 
         prompt = f"""
-        최종 매수 결정: 아래 종목을 지금 바로 매수해야 할까요?
-        ⚠️주의⚠️: 제공된 '현재가' 및 '기술적 지표'는 방금 조회한 가장 최신 실시간 데이터입니다. 
-        모델이 알고 있는 과거 데이터와 괴리가 있더라도 주어진 실시간 정보를 신뢰하여 매수 여부를 결정하세요.
-
-        [종목] {name}({code}) | {detail_txt} {ind_txt}
+        최종 매수 컨펌: 당신은 시장 기회를 놓치지 않는 공격적인 트레이더입니다. 
+        이 종목은 이미 내부 퀀트 엔진에서 {score:.1f}/100점의 높은 점수를 받아 추천되었습니다.
+        
+        [판단 가이드라인]
+        1. 점수가 100점 이상이면 이미 데이터 상으로 강력한 매수 신호가 발생한 상태입니다. 
+        2. 단순히 '대형주라서 무겁다'거나 '최근 뉴스가 없다'는 일반론적인 이유로 거절하지 마세요. 
+        3. 사용자는 약 5% 수준의 목표 수익률을 가지고 있으며, 시스템에 의한 철저한 손절선 보호가 작동 중입니다.
+        4. 결정적인 악재 뉴스(횡령, 상장폐지 우려 등)나 데이터 오류가 발견되지 않는 한, 퀀트 엔진의 판단을 신뢰하여 'Yes'를 선택하세요.
+        
+        [종목 정보] {name}({code}) | 퀀트스코어: {score:.1f}
+        [데이터 요약] {detail_txt} {ind_txt}
         [시장 장세] {vibe}
         [최신 뉴스] {", ".join(news[:3]) if news else "없음"}
         
         [답변 형식]
         결정: Yes 또는 No
-        사유: 한 줄 요약 (No인 경우 필수)
+        사유: 한 줄 요약 (고득점 종목을 거절할 경우 반드시 합당한 '리스크'를 명시)
         """
         answer = self._safe_gemini_call(prompt)
         if answer:
@@ -303,24 +315,21 @@ class GeminiAdvisor:
                       f"배당수익률: {detail.get('yield', 'N/A')}, 업종PER: {detail.get('sector_per', 'N/A')}")
 
         prompt = f"""
-        장 마감 10분 전입니다. 보유 종목을 오늘 청산할지, 내일까지 보유할지 결정하세요.
-        ⚠️중요⚠️: 제공된 데이터는 방금 조회한 실시간 시장 데이터입니다. 과거 학습 데이터와 괴리가 있어도 주어진 데이터를 신뢰하세요.
-
+        장 마감 10분 전입니다. 초단기 단타 관점에서 오늘 수익을 확정(Sell)할지, 내일 시초가 갭상승을 노리고 오버나이트(Hold)할지 결정하세요.
+        
         [종목] {name}({code}) | 현재 수익률: {rt:+.2f}%
         [지표] {detail_txt}
         [시장 장세] {vibe}
         [최신 뉴스] {", ".join(news[:3]) if news else "없음"}
 
         [판단 기준]
-        1. 내일 추가 상승 모멘텀(뉴스 호재, 실적, 테마 지속)이 있는가?
-        2. 현재 밸류에이션(PER/PBR)이 추가 상승 여력을 지지하는가?
-        3. 시장 장세(Vibe)가 내일도 우호적인가?
-        4. 수익률이 소폭이거나 하락 전환 조짐이 있는가?
-        5. 오버나이트 리스크 대비 보유 가치가 있는가?
+        1. 내일 시초가에 바로 수익을 줄 만큼 압도적인 수급(상한가 근접, 역대급 거래량)이 있는가?
+        2. 당일 중 강력한 호재 뉴스가 터져 내일 아침까지 모멘텀이 이어질 것인가?
+        3. 단순 반등이나 불확실한 흐름이라면 즉시 현금화하여 리스크를 제거하십시오.
 
         [규칙]
-        - 불확실하면 Sell (보수적 판단 우선)
-        - 강한 상승 모멘텀이 있고 밸류에이션이 합리적이면 Hold
+        - 원칙적으로 'Sell'을 선호합니다. (오늘 수익 확정 및 리스크 제거)
+        - 오직 압도적인 상승 에너지와 재료가 확인될 때만 리버스 'Hold'를 선택하세요.
 
         [답변 형식]
         결정: Sell 또는 Hold

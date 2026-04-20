@@ -25,14 +25,10 @@ class MarketAnalyzer:
             "NAS_FUT": "NAS_FUT", "SPX_FUT": "SPX_FUT", "BTC_USD": "BTC_USD", "BTC_KRW": "BTC_KRW"
         }
         try:
-            # [수정] 0.3초 간격으로 순차 조회하여 429 에러 방지 (백그라운드 스레드에서 실행됨)
-            for s, code in symbol_map.items():
-                try:
-                    data = self.api.get_index_price(code)
-                    if data: self.current_data[s] = data
-                    time.sleep(0.3) # 0.3초 간격 유지 (사용자 요청 사항)
-                except Exception as e:
-                    log_error(f"Index Fetch Error ({s}): {e}")
+            # [최적화] 개별 호출 대신 벌크 API를 사용하여 1회에 모든 지수 수집
+            batch_data = self.api.get_multiple_index_prices(symbol_map)
+            for s, data in batch_data.items():
+                if data: self.current_data[s] = data
         except RuntimeError:
             return self.kr_vibe, self.is_panic 
         # 1차 평가 (알고리즘 기반 휴리스틱)

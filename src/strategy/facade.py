@@ -257,7 +257,7 @@ class VibeStrategy:
         """리밸런싱 분석을 수행합니다. ([Phase 4])"""
         return self.rebalance_eng.analyze_and_suggest(holdings, total_asset, force=force)
 
-    def confirm_buy_decision(self, code: str, name: str) -> Tuple[bool, str]:
+    def confirm_buy_decision(self, code: str, name: str, score: float = 0.0) -> Tuple[bool, str]:
         # 1시간 경과한 거절 종목 자동 정리
         self._cleanup_rejected_stocks()
         
@@ -282,9 +282,10 @@ class VibeStrategy:
             if candles: indicators = self.indicator_eng.get_all_indicators(candles)
         except: pass
 
-        is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news, indicators=indicators)
+        is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news, indicators=indicators, score=score)
         if not is_confirmed:
-            if "0원" in reason or "가격이 0" in reason:
+            # '0원'이 포함되되 큰 금액(예: 1,144,000원)의 일부인 경우는 제외하고, 순수하게 현재가가 0원인 에러 케이스만 필터링
+            if re.search(r"(?<![0-9])0원", reason) or "가격이 0원" in reason or "시세가 0원" in reason:
                 return False, f"실시간 데이터 지연/오류 보류: {reason}"
                 
             self.rejected_stocks[code] = {"reason": reason, "time": time.time()}
@@ -372,25 +373,33 @@ class VibeStrategy:
             amt = re.search(r"금액\s*([\d,]+)\s*원", strat_line)
 
             if not (tp and sl and trig_bear and trig_bull): return False
-            target_tp, target_sl = abs(float(tp.group(1).replace(',', ''))), -abs(float(sl.group(1).replace(',', '')))
-            target_trig_bear, target_trig_bull = -abs(float(trig_bear.group(1).replace(',', ''))), abs(float(trig_bull.group(1).replace(',', '')))
+            
+            # 1. AI 응답 값 파싱 (기본적인 절차)
+            raw_tp = abs(float(tp.group(1).replace(',', '')))
+            raw_sl = -abs(float(sl.group(1).replace(',', '')))
+            raw_trig_bear = -abs(float(trig_bear.group(1).replace(',', '')))
+            raw_trig_bull = abs(float(trig_bull.group(1).replace(',', '')))
+            
+            # 2. 값의 합리성 검증 (최소 범위 강제) - 너무 타이트한 TP/SL 방지
+            target_tp = max(2.5, raw_tp) 
+            target_sl = min(-2.5, raw_sl)
 
-            # [Logic Link] 트리거 정합성 검증 및 강제 보정 (GEMINI.md 준수)
-            # 물타기(Bear)는 항상 손절선보다 높아야 함
+            # 3. [Logic Link] 트리거 정합성 검증 및 강제 보정 (GEMINI.md 준수)
+            # 물타기(Bear)는 항상 손절선보다 높아야 함, 단 반드시 음수(손실권)여야 함
+            target_trig_bear = raw_trig_bear
             if target_trig_bear <= target_sl:
-                orig_bear = target_trig_bear
-                target_trig_bear = min(-1.0, target_sl + 1.0) # 최소 -1.0% 또는 손절선 + 1.0%
-                trading_log.log_config(f"🛡️ 물타기 보정: {orig_bear}% -> {target_trig_bear}% (손절 {target_sl}% 충돌)")
-            elif (target_trig_bear - target_sl) < 1.0:
                 target_trig_bear = target_sl + 1.0
+            
+            # 최종 Bear 트리거는 반드시 음수 보장
+            target_trig_bear = min(-1.0, target_trig_bear)
 
-            # 불타기(Bull)는 항상 익절선보다 낮아야 함
+            # 불타기(Bull)는 항상 익절선보다 낮아야 함, 단 반드시 양수(수익권)여야 함
+            target_trig_bull = raw_trig_bull
             if target_trig_bull >= target_tp:
-                orig_bull = target_trig_bull
-                target_trig_bull = max(1.0, target_tp - 1.0) # 최소 1.0% 또는 익절선 - 1.0%
-                trading_log.log_config(f"🛡️ 불타기 보정: {orig_bull}% -> {target_trig_bull}% (익절 {target_tp}% 충돌)")
-            elif (target_tp - target_trig_bull) < 1.0:
                 target_trig_bull = target_tp - 1.0
+            
+            # 최종 Bull 트리거는 반드시 양수 보장
+            target_trig_bull = max(1.0, target_trig_bull)
 
             if amt:
                 new_amt = int(amt.group(1).replace(',', ''))
@@ -399,9 +408,15 @@ class VibeStrategy:
                 new_amt = self.recovery_eng.config.get("average_down_amount", 500000)
                 log_error(f"AI 금액 파싱 실패, 기존값 {new_amt:,}원 유지")
 
+            # 4. 역산 과정에서의 방어 로직 (Base 값이 극단적으로 낮아지는 현상 방지)
             tp_mod, sl_mod = self.exit_mgr.get_vibe_modifiers(self.analyzer.kr_vibe)
-            self.exit_mgr.base_tp = target_tp - tp_mod
-            self.exit_mgr.base_sl = target_sl - sl_mod
+            
+            calculated_base_tp = target_tp - tp_mod
+            calculated_base_sl = target_sl - sl_mod
+            
+            # Base 값이 최소한 양의 익절 / 음의 손절을 유지하도록 보정 (Vibe 급변 대응)
+            self.exit_mgr.base_tp = max(2.0, calculated_base_tp)
+            self.exit_mgr.base_sl = min(-2.0, calculated_base_sl)
             
             self.recovery_eng.config.update({"min_loss_to_buy": target_trig_bear, "average_down_amount": new_amt, "max_investment_per_stock": int(new_amt * 5)})
             self.bull_config.update({"min_profit_to_pyramid": target_trig_bull, "average_down_amount": new_amt, "max_investment_per_stock": int(new_amt * 5)})

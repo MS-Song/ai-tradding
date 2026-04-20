@@ -399,7 +399,7 @@ class DataManager:
                                 continue
 
                             # 3. AI 최종 매수 컨펌 (최초 거절 시에만 로깅됨)
-                            is_confirmed, refuse_reason = self.strategy.confirm_buy_decision(top_ai['code'], top_ai['name'])
+                            is_confirmed, refuse_reason = self.strategy.confirm_buy_decision(top_ai['code'], top_ai['name'], score=top_ai.get('score', 0.0))
                             if not is_confirmed:
                                 self.add_trading_log(f"⚠️ AI매수거절: {top_ai['name']} | 사유: {refuse_reason}")
                                 continue
