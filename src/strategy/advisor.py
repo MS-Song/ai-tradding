@@ -11,17 +11,17 @@ from src.strategy.constants import PRESET_STRATEGIES
 class GeminiAdvisor:
     def __init__(self, api, ai_config: dict = None):
         self.api = api
+        self.config = ai_config or {}
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
         
-        # 기본 모델 설정 (사용자 검증 기반: Group 1 수정 반영)
-        self.config = ai_config or {}
-        self.preferred_model = self.config.get("preferred_model", "gemini-2.5-flash")
+        # 기본 모델 설정 (사용자 검증 기반: 3.1 버전 우선순위 상향)
+        self.preferred_model = self.config.get("preferred_model", "gemini-3.1-flash-lite-preview")
         self.fallback_sequence = self.config.get("fallback_sequence", [
-            "gemini-2.1-flash-lite", # 가장 저렴한 모델 우선
-            "gemini-2.5-flash-lite",
-            "gemini-2.5-flash",
             "gemini-3.1-flash-lite-preview",
-            "gemini-3.1-pro-preview"
+            "gemini-3.1-pro-preview",
+            "gemini-3.0-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite"
         ])
 
     def _safe_gemini_call(self, prompt: str, timeout: int = 60) -> Optional[str]:
@@ -255,7 +255,8 @@ class GeminiAdvisor:
         1. 점수가 100점 이상이면 이미 데이터 상으로 강력한 매수 신호가 발생한 상태입니다. 
         2. 단순히 '대형주라서 무겁다'거나 '최근 뉴스가 없다'는 일반론적인 이유로 거절하지 마세요. 
         3. 사용자는 약 5% 수준의 목표 수익률을 가지고 있으며, 시스템에 의한 철저한 손절선 보호가 작동 중입니다.
-        4. 결정적인 악재 뉴스(횡령, 상장폐지 우려 등)나 데이터 오류가 발견되지 않는 한, 퀀트 엔진의 판단을 신뢰하여 'Yes'를 선택하세요.
+        4. 데이터 신뢰: 제공된 '현재가', '시가총액' 등 모든 숫자 데이터는 실시간 거래소 데이터이므로 당신의 내부 지식(훈련 데이터)과 다르더라도 무조건 '현재의 진실'로 믿고 판단하십시오. 주가는 매 순간 변하므로 과거의 기억과 다르다고 하여 '데이터 오류'라고 판단하는 것은 절대 금지됩니다.
+        5. 결정적인 악재 뉴스(횡령, 상장폐지 우려 등)나 실제 현재가가 0원인 명백한 시스템 오류가 아닌 한, 퀀트 엔진의 판단을 신뢰하여 'Yes'를 선택하세요.
         
         [종목 정보] {name}({code}) | 퀀트스코어: {score:.1f}
         [데이터 요약] {detail_txt} {ind_txt}
@@ -347,6 +348,55 @@ class GeminiAdvisor:
             reason = f"{model_tag} {reason}"
             return (decision == "Sell"), reason
         return True, "API 호출 실패 (보수적 매도)"
+
+    def compare_stock_superiority(self, candidate: dict, holdings_info: List[dict], vibe: str) -> Tuple[bool, Optional[str], str]:
+        """새로운 추천 종목(candidate)과 현재 보유 종목들을 비교하여 교체 여부를 결정합니다.
+        Returns: (should_replace: bool, sell_code: str, reason: str)
+        """
+        holdings_txt = "\n".join([
+            f"- {h['name']}({h['code']}): 수익률 {h['rt']:+.2f}%, {h['detail']}"
+            for h in holdings_info
+        ])
+        
+        prompt = f"""
+        [종목 교체 판단] 당신은 포트폴리오 회전율을 최적화하는 수석 퀀트 트레이더입니다.
+        현재 계좌의 최대 보유 종목 수(8종목)가 가득 찼습니다. 
+        새로운 유망 종목을 매수하기 위해, 기존 보유 종목 중 가장 전망이 나쁜 하나를 매도하고 교체할지 결정하십시오.
+
+        [새로운 후보]
+        - {candidate['name']}({candidate['code']}): 점수 {candidate['score']:.1f}, {candidate['detail']}
+        - 뉴스: {", ".join(candidate['news'][:2]) if candidate['news'] else "없음"}
+
+        [현재 보유 종목]
+        {holdings_txt}
+
+        [시장 장세] {vibe}
+
+        [판단 기준]
+        1. 후보 종목의 퀀트 점수와 모멘텀이 기존 종목들보다 압도적으로 우세합니까?
+        2. 보유 종목 중 수익률이 극히 저조하거나, 모멘텀이 꺾인 종목이 있습니까?
+        3. 만약 후보 종목이 기존의 어떤 종목보다도 매력적이지 않다면 'No'를 선택하세요.
+        4. 교체할 가치가 있다면, 가장 매도하기 적합한 종목의 코드를 선택하세요.
+
+        [답변 형식]
+        교체여부: Yes 또는 No
+        매도종목코드: (Yes일 경우에만 코드 입력, 아니면 None)
+        사유: 한 줄 요약 (교체 시 어떤 면에서 우세한지 명시)
+        """
+        answer = self._safe_gemini_call(prompt, timeout=40)
+        if answer:
+            decision_match = re.search(r"교체여부[:\s]*(Yes|No)", answer, re.I)
+            code_match = re.search(r"매도종목코드[:\s]*([0-9A-Z]+|None)", answer)
+            reason_match = re.search(r"사유[:\s]*(.*)", answer)
+            
+            decision = decision_match.group(1).strip().capitalize() if decision_match else "No"
+            sell_code = code_match.group(1).strip() if code_match and code_match.group(1) != "None" else None
+            reason = reason_match.group(1).strip() if reason_match else "AI 판단 근거 부족"
+            
+            model_tag = self._get_model_tag()
+            return (decision == "Yes" and sell_code is not None), sell_code, f"{model_tag} {reason}"
+            
+        return False, None, "API 호출 실패"
 
     def _get_model_tag(self) -> str:
         """마지막 사용된 Gemini 모델의 약어 태그를 반환합니다."""

@@ -172,12 +172,16 @@ class TradingLogManager:
             for t in self.data.get("trades", []):
                 code = t.get("code")
                 if not code: continue
-                profit = t.get("profit", 0.0)
-                if any(x in t.get("type", "") for x in ["익절", "손절", "청산", "확정", "매도"]):
-                    if code not in stock_stats:
-                        stock_stats[code] = {"name": t.get("name", "Unknown"), "total_profit": 0.0, "count": 0}
+                if code not in stock_stats:
+                    stock_stats[code] = {"name": t.get("name", "Unknown"), "total_profit": 0.0, "count": 0}
+                
+                # 매매 횟수는 모든 거래(매수/매도/기타)를 합산
+                stock_stats[code]["count"] += 1
+                
+                # 수익금은 실현 손익인 경우에만 합산
+                if any(x in t.get("type", "") for x in ["익절", "손절", "청산", "확정", "매도", "종료"]):
+                    profit = t.get("profit", 0.0)
                     stock_stats[code]["total_profit"] += profit
-                    stock_stats[code]["count"] += 1
         
         # 수익금 순 정렬
         sorted_stats = sorted(stock_stats.items(), key=lambda x: x[1]["total_profit"], reverse=True)
@@ -189,17 +193,20 @@ class TradingLogManager:
         with self.lock:
             for t in self.data.get("trades", []):
                 m_id = t.get("model_id", "")
-                if not m_id: continue
                 
-                # 모델명 정규화
-                m_id_low = m_id.lower()
-                if "gemini-2.1-flash-lite" in m_id_low: m_name = "G2.1FL"
-                elif "gemini-2.5-flash-lite" in m_id_low: m_name = "G2.5FL"
-                elif "gemini-2.5-flash" in m_id_low: m_name = "G2.5F"
-                elif "gemini-3-flash" in m_id_low: m_name = "G3.0F"
-                elif "gemini-3.1-flash-lite" in m_id_low: m_name = "G3.1FL"
-                elif "gemini-3.1-pro" in m_id_low: m_name = "G3.1P"
-                else: m_name = m_id[:8]
+                # [수정] 모델명이 없는 경우(수동/기존물량)에도 집계되도록 'ETC/Manual' 할당
+                if not m_id:
+                    m_name = "ETC/Manual"
+                else:
+                    # 모델명 정규화
+                    m_id_low = m_id.lower()
+                    if "gemini-3.1-pro" in m_id_low: m_name = "G3.1P"
+                    elif "gemini-3.1-flash-lite" in m_id_low: m_name = "G3.1FL"
+                    elif "gemini-3-flash" in m_id_low: m_name = "G3.0F"
+                    elif "gemini-2.5-flash-lite" in m_id_low: m_name = "G2.5FL"
+                    elif "gemini-2.5-flash" in m_id_low: m_name = "G2.5F"
+                    elif "gemini-2.1-flash-lite" in m_id_low: m_name = "G2.1FL"
+                    else: m_name = m_id[:8]
                 
                 if m_name not in model_stats:
                     model_stats[m_name] = {"total_trades": 0, "wins": 0, "total_profit": 0.0, "buy_count": 0}
@@ -207,7 +214,7 @@ class TradingLogManager:
                 t_type = t.get("type", "")
                 if "매수" in t_type:
                     model_stats[m_name]["buy_count"] += 1
-                elif any(x in t_type for x in ["익절", "손절", "청산", "확정"]):
+                elif any(x in t_type for x in ["익절", "손절", "청산", "확정", "매도", "종료"]):
                     model_stats[m_name]["total_trades"] += 1
                     profit = float(t.get("profit", 0.0))
                     model_stats[m_name]["total_profit"] += profit

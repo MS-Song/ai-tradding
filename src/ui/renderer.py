@@ -21,16 +21,26 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     now_dt = datetime.now()
     k_st, u_st = ("OPEN" if is_market_open() else "CLOSED"), ("OPEN" if is_us_market_open() else "CLOSED")
     
-    # 필터 및 업데이트 텍스트 제거하고 분석 상태를 헤더 오른쪽 끝에 배치
-    h_l = f" [AI TRADING SYSTEM] | {now_dt.strftime('%Y-%m-%d %H:%M:%S')} | KR:{k_st} | US:{u_st}"
-    
-    # [수정] 헤더바 레이아웃: 좌측 정보 | 시간 정보(우측 끝 고정)
+    # [수정] 헤더바 레이아웃: 버전/VIBE/작업 정보를 좌측에, 시간은 우측에 배치
     # 버전/상태/작업 정보를 왼쪽에 배치, 시간과 스레드 카운트를 오른쪽 끝에 배치
     is_v = getattr(strategy.api.auth, 'is_virtual', True)
     mode_tag = " [모의]" if is_v else " [실전]"
     version_text = f"[AI TRADING SYSTEM ver 1.2.2]{mode_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
-    work_text = f"작업: {dm.global_busy_msg if hasattr(dm, 'global_busy_msg') and dm.global_busy_msg else '-'}"
+    status_active = dm.status_msg and (time.time() - dm.status_time < 10)
+    busy_msg = dm.global_busy_msg
+    busy_str = busy_msg if busy_msg else "-"
+    
+    if status_active:
+        import re
+        is_err = "[ERROR]" in dm.status_msg
+        clean_msg = re.sub(r'\x1b\[[0-9;]*m', '', dm.status_msg).replace("[STATUS] ", "").strip()
+        # 에러인 경우 빨간색, 일반 상태면 노란색
+        msg_color = "\033[91m" if is_err else "\033[93m"
+        work_text = f"작업: {busy_str} | {msg_color}{clean_msg}\033[0;44m"
+    else:
+        work_text = f"작업: {busy_str}"
+    
     thread_count = threading.active_count()
     
     # 시간 정보: 년-월-일(요일-한글1자) 시:분:초
@@ -52,6 +62,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         time_text = get_time_text(now_dt, time_level)
         # 오른쪽 고정 영역: (쓰레드) 시간
         right_side = f" ({thread_count:02d}) {time_text} "
+        # [레이아웃 심플화] 버전 | 시장상태 | 작업상태(여러 작업 파이프로 연결)
         left_side = f"{version_text} | {market_text} | {work_text}"
         
         # 전체 길이 계산
@@ -62,45 +73,49 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         time_level += 1
     
     header_line = header_line[:tw]
-    buf.write("\033[44m" + header_line + "\033[0m\n")
+    # \033[44m: Blue BG, \033[37m: White FG
+    buf.write("\033[44;37m" + header_line + "\033[0m\n")
     
     with dm.data_lock:
-        k_mkt_l = " 국장 지수: "
-        for k in ["KOSPI", "KPI200", "KOSDAQ", "VOSPI"]:
+        import re
+        def fmt_idx(label, k, price_fmt="{:,.0f}"):
             d = dm.cached_market_data.get(k)
-            if d:
-                color = "\033[91m" if d['rate'] >= 0 else "\033[94m"
-                disp_map = {"KOSPI": "KSP", "KPI200": "K200F", "KOSDAQ": "KDQ", "VOSPI": "VIX"}
-                k_mkt_l += f"{disp_map.get(k, k[:3])} {d['price']:,.2f}({color}{d['rate']:+0.2f}%\033[0m)  "
-        usd_krw = dm.cached_market_data.get("FX_USDKRW")
-        if usd_krw:
-            color = "\033[91m" if usd_krw['rate'] >= 0 else "\033[94m"
-            k_mkt_l += f"환율 {usd_krw['price']:,.1f}({color}{usd_krw['rate']:+0.2f}%\033[0m)  "
-        buf.write(align_kr(k_mkt_l, tw) + "\n")
+            if not d: return ""
+            color = "\033[91m" if d['rate'] >= 0 else "\033[94m"
+            return f"{label} {price_fmt.format(d['price'])}({color}{d['rate']:+0.2f}%\033[0m)"
 
-        u_mkt_l = " 미장 지수: "
-        for k in ["DOW", "NASDAQ", "NAS_FUT", "S&P500", "SPX_FUT"]:
-            d = dm.cached_market_data.get(k)
-            if d:
-                color = "\033[91m" if d['rate'] >= 0 else "\033[94m"
-                disp_map = {"DOW": "DOW", "NASDAQ": "NAS", "NAS_FUT": "NAS.F", "S&P500": "SPX", "SPX_FUT": "SPX.F"}
-                u_mkt_l += f"{disp_map.get(k, k[:3])} {d['price']:,.1f}({color}{d['rate']:+0.2f}%\033[0m)  "
-        buf.write(align_kr(u_mkt_l, tw) + "\n")
+        # Line 1: 국장 | 미장
+        kr_parts = [fmt_idx("KSP", "KOSPI"), fmt_idx("KDQ", "KOSDAQ"), fmt_idx("VIX", "VOSPI", "{:,.1f}")]
+        us_parts = [fmt_idx("DOW", "DOW"), fmt_idx("NAS", "NASDAQ"), fmt_idx("SPX", "S&P500")]
+        
+        kr_str = " ".join([p for p in kr_parts if p])
+        us_str = " ".join([p for p in us_parts if p])
+        line1 = f" 국장: {kr_str} | 미장: {us_str}"
+        buf.write(align_kr(line1, tw) + "\n")
 
+        # Line 2: 환율 | 코인 | 선물
+        fx_part = fmt_idx("", "FX_USDKRW", "{:,.1f}")
+        
+        # 코인 로직
+        coin_parts = []
         btc_krw = dm.cached_market_data.get("BTC_KRW")
         btc_usd = dm.cached_market_data.get("BTC_USD")
-        c_mkt_l = "\033[0m 코인 시장:  "
-        if btc_krw and btc_usd and usd_krw:
+        usd_krw = dm.cached_market_data.get("FX_USDKRW")
+        if btc_krw:
             k_color = "\033[91m" if btc_krw['rate'] >= 0 else "\033[94m"
-            c_mkt_l += f"K-BTC {btc_krw['price']:,.0f}({k_color}{btc_krw['rate']:+0.2f}%\033[0m)   "
-            usd_to_krw_price = btc_usd['price'] * usd_krw['price']
-            u_color = "\033[91m" if btc_usd['rate'] >= 0 else "\033[94m"
-            c_mkt_l += f"BTC {usd_to_krw_price:,.0f}({u_color}{btc_usd['rate']:+0.2f}%\033[0m)   "
-            diff_amt = btc_krw['price'] - usd_to_krw_price
-            k_prem = (diff_amt / usd_to_krw_price) * 100
-            p_color = "\033[91m" if k_prem >= 0 else "\033[94m"
-            c_mkt_l += f"프리미엄 {int(diff_amt):+,}({p_color}{k_prem:+0.2f}%\033[0m)"
-        buf.write(align_kr(c_mkt_l, tw) + "\n")
+            coin_parts.append(f"K-BTC {btc_krw['price']/10000:,.0f}만({k_color}{btc_krw['rate']:+0.2f}%\033[0m)")
+            if btc_usd and usd_krw:
+                u_to_k = btc_usd['price'] * usd_krw['price']
+                k_prem = (btc_krw['price'] - u_to_k) / u_to_k * 100
+                p_color = "\033[91m" if k_prem >= 0 else "\033[94m"
+                coin_parts.append(f"김프 {p_color}{k_prem:+0.2f}%\033[0m")
+        
+        coin_str = " ".join(coin_parts)
+        ft_parts = [fmt_idx("NAS.F", "NAS_FUT"), fmt_idx("SPX.F", "SPX_FUT")]
+        ft_str = " ".join([p for p in ft_parts if p])
+        
+        line2 = f" 환율: {fx_part} | 코인: {coin_str} | 선물: {ft_str}"
+        buf.write(align_kr(line2, tw) + "\n")
 
         v_c = "\033[91m" if "Bull" in dm.cached_vibe else ("\033[94m" if "Bear" in dm.cached_vibe else "\033[93m")
         panic_txt = " !!! PANIC !!!" if dm.cached_panic else ""
@@ -145,8 +160,6 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         stk_color = "\033[91m" if stk_rt > 0 else "\033[94m" if stk_rt < 0 else "\033[0m"
         
         from src.logger import trading_log
-        daily_p = trading_log.get_daily_profit()
-        daily_c = "\033[91m" if daily_p > 0 else ("\033[94m" if daily_p < 0 else "\033[93m")
         
         # [Task 9/10] Asset 및 설정 영역 정렬 개편 (파이프 라인 정렬)
         daily_amts = trading_log.get_daily_amounts()
@@ -181,13 +194,21 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             tot_info = f"총자산 {tot_eval:,.0f} ({tot_color}{tot_rt:+.2f}%\033[0m)"
             
         pnl_rate = asset.get('daily_pnl_rate', 0.0)
+        pnl_amt = asset.get('daily_pnl_amt', 0.0)
+        realized_p = trading_log.get_daily_profit()
         pnl_color = "\033[91m" if pnl_rate > 0 else ("\033[94m" if pnl_rate < 0 else "\033[93m")
+        real_color = "\033[91m" if realized_p > 0 else ("\033[94m" if realized_p < 0 else "\033[93m")
+        
         halted = strategy.risk_mgr.is_halted
         risk_st = "\033[41;97m!HALTED!\033[0m" if halted else "\033[92mNORMAL\033[0m"
         
-        cash_info = f"예수금: {asset.get('cash', 0):,.0f}"
+        d0_c, d2_c = asset.get('d0_cash', 0), asset.get('d2_cash', 0)
+        d2_color = "\033[91m" if d2_c < 0 else ("\033[94m" if d0_c != d2_c else "")
+        cash_info = f"가용(D+0): {d0_c:,.0f} | 정산(D+2): {d2_color}{d2_c:,.0f}\033[0m"
         stk_info = f"주식: {stk_eval:,.0f}"
-        daily_info = f"{daily_c}{daily_p:+,}원\033[0m ({pnl_color}{pnl_rate:+.2f}%\033[0m)"
+        
+        # 일일: 전체 변동(원금 대비 ROI) + 실현 손익 병기
+        daily_info = f"{pnl_color}{pnl_amt:+,.0f}원 ({pnl_rate:+.2f}%)\033[0m | 실현: {real_color}{realized_p:+,.0f}원\033[0m"
         
         # [순서 변경] 총자산 -> 예수금 -> 주식 -> 일일 -> 리스크
         limit_val = strategy.risk_mgr.max_daily_loss_rate
@@ -239,35 +260,35 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             if len(f_h) > max_h_display: buf.write(align_kr(f"... 외 {len(f_h) - max_h_display}종목 생략됨 ...", tw, 'center') + "\n")
         
         buf.write("-" * tw + "\n"); themes = get_cached_themes()
-        if themes: buf.write("\033[93m" + align_kr(" 🔥 실시간 인기테마: " + " | ".join([f"{t['name']}({t['count']})" for t in themes[:8]]), tw) + "\033[0m\n")
-        else: buf.write("\n")
+        if themes:
+            theme_str = " | ".join([f"{t['name']}({t['count']})" for t in themes[:12]])
+            theme_line = f" 테마: {theme_str}"
+            while get_visual_width(theme_line) > tw - 2 and " | " in theme_str:
+                theme_str = theme_str.rsplit(" | ", 1)[0]
+                theme_line = f" 테마: {theme_str}.."
+            buf.write("\033[93m" + align_kr(theme_line, tw) + "\033[0m\n")
+        else:
+            buf.write("\n")
         
         y_recs = strategy.yesterday_recs_processed
         if y_recs:
-            # 변동률 기준 내림차순 정렬 (높은 수익률이 먼저 오도록)
             sorted_recs = sorted(y_recs, key=lambda x: x['change'], reverse=True)[:10]
-            for i in range(0, len(sorted_recs), 5):
-                line_parts = []
-                chunk = sorted_recs[i:i+5]
-                item_w = (tw - 20) // 5
-                for r in chunk:
-                    name = r['name']; code = r['code']; chg = r['change']
-                    color = "\033[91m" if chg >= 0 else "\033[94m"
-                    rate_str = f"{chg:>+4.1f}%"
-                    tag = f"[{code}]"
-                    
-                    # 규격 맞춤: [코드]종목명(수익률)
-                    base_w = get_visual_width(tag) + 8 # [코드] + (수익률) + 여백
-                    while get_visual_width(name) + base_w > item_w and len(name) > 1:
-                        name = name[:-1]
-                    if len(name) < len(r['name']): name += ".."
-                    
-                    line_parts.append(f"{tag}{name}({color}{rate_str}\033[0m)")
-                
-                label = " ☀️  전일 추천 성과: " if i == 0 else " " * 18
-                buf.write(align_kr(f"{label}{' | '.join(line_parts)}", tw) + "\n")
+            y_parts = []
+            for r in sorted_recs:
+                color = "\033[91m" if r['change'] >= 0 else "\033[94m"
+                y_parts.append(f"{r['name']}({color}{r['change']:>+4.1f}%\033[0m)")
+            
+            y_str = " | ".join(y_parts)
+            y_line = f" 전일: {y_str}"
+            # ANSI 제거 후 너비 체크
+            import re
+            while get_visual_width(re.sub(r'\x1b\[[0-9;]*m', '', y_line)) > tw - 2 and " | " in y_str:
+                y_parts.pop()
+                y_str = " | ".join(y_parts)
+                y_line = f" 전일: {y_str}.."
+            buf.write(align_kr(y_line, tw) + "\n")
         else:
-            buf.write(align_kr("\033[90m 🔍 전일 추천 내역이 없습니다.", tw) + "\033[0m\n")
+            buf.write(align_kr("\033[90m 전일 추천 내역이 없습니다.\033[0m", tw) + "\n")
 
         buf.write("-" * tw + "\n")
 
@@ -339,7 +360,6 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 buf.write(align_kr(line, tw) + "\n")
     
     rem = th - buf.getvalue().count('\n')
-    if rem > 0: buf.write(f"\033[K {dm.status_msg if dm.status_msg and (time.time()-dm.status_time<60) else ''}\n"); rem -= 1
     
     if rem > 0: buf.write(f"\033[K {dm.last_log_msg if dm.last_log_msg and (time.time()-dm.last_log_time<60) else ''}\n"); rem -= 1
     if rem > 0:

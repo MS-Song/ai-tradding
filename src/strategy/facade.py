@@ -21,6 +21,7 @@ from src.strategy.state_manager import StateManager
 from src.strategy.constants import PRESET_STRATEGIES
 
 class VibeStrategy:
+    MAX_STOCK_COUNT = 8 # 최대 보유 종목 수 제한
     def __init__(self, api, config):
         self.api = api
         self.base_config = config.get("vibe_strategy", {})
@@ -49,7 +50,21 @@ class VibeStrategy:
         self.last_sl_times: Dict[str, float] = {}
         self.last_buy_times: Dict[str, float] = {}
         self.last_buy_models: Dict[str, str] = {}
+        self.replacement_logs: List[dict] = [] # Recent 10 replacement events
         self.ai_recommendations: List[dict] = []
+
+    def record_buy(self, code, price):
+        self.last_buy_times[code] = time.time()
+        self.last_buy_prices[code] = price
+
+    def record_sell(self, code):
+        self.last_sell_times[code] = time.time()
+
+    def is_reentry_restricted(self, code, cooldown_sec=7200): # 기본 2시간
+        last_sell = self.last_sell_times.get(code, 0)
+        last_sl = getattr(self, 'last_sl_times', {}).get(code, 0)
+        max_last_exit = max(last_sell, last_sl)
+        return (time.time() - max_last_exit) < cooldown_sec
         self.ai_briefing, self.ai_detailed_opinion = "", ""
         self.ai_holdings_opinion = ""
         self.recommendation_history: Dict[str, List[dict]] = {}
@@ -57,6 +72,7 @@ class VibeStrategy:
         self.yesterday_recs_processed: List[dict] = []
         self._last_closing_bet_date = None
         self.rejected_stocks: Dict[str, dict] = {} # {code: {"reason": reason, "time": timestamp}}
+        self.replacement_logs: List[dict] = [] # Recent 10 replacement events
         self.start_day_asset = 0.0
         self.last_asset_date = ""
         
@@ -66,10 +82,10 @@ class VibeStrategy:
             "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
             "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False),
             "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
-            "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-2.5-flash"),
+            "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview"),
             "fallback_sequence": v_cfg.get("ai_config", {}).get("fallback_sequence", [
-                "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3-flash-preview",
-                "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview"
+                "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview", 
+                "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"
             ])
         }
         
@@ -90,7 +106,7 @@ class VibeStrategy:
         # Load state
         self._load_all_states()
         
-        self.ai_config["preferred_model"] = v_cfg.get("ai_config", {}).get("preferred_model", "gemini-2.5-flash")
+        self.ai_config["preferred_model"] = v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview")
         
         # Update components with latest config
         self.ai_advisor = GeminiAdvisor(api, self.ai_config)
@@ -135,15 +151,15 @@ class VibeStrategy:
                 "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
                 "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False),
                 "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
-                "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-2.5-flash")
+                "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview")
             })
             
             # 5. 하위 엔진에 전파
             self.ai_advisor.config = self.ai_config
-            self.ai_advisor.preferred_model = self.ai_config.get("preferred_model", "gemini-2.5-flash")
+            self.ai_advisor.preferred_model = self.ai_config.get("preferred_model", "gemini-3.1-flash-lite-preview")
             self.ai_advisor.fallback_sequence = v_cfg.get("ai_config", {}).get("fallback_sequence", [
-                "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3-flash-preview",
-                "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview"
+                "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview", 
+                "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"
             ])
             
             logger.info("🔧 시스템 설정이 실시간으로 동기화되었습니다.")
@@ -205,7 +221,7 @@ class VibeStrategy:
         for code in portfolio: self.auto_assign_preset(code, "")
 
     def perform_full_market_analysis(self, retry=True) -> bool:
-        self.current_action = "전략분석"
+        self.current_action = "시장분석"
         try:
             self.analyzer.update()
             self.apply_ai_strategy_to_all(None)
@@ -298,6 +314,32 @@ class VibeStrategy:
             self.last_buy_models[code] = self.ai_advisor.last_used_model_id
 
         return True, "승인됨"
+
+    def get_replacement_target(self, candidate_code: str, candidate_name: str, score: float, holdings: List[dict]) -> Tuple[bool, Optional[str], str]:
+        """최대 종목 수 초과 시, 새 종목을 위해 기존 종목 중 교체할 대상을 탐색합니다."""
+        if not holdings: return False, None, "보유 종목 없음"
+        
+        # 1. 새로운 후보 정보 수집
+        c_detail = self.api.get_naver_stock_detail(candidate_code)
+        c_news = self.api.get_naver_stock_news(candidate_code)
+        candidate_info = {
+            "code": candidate_code, "name": candidate_name, "score": score,
+            "detail": f"PER {c_detail.get('per')}, PBR {c_detail.get('pbr')}, 등락 {c_detail.get('rate')}%",
+            "news": c_news
+        }
+        
+        # 2. 보유 종목 정보 수집 (병렬 처리 권장되나 일단 순차 처리)
+        holdings_info = []
+        for h in holdings:
+            code = h['pdno']
+            detail = self.api.get_naver_stock_detail(code)
+            holdings_info.append({
+                "code": code, "name": h['prdt_name'], "rt": float(h.get('evlu_pfls_rt', 0)),
+                "detail": f"평단 {int(float(h.get('pchs_avg_pric',0))):,}원, PER {detail.get('per')}, PBR {detail.get('pbr')}"
+            })
+            
+        # 3. AI 비교 요청
+        return self.ai_advisor.compare_stock_superiority(candidate_info, holdings_info, self.current_market_vibe)
 
     def _cleanup_rejected_stocks(self):
         """거절된 지 1시간이 지난 종목들을 목록에서 제거하여 재검토 가능케 함"""
@@ -462,7 +504,12 @@ class VibeStrategy:
         self._p4_ai_done_this_cycle = False
         
         # ── Phase 1: 리스크 관리 (서킷 브레이커) ──
-        if self.risk_mgr.check_circuit_breaker(self.api.get_full_balance()[1] if not skip_trade else {}):
+        # DataManager에서 계산하는 방식과 동일하게 실시간 일일 수익률 계산하여 리스크 매니저에 전달
+        asset_info = self.api.get_full_balance()[1] if not skip_trade else {}
+        if self.start_day_asset > 0 and asset_info.get('total_asset', 0) > 0:
+            asset_info['daily_pnl_rate'] = (asset_info['total_asset'] / self.start_day_asset - 1) * 100
+        
+        if self.risk_mgr.check_circuit_breaker(asset_info):
             return [f"🛑 리스크 상한 도달: {self.risk_mgr.halt_reason} (매매 중단)"]
 
         if phase['id'] == "P4" and not self.global_panic and self.current_market_vibe.upper() in ["BULL", "NEUTRAL"] and self.auto_ai_trade:
@@ -567,6 +614,7 @@ class VibeStrategy:
                                     results.append(f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
                                     m_id = self.last_buy_models.get(code, "")
                                     trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit, model_id=m_id)
+                                    self.record_sell(code) # 매도 시점 기록 (재진입 방지용)
                                     trading_log.log_config(f"🤖 P4 AI 매도: [{code}]{item.get('prdt_name')} | {reason}")
                                     self._save_all_states()
                             else:
@@ -597,8 +645,7 @@ class VibeStrategy:
             if action and not skip_trade and sell_qty > 0:
                 self.current_action = f"{action}실행"
                 if self.api.order_market(code, sell_qty, False)[0]:
-                    if "익절" in action: self.last_sell_times[code] = curr_t
-                    elif "손절" in action: self.last_sl_times[code] = curr_t
+                    self.record_sell(code) # 매도 시점 통합 기록
                     m_id = self.last_buy_models.get(code, "")
                     trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id=m_id)
                     self._save_all_states()

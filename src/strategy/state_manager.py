@@ -84,6 +84,7 @@ class StateManager:
                     "preset_strategies": s.preset_eng.preset_strategies,
                     "last_closing_bet_date": getattr(s, "_last_closing_bet_date", None),
                     "rejected_stocks": s.rejected_stocks,
+                    "replacement_logs": s.replacement_logs,
                     "last_rejected_date": today,
                     "start_day_asset": s.start_day_asset,
                     "last_asset_date": s.last_asset_date
@@ -135,6 +136,7 @@ class StateManager:
                     s._last_closing_bet_date = d.get("last_closing_bet_date")
                     s.start_day_asset = d.get("start_day_asset", 0.0)
                     s.last_asset_date = d.get("last_asset_date", "")
+                    s.replacement_logs = d.get("replacement_logs", [])
             except Exception as e:
                 log_error(f"상태 파일 로드 실패: {e}")
 

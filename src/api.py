@@ -147,25 +147,29 @@ class KISAPI:
             raw_summary = data.get("output2", [{}])[0]
             # 실제 주식 앱 기준 매핑: 
             # - stock_eval: 주식평가금액 합계
-            # - cash: D+2 예상예수금 (가용 현금)
-            # - total_asset: 주식평가액 + 예수금
-            # - pnl: 평가손익 합계
+            # - cash: 주문가능현금 (D+0와 D+2 중 보수적인 값 사용)
+            # - total_asset: 주식평가액 + D+2예수금 (실질 순자산)
             stock_eval = self._safe_float(raw_summary.get("evlu_amt_smtl_amt"))
             stock_principal = self._safe_float(raw_summary.get("pchs_amt_smtl_amt"))
-            # D+0(dnca_tot_amt) 사용 시 미결제 주식 이중합산 오류 발생! 
-            # D+2(prvs_rcdl_excc_amt) 가수도정산금액을 실질 가용 현금(Cash)으로 사용
-            cash = self._safe_float(raw_summary.get("prvs_rcdl_excc_amt")) 
-            if cash == 0: cash = self._safe_float(raw_summary.get("dnca_tot_amt"))
+            
+            d0_cash = self._safe_float(raw_summary.get("dnca_tot_amt"))            # D+0 예수금
+            d2_cash = self._safe_float(raw_summary.get("prvs_rcdl_excc_amt"))      # D+2 예상예수금
+            
+            # 가용 현금(cash)은 실제 주문 가능 금액인 D+0와 정산 후 금액인 D+2 중 더 낮은 값을 택하여 
+            # 마이너스 계좌가 되는 것을 원천 방지함.
+            cash = min(d0_cash, d2_cash) if d0_cash > 0 and d2_cash > 0 else (d2_cash if d2_cash != 0 else d0_cash)
             
             pnl = self._safe_float(raw_summary.get("evlu_pfls_smtl_amt"))
             total_asset = self._safe_float(raw_summary.get("tot_evlu_amt"))
             
             asset_info = {
                 "total_asset": total_asset,
-                "total_principal": stock_principal + cash,
+                "total_principal": stock_principal + d2_cash, # 원금 계산은 정산 기준
                 "stock_eval": stock_eval,
                 "stock_principal": stock_principal,
                 "cash": cash,
+                "d0_cash": d0_cash,
+                "d2_cash": d2_cash,
                 "pnl": pnl,
                 "deposit": self._safe_float(raw_summary.get("prvs_rcdl_exca_amt") or 0)
             }
@@ -557,7 +561,7 @@ class KISAPI:
                 
         return results
 
-    def get_naver_stock_detail(self, code: str) -> dict:
+    def get_naver_stock_detail(self, code: str, force: bool = False) -> dict:
         """네이버 금융 상세 페이지에서 핵심 시세 정보 및 펀더멘털 지표 수집 (캐시 적용)"""
         now = datetime.now()
         # 장 시작 3분 전(08:57 ~ 08:59)에는 캐시를 무조건 무효화하여 장 시작 시점의 실시간성에 대비
@@ -565,54 +569,35 @@ class KISAPI:
             self._detail_cache.clear()
 
         curr_t = time.time()
-        if code in self._detail_cache:
+        if not force and code in self._detail_cache:
             ts, data = self._detail_cache[code]
             if curr_t - ts < self._detail_cache_duration: return data
 
         try:
+            # 1. 실시간 시세 정보 (JSON API 활용 - 가장 안정적)
+            api_url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{code}"
+            api_res = requests.get(api_url, headers=self.headers, timeout=5)
+            detail = {"name": "Unknown", "price": "0", "rate": 0.0, "per": "N/A", "pbr": "N/A", "yield": "N/A", "sector_per": "N/A", "market_cap": "N/A"}
+            
+            if api_res.status_code == 200:
+                api_data = api_res.json()
+                if api_data.get('result', {}).get('areas'):
+                    item = api_data['result']['areas'][0]['datas'][0]
+                    detail["name"] = item.get('nm', detail["name"])
+                    detail["price"] = str(item.get('nv', "0"))
+                    detail["rate"] = float(item.get('cr', 0.0))
+            
+            # 2. 펀더멘털 및 상세 정보 (HTML 크롤링)
             url = f"https://finance.naver.com/item/main.naver?code={code}"
             self._wait_for_domain_delta(url)
             res = requests.get(url, headers=self.headers, timeout=5)
-            if not BeautifulSoup: return {}
-            # euc-kr보다 호환성이 높은 cp949로 바이너리 직접 디코딩
+            if not BeautifulSoup: return detail
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             
-            detail = {"name": "Unknown", "price": "0", "rate": 0.0, "per": "N/A", "pbr": "N/A", "yield": "N/A", "sector_per": "N/A", "market_cap": "N/A"}
-            
-            # 1. 종목명 수집
-            wrap = soup.find('div', {'class': 'wrap_company'})
-            if wrap and wrap.h2: detail["name"] = wrap.h2.text.strip()
-            
-            # 2. 실시간 시세 및 등락률 수집
-            today = soup.find('div', {'class': 'today'})
-            if today:
-                p_tag = today.find('em', {'class': 'no_up'}) or today.find('em', {'class': 'no_down'}) or today.find('em', {'class': 'no_none'})
-                if p_tag: detail["price"] = p_tag.text.strip().replace(',', '').split()[0]
-                
-                # 등락률 파싱 (상승/하락/보합 케이스 대응)
-                # 단일 find()는 첫 번째 p(보통 가격/차액)만 가져올 수 있으므로 전체 탐색
-                all_ps = today.find_all('p')
-                rate_area = None
-                for p in all_ps:
-                    if '%' in p.text:
-                        rate_area = p
-                        break
-                
-                if rate_area:
-                    try:
-                        # 퍼센트 기호 앞의 숫자 추출 (예: "+ 1.23 %" -> 1.23)
-                        val_match = re.search(r'([\d.]+)\s*%', rate_area.text)
-                        if val_match:
-                            val = float(val_match.group(1))
-                            # 클래스명 또는 텍스트 기반으로 부호 결정
-                            cls_str = str(rate_area.get('class', []))
-                            if 'no_up' in cls_str: detail["rate"] = val
-                            elif 'no_down' in cls_str: detail["rate"] = -val
-                            else:
-                                blind_txt = rate_area.find('span', {'class': 'blind'})
-                                r_txt = blind_txt.text.strip() if blind_txt else ""
-                                detail["rate"] = val if "플러스" in r_txt or "+" in rate_area.text else -val if "마이너스" in r_txt or "-" in rate_area.text else 0.0
-                    except: pass
+            # 종목명이 JSON에서 깨졌거나 정보가 부족할 경우 HTML로 보강
+            if detail["name"] == "Unknown":
+                wrap = soup.find('div', {'class': 'wrap_company'})
+                if wrap and wrap.h2: detail["name"] = wrap.h2.text.strip()
 
             # 3. 펀더멘털 지표 및 시가총액 수집
             aside = soup.find('div', {'class': 'aside_invest_info'})

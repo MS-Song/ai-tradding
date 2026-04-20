@@ -77,7 +77,7 @@ def draw_holdings_detail(strategy, dm, tw, th):
         for h in dm.cached_holdings:
             code = h['pdno']; pnl_rt = float(h.get('evlu_pfls_rt', 0)); pnl_amt = int(float(h.get('evlu_pfls_amt', 0)))
             color = "\033[91m" if pnl_amt > 0 else "\033[94m" if pnl_amt < 0 else "\033[0m"
-            detail = strategy.api.get_naver_stock_detail(code)
+            detail = strategy.api.get_naver_stock_detail(code, force=True)
             buf.write(f"{align_kr(code, 8)} | {align_kr(h['prdt_name'], 14)} | {color}{align_kr(f'{pnl_rt:+.2f}%', 10, 'right')}\033[0m | {color}{align_kr(f'{pnl_amt:+,}', 12, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')}\n")
     buf.write("\n" + "-" * tw + "\n\033[1;96m" + " [AI 포트폴리오 매니저의 실시간 진단 의견]" + "\033[0m\n")
     if strategy.ai_holdings_opinion:
@@ -191,10 +191,23 @@ def draw_ai_logs_report(strategy, dm, tw, th):
             name = detail.get('name', 'Unknown')
             buf.write(f" {align_kr(rj_time, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {reason}\n")
     
+    # 2. 종목 교체 내역 (Replacement)
+    buf.write("\033[1;92m" + " [종목 한도 초과(8개)에 따른 교체 매매 내역 (최근 10건)]" + "\033[0m\n")
+    buf.write("-" * tw + "\n")
+    if not strategy.replacement_logs:
+        buf.write("  최근 종목 교체 내역이 없습니다.\n")
+    else:
+        buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('OUT(매도)', 18)} | {align_kr('IN(매수)', 18)} | 교체 사유" + "\033[0m\n")
+        buf.write("-" * tw + "\n")
+        for item in strategy.replacement_logs[:10]:
+            out_info = f"[{item.get('out_code','?')}] {item.get('out_name','?')}"
+            in_info = f"[{item.get('in_code','?')}] {item.get('in_name','?')}"
+            buf.write(f" {align_kr(item['time'], 10)} | {align_kr(out_info, 18)} | {align_kr(in_info, 18)} | {item['reason']}\n")
+    
     buf.write("=" * tw + "\n")
     
-    # 2. 종목별 전략 수립 사유
-    buf.write("\033[1;96m" + " [종목별 AI 전략 수립 근거 (최근 10건)]" + "\033[0m\n")
+    # 3. 종목별 전략 수립 사유
+    buf.write("\033[1;96m" + " [종목별 AI 전략 수립 근거]" + "\033[0m\n")
     buf.write("-" * tw + "\n")
     presets = strategy.preset_eng.preset_strategies
     active_presets = {k: v for k, v in presets.items() if v.get('preset_id') != '00'}
@@ -223,8 +236,6 @@ def draw_ai_logs_report(strategy, dm, tw, th):
             b_time_str = p.get('buy_time', '??:??:??').split(' ')[-1] if 'buy_time' in p else '??:??:??'
             name = strategy.api.get_naver_stock_detail(code).get('name', code)
             buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {p.get('reason', 'AI 분석 기반 자동 선정')}\n")
-
-    buf.write("=" * tw + "\n")
     
     buf.write("-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
     sys.stdout.write(buf.getvalue()); sys.stdout.flush()
@@ -237,9 +248,9 @@ def draw_performance_report(strategy, dm, tw, th):
     buf = io.StringIO(); buf.write("\033[H\033[2J")
     buf.write("\033[44;37m" + align_kr(" [AI TRADING PERFORMANCE DASHBOARD] ", tw, 'center') + "\033[0m\n\n")
     
-    # 1. 수익금 TOP 5 (Hall of Fame)
-    top_stocks = trading_log.get_top_profitable_stocks(5)
-    buf.write("\033[1;93m" + " [종목별 누적 수익금 TOP 5 (Hall of Fame)]" + "\033[0m\n")
+    # 1. 수익금 TOP 10 (Hall of Fame)
+    top_stocks = trading_log.get_top_profitable_stocks(10)
+    buf.write("\033[1;93m" + " [종목별 누적 수익금 TOP 10 (Hall of Fame)]" + "\033[0m\n")
     buf.write("-" * tw + "\n")
     if not top_stocks:
         buf.write("  누적 수익 데이터를 수집 중입니다.\n")
@@ -489,7 +500,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
             if not os.getenv("GOOGLE_API_KEY"): dm.show_status("⚠️ API Key 누락", True)
             else:
                 def task_ai():
-                    dm.set_busy("AI 시장 분석")
+                    dm.set_busy("시장분석")
                     try:
                         def prog_cb(c, t, m="분석"): dm.show_status(f"[AI {m} 중... {c}/{t}]")
                         def item_cb(i): 

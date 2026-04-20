@@ -71,27 +71,29 @@ class DataManager:
             if hasattr(self.strategy, 'current_action') and self.strategy.current_action and self.strategy.current_action != "대기중":
                 statuses.append(self.strategy.current_action)
 
-            # 3. Market 분석 상태 추가 (분석 중인 경우에만)
+            # 3. Market 분석 상태 추가 (분석 중인 경우에만 중복 체크하며 추가)
             if hasattr(self.strategy, 'is_analyzing') and self.strategy.is_analyzing:
-                msg = getattr(self.strategy, 'analysis_status_msg', "")
-                if msg and msg != "분석 완료":
-                    statuses.append(msg)
+                if "시장분석" not in statuses:
+                    statuses.append("시장분석")
 
             # 4. 기타 워커들 (INDEX, DATA 등)
             other_statuses = [v for k, v in self._worker_statuses.items() if k != "GLOBAL"]
             if other_statuses:
                 # 중복된 메시지 제거 및 정렬
                 for s in sorted(list(set(other_statuses))):
-                    if s not in statuses:
+                    # 공백 제거 후 비교하여 유사 메시지 중복 방지
+                    clean_s = s.replace(" ", "")
+                    # 이미 리스트에 비슷한 의미의 메시지가 있으면 스킵
+                    if not any(clean_s in (exist.replace(" ", "")) for exist in statuses):
                         statuses.append(s)
             
             if not statuses:
                 return None
             
             res = " | ".join(statuses)
-            # 너무 길면 축약
-            if len(res) > 35:
-                res = res[:32] + "..."
+            # 공간 확보를 위해 축약 제한 완화 (35 -> 60)
+            if len(res) > 60:
+                res = res[:57] + "..."
             return res
 
     def show_status(self, msg, is_error=False):
@@ -103,8 +105,29 @@ class DataManager:
         except: max_len = 100
         if len(msg) > max_len:
             msg = msg[:max_len - 2] + ".." 
-        self.status_msg = f"{color}[STATUS] {msg}\033[0m"
+        prefix = "[ERROR]" if is_error else "[STATUS]"
+        self.status_msg = f"{color}{prefix} {msg}\033[0m"
         self.status_time = time.time()
+        
+    def _update_daily_metrics(self, a):
+        """총자산 정보를 바탕으로 당일 수익금 및 수익률을 계산하여 딕셔너리에 주입"""
+        if not a or a.get('total_asset', 0) <= 0: return
+        
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        # 기준점이 없거나 날짜가 변경된 경우에만 기준 자산 설정
+        if self.strategy.start_day_asset == 0 or self.strategy.last_asset_date != today_str:
+            self.strategy.start_day_asset = a['total_asset']
+            self.strategy.last_asset_date = today_str
+            self.strategy._save_all_states()
+            self.add_log(f"📅 기준 자산 설정: {self.strategy.start_day_asset:,.0f}원")
+
+        if self.strategy.start_day_asset > 0:
+            a['daily_pnl_rate'] = (a['total_asset'] / self.strategy.start_day_asset - 1) * 100
+            a['daily_pnl_amt'] = a['total_asset'] - self.strategy.start_day_asset
+        else:
+            a['daily_pnl_rate'] = 0.0
+            a['daily_pnl_amt'] = 0.0
+
 
     def add_log(self, msg):
         self.last_log_msg = f"\033[96m[LOG] {msg}\033[0m"
@@ -118,67 +141,59 @@ class DataManager:
         from src.logger import log_trade
         log_trade(msg)
 
-    # --- 데이터 업데이트 함수 (강제 갱신용) ---
     def update_all_data(self, is_virtual, force=False):
-        self.set_busy("데이터 동기화")
+        self.set_busy("전체 데이터 동기화")
         try:
             curr_t = time.time()
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                future_trend = executor.submit(self.strategy.determine_market_trend)
-                future_hot = executor.submit(self.api.get_naver_hot_stocks)
-                future_vol = executor.submit(self.api.get_naver_volume_stocks)
-                future_balance = executor.submit(self.api.get_full_balance, force=True)
+                # 1. 자산/잔고 패치 (가장 먼저 시작하여 UI 즉시 노출 유도)
+                f_bal = executor.submit(self.api.get_full_balance, force=True)
+                # 2. 시장 트렌드 및 지수 패치
+                f_trend = executor.submit(self.strategy.determine_market_trend)
+                # 3. 인기/랭킹 종목
+                f_hot = executor.submit(self.api.get_naver_hot_stocks)
+                f_vol = executor.submit(self.api.get_naver_volume_stocks)
                 
-                future_trend.result()
-                self.cached_market_data = self.strategy.current_market_data
-                self.cached_vibe = self.strategy.current_market_vibe
-                self.cached_panic = self.strategy.global_panic
+                # [순차 적용] 자산 정보 수신 즉시 UI 반영
+                h, a = f_bal.result()
+                self._update_daily_metrics(a)
+                with self.data_lock:
+                    self.cached_holdings = h
+                    self.cached_asset = a
+                self.last_times["asset"] = curr_t
+                
+                # [순차 적용] 시장 트렌드 수신 즉시 반영
+                f_trend.result()
+                with self.data_lock:
+                    self.cached_market_data = self.strategy.current_market_data
+                    self.cached_vibe = self.strategy.current_market_vibe
+                    self.cached_panic = self.strategy.global_panic
                 self.last_times["index"] = curr_t
                 
-                h_raw = future_hot.result(); v_raw = future_vol.result()
+                # [순차 적용] 랭킹 정보 나중에 반영
+                h_raw = f_hot.result(); v_raw = f_vol.result()
                 self.cached_hot_raw = h_raw; self.cached_vol_raw = v_raw
-                themes = analyze_popular_themes(h_raw, v_raw)
+                analyze_popular_themes(h_raw, v_raw)
                 self.last_times["ranking"] = curr_t
-                
-                h, a = future_balance.result()
-                
-                # --- [수정] 일일 수익률(ROI) 계산 로직 (Phase 4: 장 마감 후 리셋 방기 및 영속 저장) ---
-                today_str = datetime.now().strftime('%Y-%m-%d')
-                
-                # 기준점이 없거나 날짜가 변경된 경우에만 기준 자산 설정
-                if self.strategy.start_day_asset == 0 or self.strategy.last_asset_date != today_str:
-                    if a.get('total_asset', 0) > 0:
-                        self.strategy.start_day_asset = a['total_asset']
-                        self.strategy.last_asset_date = today_str
-                        # 기준 자산 변경 시 즉시 영속 저장
-                        self.strategy._save_all_states()
-                        self.add_log(f"📅 기준 자산 설정: {self.strategy.start_day_asset:,.0f}원")
 
-                if self.strategy.start_day_asset > 0:
-                    a['daily_pnl_rate'] = (a['total_asset'] / self.strategy.start_day_asset - 1) * 100
-                else:
-                    a['daily_pnl_rate'] = 0.0
-
-                self.cached_holdings = h; self.cached_asset = a
-                self.last_times["asset"] = curr_t
-
-            for stock in h:
-                code = stock.get('pdno')
-                p_data = self.api.get_inquire_price(code)
-                tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
+                # 보유 종목 상세 정보 패치
+                temp_stock_info = {}
+                for stock in h:
+                    code = stock.get('pdno')
+                    p_data = self.api.get_inquire_price(code)
+                    tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
+                    temp_stock_info[code] = {
+                        "tp": tp, "sl": sl, "spike": spike,
+                        "day_val": p_data.get('vrss', 0) if p_data else 0,
+                        "day_rate": p_data.get('ctrt', 0) if p_data else 0
+                    }
                 
-                # 시세 API 데이터 캐시
-                day_val = p_data.get('vrss', 0) if p_data else 0
-                day_rate = p_data.get('ctrt', 0) if p_data else 0
-                
-                self.cached_stock_info[code] = {
-                    "tp": tp, "sl": sl, "spike": spike,
-                    "day_val": day_val, "day_rate": day_rate
-                }
-            
-            self.last_update_time = datetime.now().strftime('%H:%M:%S')
-            self.add_log("데이터 동기화 완료")
-            return True
+                with self.data_lock:
+                    self.cached_stock_info.update(temp_stock_info)
+
+                self.last_update_time = datetime.now().strftime('%H:%M:%S')
+                self.add_log("전체 데이터 동기화 완료")
+                return True
         except Exception as e:
             from src.logger import log_error
             log_error(f"Update Error: {e}")
@@ -193,7 +208,7 @@ class DataManager:
 
             # 1) 시장 트렌드 분석 (실패해도 나머지 진행)
             try:
-                self.set_busy("시장 분석", "INDEX")
+                self.set_busy("시장분석", "INDEX")
                 self.strategy.determine_market_trend()
                 with self.data_lock:
                     self.cached_market_data = self.strategy.current_market_data
@@ -276,7 +291,6 @@ class DataManager:
             try:
                 # [추가] 매매 선행 분석 대기
                 if not self.strategy.is_ready:
-                    self.show_status("시장 분석 중... 대기 중입니다.")
                     time.sleep(2)
                     continue
 
@@ -301,6 +315,7 @@ class DataManager:
                         }
 
                     # 2. 락 안에서는 캐시 업데이트만 수행 (최소한의 시간 점유)
+                    self._update_daily_metrics(a)
                     with self.data_lock:
                         self.cached_holdings = h
                         self.cached_asset = a
@@ -357,7 +372,16 @@ class DataManager:
                             else:
                                 p = self.api.get_inquire_price(code_r)
                                 if p and p.get('price'):
-                                    qty = math.floor(rec['suggested_amt'] / p['price'])
+                                    # [Safety] 매수 가능 현금 확인 (D+2 기준이 아닌 D+0 기준 예수금으로 안전성 확보)
+                                    available_cash = a.get('cash', 0)
+                                    if available_cash < 1000: # 최소 1000원 이상은 있어야 시도
+                                        self.add_log(f"⚠️ 현금 부족으로 {rec_type} 스킵: {int(available_cash):,}원")
+                                        continue
+                                        
+                                    # 매수 희망액과 가용 현금 중 작은 금액으로 집행
+                                    actual_invest_amt = min(rec['suggested_amt'], available_cash)
+                                    qty = math.floor(actual_invest_amt / p['price'])
+                                    
                                     if qty > 0:
                                         success, msg = self.api.order_market(code_r, qty, True)
                                         if success:
@@ -370,6 +394,8 @@ class DataManager:
                                             self.add_trading_log(f"🤖 {msg_txt}")
                                             self.update_all_data(is_virtual, force=True)
                                             break  # 거래 후 데이터 동기화를 위해 루프 탈출
+                                        else:
+                                            self.add_log(f"{rec_type} 실패: {msg}")
 
                     if self.strategy.auto_ai_trade and self.strategy.ai_recommendations:
                         for top_ai in self.strategy.ai_recommendations:
@@ -389,9 +415,13 @@ class DataManager:
                             if curr_eval + (trade_amt * 0.95) > max_inv:
                                 continue
                             
-                            # [수정] 매수 쿨타임 체크 (10분으로 단축)
+                            # [수정] 재진입 제한(Cooldown) 체크 - 익절/손절/청산 후 2시간 이내 재진입 금지
+                            if self.strategy.is_reentry_restricted(top_ai['code']):
+                                continue
+                            
+                            # [추가] 매수 쿨타임 체크 (10분) - 동일 종목 연속 매수 방지
                             last_buy_t = self.strategy.last_buy_times.get(top_ai['code'], 0)
-                            if time.time() - last_buy_t < 600: # 10분
+                            if time.time() - last_buy_t < 600:
                                 continue
 
                             # [추가] 이미 거절된 종목은 로깅 없이 즉시 스킵
@@ -404,16 +434,82 @@ class DataManager:
                                 self.add_trading_log(f"⚠️ AI매수거절: {top_ai['name']} | 사유: {refuse_reason}")
                                 continue
 
-                            # 4. 매매 실행
+                            # [추가] 최대 종목 수(8종목) 제한 및 교체 로직
+                            replacement_memo = "AI 추천 기반 자율 매수"
+                            if len(self.cached_holdings) >= self.strategy.MAX_STOCK_COUNT:
+                                self.set_busy("종목 교체 분석", "DATA")
+                                should_replace, target_code, replace_reason = self.strategy.get_replacement_target(
+                                    top_ai['code'], top_ai['name'], top_ai.get('score', 0.0), self.cached_holdings
+                                )
+                                self.clear_busy("DATA")
+                                
+                                if should_replace and target_code:
+                                    target_item = next((h for h in self.cached_holdings if h['pdno'] == target_code), None)
+                                    target_name = target_item['prdt_name'] if target_item else target_code
+                                    
+                                    # 1. 대상 종목 전량 매도
+                                    sell_qty = int(float(target_item['hldg_qty'])) if target_item else 0
+                                    if sell_qty > 0:
+                                        self.add_trading_log(f"🔄 종목 교체 결정: [{target_name}] 매도 후 [{top_ai['name']}] 매수")
+                                        self.add_trading_log(f"📝 교체 사유: {replace_reason}")
+                                        
+                                        # P성과 리포트 기록을 위한 수익금 계산
+                                        s_price = float(target_item.get('prpr', 0))
+                                        s_avg = float(target_item.get('pchs_avg_pric', 0))
+                                        s_profit = (s_price - s_avg) * sell_qty
+                                        
+                                        s_success, s_msg = self.api.order_market(target_code, sell_qty, False)
+                                        if s_success:
+                                            # 전량 교체 매도 기록 (P성과 리포트 연동)
+                                            m_id = self.strategy.last_buy_models.get(target_code, "")
+                                            trading_log.log_trade("교체매도", target_code, target_name, s_price, sell_qty, f"종목 교체: {top_ai['name']}로 변경", profit=s_profit, model_id=m_id)
+                                            self.strategy.record_sell(target_code) # 매도 시점 기록 (재진입 방지)
+                                            
+                                            # AI 로그 리포트 기록 (A 로그 연동)
+                                            log_entry = {
+                                                "time": datetime.now().strftime('%H:%M:%S'),
+                                                "out_code": target_code,
+                                                "out_name": target_name,
+                                                "in_code": top_ai['code'],
+                                                "in_name": top_ai['name'],
+                                                "reason": replace_reason
+                                            }
+                                            self.strategy.replacement_logs.insert(0, log_entry)
+                                            self.strategy.replacement_logs = self.strategy.replacement_logs[:10] # 최근 10건 유지
+                                            self.strategy.save_manual_thresholds() # 영속 저장
+                                            
+                                            self.add_trading_log(f"✅ {target_name} {sell_qty}주 매도 완료 (교체 준비)")
+                                            # 매도 후 잔고 갱신을 위해 잠시 대기 및 데이터 업데이트
+                                            time.sleep(1)
+                                            self.update_all_data(is_virtual, force=True)
+                                            
+                                            # 교체 매입 메모 설정을 위해 변수 세팅
+                                            replacement_memo = f"종목 교체 매수 ({target_name} 대체)"
+                                        else:
+                                            self.add_log(f"❌ 교체 매도 실패: {s_msg}")
+                                            continue
+                                else:
+                                    # 교체 대상이 없거나 거절된 경우
+                                    # self.add_log(f"ℹ️ 보유 한도 초과(8종목) 및 교체 부적합: {top_ai['name']} 스킵")
+                                    continue
+
+                             # 4. 매매 실행
                             p = self.api.get_inquire_price(top_ai['code'])
                             if p and p.get('price'):
                                 curr_p = p['price']
+                                
+                                # [Safety] AI 자율 매수 전 가용 현금 체크
+                                available_cash = self.cached_asset.get('cash', 0)
+                                if available_cash < trade_amt * 0.5: # 설정액의 절반도 없으면 스킵
+                                    self.add_log(f"⚠️ 현금 부족으로 AI 매수 대기: {int(available_cash):,}원")
+                                    continue
+
                                 # [Phase 1] ATR 기반 지능형 포지션 사이징 적용
                                 qty = self.strategy.risk_mgr.calculate_position_size(
                                     top_ai['code'], 
                                     self.cached_asset['total_asset'], 
                                     curr_p,
-                                    default_amt=trade_amt
+                                    default_amt=min(trade_amt, int(available_cash))
                                 )
                                 
                                 if qty > 0:
@@ -421,7 +517,7 @@ class DataManager:
                                     if success:
                                         from src.logger import trading_log
                                         m_id = self.strategy.ai_advisor.last_used_model_id if hasattr(self.strategy.ai_advisor, 'last_used_model_id') else ""
-                                        trading_log.log_trade("AI자율매수", top_ai['code'], top_ai['name'], p['price'], qty, "AI 추천 기반 자율 매수", model_id=m_id)
+                                        trading_log.log_trade("AI자율매수", top_ai['code'], top_ai['name'], p['price'], qty, replacement_memo, model_id=m_id)
                                         self.add_trading_log(f"✨ AI자율매수: {top_ai['name']} {qty}주 선점")
                                         # [중요] 매수 시각 기록하여 쿨타임 발동
                                         self.strategy.record_buy(top_ai['code'], p['price'])

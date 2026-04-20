@@ -24,15 +24,8 @@ def main():
     dm = DataManager(api, strategy)
     auth.on_error_message = lambda msg: dm.show_status(msg, is_error=True)
     
-    # [수정] 프로그램 시작 시 시황 분석을 백그라운드 스레드로 실행
-    def background_analysis():
-        strategy.is_analyzing = True
-        strategy.analysis_status_msg = "시장 분석 중..."
-        strategy.perform_full_market_analysis()
-        strategy.is_analyzing = False
-        strategy.analysis_status_msg = "분석 완료"
-        perform_interaction('8', api, strategy, dm, 0)
-    threading.Thread(target=background_analysis, daemon=True).start()
+    dm = DataManager(api, strategy)
+    auth.on_error_message = lambda msg: dm.show_status(msg, is_error=True)
     
     enter_alt_screen()
     dm.start_workers(auth.is_virtual)
@@ -76,8 +69,8 @@ def main():
                     time.sleep(1)
                     os._exit(0)
                 elif k and not dm.is_input_active:
-                    # [수정] 유효한 명령어 키인지 확인 (불필요한 '동작 준비 중' 방지)
-                    valid_cmds = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 's']
+                    # [수정] 유효한 명령어 키인지 확인 (p:성과 추가)
+                    valid_cmds = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 's', 'p', 'ㅔ', 'ㅖ']
                     if k.lower() not in valid_cmds:
                         continue
 

@@ -32,7 +32,7 @@ def get_config():
                 "max_investment_per_stock": int(env_data.get("AI_MAX_INVESTMENT_PER_STOCK", 2000000)),
                 "auto_mode": env_data.get("AI_AUTO_MODE", "FALSE") == "TRUE",
                 "auto_apply": env_data.get("AUTO_APPLY_AI_STRATEGY", "FALSE") == "TRUE",
-                "preferred_model": env_data.get("GEMINI_MODEL", "gemini-2.5-flash")
+                "preferred_model": env_data.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview")
             },
             "starter_kit": {
                 "budget_per_stock": int(env_data.get("STARTER_KIT_BUDGET", 1000000)),
@@ -76,7 +76,7 @@ def ensure_env(force=False):
             ("KIS_ACNT_PRDT_CD", "계좌상품코드 (보통 01)", "01", "text"),
             ("KIS_IS_VIRTUAL", "투자 모드 (1: 모의투자, 2: 실전투자)", "TRUE", "mode"),
             ("GOOGLE_API_KEY", "Gemini API Key (선택사항)", None, "text"),
-            ("GEMINI_MODEL", "기본 Gemini 모델 (1:2.5-Flash, 2:2.5-Lite, 3:3.0-Flash, 4:3.1-Lite, 5:3.1-Pro)", "gemini-2.5-flash", "model_choice"),
+            ("GEMINI_MODEL", "기본 Gemini 모델 (1:3.1-Lite, 2:3.1-Pro, 3:3.0-Flash, 4:2.5-Flash, 5:2.5-Lite)", "gemini-3.1-flash-lite-preview", "model_choice"),
             
             # 기본 전략
             ("TAKE_PROFIT_THRESHOLD", "기본 익절 기준 (%)", "5.0", "text"),
@@ -127,11 +127,11 @@ def ensure_env(force=False):
             # 3. Gemini 모델 선택 특수 처리
             elif input_type == "model_choice":
                 models = [
-                    "gemini-2.5-flash", 
-                    "gemini-2.5-flash-lite", 
-                    "gemini-3-flash-preview", 
                     "gemini-3.1-flash-lite-preview", 
-                    "gemini-3.1-pro-preview"
+                    "gemini-3.1-pro-preview", 
+                    "gemini-3-flash-preview", 
+                    "gemini-2.5-flash", 
+                    "gemini-2.5-flash-lite"
                 ]
                 current_disp = old_val if old_val in models else default
                 val = input(f" > {label} [{current_disp}]: ").strip()
