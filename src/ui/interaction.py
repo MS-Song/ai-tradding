@@ -311,6 +311,7 @@ def get_input(dm, prompt, tw):
 
 def perform_interaction(key, api, strategy, dm, cycle):
     import os
+    import sys
     import time
     from src.ui.renderer import draw_tui, draw_manual_page
     from src.utils import get_key_immediate
@@ -319,11 +320,11 @@ def perform_interaction(key, api, strategy, dm, cycle):
     from dotenv import load_dotenv
     
     flush_input()
-    key_map = {'ㅂ': 'q', 'ㅃ': 'q', 'ㅅ': 's', 'ㄴ': 's', 'ㅈ': 's', 'ㅁ': 'a', 'ㅣ': 'l', 'ㅠ': 'b', 'ㅇ': 'd', 'ㅎ': 'h', 'ㅔ': 'p', 'ㅖ': 'p'}
+    key_map = {'ㅂ': 'q', 'ㅃ': 'q', 'ㅅ': 's', 'ㄴ': 's', 'ㅈ': 's', 'ㅁ': 'a', 'ㅣ': 'l', 'ㅠ': 'b', 'ㅇ': 'd', 'ㅎ': 'h', 'ㅔ': 'p', 'ㅖ': 'p', 'ㅏ': 'k'}
     mode = (key[-1] if 'alt+' in key else key).lower()
     if mode in key_map: mode = key_map[mode]
     
-    if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p']: return
+    if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p', 'k']: return
     
     # [수정] tw, th를 미리 계산하여 사용 가능하게 함
     try:
@@ -347,23 +348,22 @@ def perform_interaction(key, api, strategy, dm, cycle):
             dm.set_busy(f"{mode} 처리")
             try:
                 restore_terminal_settings()
-                size = os.get_terminal_size(); tw, th = size.columns, size.lines
-                if mode == 'm': draw_manual_page(tw, th)
+                size = os.get_terminal_size(); tw_r, th_r = size.columns, size.lines
+                if mode == 'm': draw_manual_page(tw_r, th_r)
                 elif mode == 'l':
                     from src.ui.renderer import draw_trading_logs
-                    draw_trading_logs(strategy, dm, tw, th)
-                elif mode == 'b': draw_holdings_detail(strategy, dm, tw, th)
-                elif mode == 'd': draw_recommendation_report(strategy, dm, tw, th)
-                elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw, th)
-                elif mode == 'a': draw_ai_logs_report(strategy, dm, tw, th)
+                    draw_trading_logs(strategy, dm, tw_r, th_r)
+                elif mode == 'b': draw_holdings_detail(strategy, dm, tw_r, th_r)
+                elif mode == 'd': draw_recommendation_report(strategy, dm, tw_r, th_r)
+                elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw_r, th_r)
+                elif mode == 'a': draw_ai_logs_report(strategy, dm, tw_r, th_r)
                 elif mode == 'p':
-                    res = draw_performance_report(strategy, dm, tw, th)
+                    res = draw_performance_report(strategy, dm, tw_r, th_r)
                     if res == 'R':
                         dm.set_busy("리밸런싱 분석 중")
                         strategy.check_rebalance(dm.cached_holdings, dm.cached_asset['total_asset'], force=True)
                         dm.clear_busy()
-                        # 리포트 재진입 로직은 interaction 구조상 재호출 필요
-                        draw_performance_report(strategy, dm, tw, th)
+                        draw_performance_report(strategy, dm, tw_r, th_r)
                 enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
             finally: 
                 dm.clear_busy()
@@ -497,25 +497,28 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     except: dm.show_status("❌ 입력 오류", True)
 
         elif mode == '8':
-            if not os.getenv("GOOGLE_API_KEY"): dm.show_status("⚠️ API Key 누락", True)
-            else:
-                def task_ai():
-                    dm.set_busy("시장분석")
-                    try:
-                        def prog_cb(c, t, m="분석"): dm.show_status(f"[AI {m} 중... {c}/{t}]")
-                        def item_cb(i): 
-                            with dm.data_lock: 
-                                if not any(r['code'] == i['code'] for r in strategy.ai_recommendations): strategy.ai_recommendations.append(i); strategy.ai_recommendations.sort(key=lambda x: x['score'], reverse=True)
-                        with dm.data_lock: strategy.ai_recommendations = []
-                        strategy.update_ai_recommendations(get_cached_themes(), dm.cached_hot_raw, dm.cached_vol_raw, progress_cb=prog_cb, on_item_found=item_cb)
-                        advice = strategy.get_ai_advice(progress_cb=lambda c, t: prog_cb(c, t, "심층분석"))
-                        if advice and "⚠️" not in advice:
-                            dm.show_status("✅ AI 분석 완료")
-                            if strategy.parse_and_apply_ai_strategy():
-                                if strategy.ai_config.get("auto_apply"): dm.show_status("🚀 전략 자동 반영됨")
-                        else: dm.show_status(f"❌ AI 분석 실패", True)
-                    finally: dm.clear_busy()
-                command_queue.put((task_ai, (), {}))
+            def task_ai():
+                dm.set_busy("AI분석")
+                try:
+                    def prog_cb(c, t, m="AI분석"): 
+                        # "분석 중: 종목명" 같이 긴 메시지가 오면 "AI추천" 정도로 축약
+                        if "분석 중:" in m: m = "AI추천"
+                        dm.set_busy(f"{m}({c}/{t})")
+                    def item_cb(i): 
+                        with dm.data_lock: 
+                            if not any(r['code'] == i['code'] for r in strategy.ai_recommendations):
+                                strategy.ai_recommendations.append(i)
+                                strategy.ai_recommendations.sort(key=lambda x: x['score'], reverse=True)
+                    with dm.data_lock: strategy.ai_recommendations = []
+                    strategy.update_ai_recommendations(get_cached_themes(), dm.cached_hot_raw, dm.cached_vol_raw, progress_cb=prog_cb, on_item_found=item_cb)
+                    advice = strategy.get_ai_advice(progress_cb=lambda c, t: prog_cb(c, t, "심층분석"))
+                    if advice and "⚠️" not in advice:
+                        dm.show_status("✅ AI 분석 완료")
+                        if strategy.parse_and_apply_ai_strategy():
+                            if strategy.ai_config.get("auto_apply"): dm.show_status("🚀 전략 자동 반영됨")
+                    else: dm.show_status(f"❌ AI 분석 실패", True)
+                finally: dm.clear_busy()
+            command_queue.put((task_ai, (), {}))
 
         elif mode == '5':
             res = get_input(dm, "> 물타기설정 [트리거% 금액 한도 자동(y/n)]: ", tw)
@@ -580,26 +583,34 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                     else:
                                         dm.add_trading_log(f"⚠️ [{name}] AI 전략 추천 실패")
                                         dm.show_status(f"❌ AI 전략 추천 실패", True)
-                                else:
-                                    sel_id = sid_raw.strip().zfill(2)
-                                    if sel_id in PRESET_STRATEGIES:
-                                        if sel_id == '00':
-                                            strategy.assign_preset(code, '00', name=name)
-                                            dm.add_trading_log(f"🔄 [{name}] 표준 전략 복귀")
-                                            dm.show_status(f"🔄 표준 복귀")
-                                        else:
-                                            detail = api.get_naver_stock_detail(code); news = api.get_naver_stock_news(code)
-                                            res = strategy.ai_advisor.simulate_preset_strategy(code, name, strategy.current_market_vibe, detail, news)
-                                            tp = res['tp'] if res else PRESET_STRATEGIES[sel_id]['default_tp']
-                                            sl = res['sl'] if res else PRESET_STRATEGIES[sel_id]['default_sl']
-                                            strategy.assign_preset(code, sel_id, tp, sl, res['reason'] if res else '', name=name)
-                                            dm.add_trading_log(f"✅ [{name}] {PRESET_STRATEGIES[sel_id]['name']} TP:{tp:+.1f}% SL:{sl:.1f}%")
-                                            dm.show_status(f"✅ {PRESET_STRATEGIES[sel_id]['name']} 적용")
-
-                                    else: dm.show_status("⚠️ 무효한 번호", True)
+                                antis_id = sid_raw.strip().zfill(2)
+                                if antis_id in PRESET_STRATEGIES:
+                                    if antis_id == '00':
+                                        strategy.assign_preset(code, '00', name=name)
+                                        dm.add_trading_log(f"🔄 [{name}] 표준 전략 복귀")
+                                        dm.show_status(f"🔄 표준 복귀")
+                                    else:
+                                        detail = api.get_naver_stock_detail(code); news = api.get_naver_stock_news(code)
+                                        res = strategy.ai_advisor.simulate_preset_strategy(code, name, strategy.current_market_vibe, detail, news)
+                                        tp = res['tp'] if res else PRESET_STRATEGIES[antis_id]['default_tp']
+                                        sl = res['sl'] if res else PRESET_STRATEGIES[antis_id]['default_sl']
+                                        strategy.assign_preset(code, antis_id, tp, sl, res['reason'] if res else '', name=name)
+                                        dm.add_trading_log(f"✅ [{name}] {PRESET_STRATEGIES[antis_id]['name']} TP:{tp:+.1f}% SL:{sl:.1f}%")
+                                        dm.show_status(f"✅ {PRESET_STRATEGIES[antis_id]['name']} 적용")
+                                else: dm.show_status("⚠️ 무효한 번호", True)
                             finally: dm.clear_busy()
-
                         command_queue.put((task_single, (res_strat,), {}))
+
+        elif mode == 'k':
+            res = get_input(dm, "> 일일 수익률 기준점을 현재 자산으로 초기화할까요? (y/n): ", tw)
+            if res and res.lower() == 'y':
+                cur_asset = dm.cached_asset.get('total_asset', 0)
+                if cur_asset > 0:
+                    strategy.reset_daily_pnl(cur_asset)
+                    dm.show_status(f"📅 일일 기준점 초기화 완료: {cur_asset:,.0f}원")
+                else:
+                    dm.show_status("❌ 자산 데이터가 없어 초기화할 수 없습니다.", True)
+
     except Exception as e:
         from src.logger import log_error
         log_error(f"Interaction Error: {e}"); dm.show_status(f"오류: {e}", True)

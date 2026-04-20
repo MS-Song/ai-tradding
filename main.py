@@ -70,7 +70,7 @@ def main():
                     os._exit(0)
                 elif k and not dm.is_input_active:
                     # [수정] 유효한 명령어 키인지 확인 (p:성과 추가)
-                    valid_cmds = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 's', 'p', 'ㅔ', 'ㅖ']
+                    valid_cmds = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 's', 'p', 'k', 'ㅔ', 'ㅖ', 'ㅏ']
                     if k.lower() not in valid_cmds:
                         continue
 

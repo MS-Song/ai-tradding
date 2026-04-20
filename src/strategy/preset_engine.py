@@ -33,8 +33,15 @@ class PresetStrategyEngine:
         preset = PRESET_STRATEGIES.get(preset_id)
         if not preset: return False
             
+        # 기존 저장된 종목명이 있으면 활용
         if not name and code in self.preset_strategies:
-            name = self.preset_strategies[code].get('name', '')
+            name = self.preset_strategies[code].get('stock_name', '')
+        # 종목명이 없으면 API를 통해 가져오기 (마지막 수단)
+        if not name and self.api:
+            try:
+                detail = self.api.get_naver_stock_detail(code)
+                if detail: name = detail.get('pdnm', '')
+            except: pass
 
         if preset_id == "00":
             if code in self.preset_strategies:
@@ -47,6 +54,7 @@ class PresetStrategyEngine:
             self.preset_strategies[code] = {
                 "preset_id": preset_id,
                 "name": preset["name"],
+                "stock_name": name, # 종목명 별도 저장
                 "tp": use_tp,
                 "sl": use_sl,
                 "reason": reason or preset["desc"],
