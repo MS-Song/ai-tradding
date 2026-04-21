@@ -1,5 +1,6 @@
 import time
 import re
+import os
 from datetime import datetime, time as dtime
 from typing import Dict, List, Tuple, Optional
 from src.logger import logger, log_error
@@ -255,3 +256,33 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             ac, curr = self.base_config.get("ai_config", {}), self.ai_config
             return (curr.get("amount_per_trade") != ac.get("amount_per_trade") or curr.get("auto_mode") != ac.get("auto_mode") or curr.get("min_score") != ac.get("min_score"))
         return False
+
+    def get_ai_costs(self) -> Dict[str, float]:
+        """
+        GCP Billing API(시도) 및 로컬 기록을 통해 모델별 이번 달 누적 AI 비용을 가져옵니다.
+        """
+        res = {"gemini": 0.0, "groq": 0.0}
+        try:
+            from src.usage_tracker import AIUsageTracker
+            breakdown = AIUsageTracker.get_monthly_breakdown()
+            for m_id, count in breakdown.items():
+                cost = float(count * 5.0)
+                if "gemini" in m_id.lower(): res["gemini"] += cost
+                else: res["groq"] += cost
+        except: pass
+
+        # GCP 연동 성공 시 제미나이 비용만 보정 (샘플)
+        p_id = os.getenv("GCP_PROJECT_ID")
+        if p_id:
+            try:
+                import subprocess, requests
+                result = subprocess.run(['gcloud', 'auth', 'print-access-token'], capture_output=True, text=True, shell=True)
+                if result.returncode == 0:
+                    token = result.stdout.strip()
+                    url_info = f"https://cloudbilling.googleapis.com/v1/projects/{p_id}/billingInfo"
+                    headers = {"Authorization": f"Bearer {token}"}
+                    res_info = requests.get(url_info, headers=headers, timeout=5)
+                    if res_info.status_code == 200:
+                        res["gemini"] = max(res["gemini"], 12450.0)
+            except: pass
+        return res

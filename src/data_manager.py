@@ -28,6 +28,7 @@ class DataManager:
         self.cached_market_data = {}
         self.cached_vibe = "Neutral"
         self.cached_panic = False
+        self.cached_ai_costs = {"gemini": 0, "groq": 0} # [수정] 모델별 분리
         self.last_update_time = ""
         self.ranking_filter = "ALL"
         self.is_kr_market_active = False
@@ -248,6 +249,16 @@ class DataManager:
                     pass
                 
                 self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
+                
+                # 4) AI 비용 갱신 (5초 주기)
+                if curr_t - self.last_times.get("billing", 0) > 5:
+                    try:
+                        costs = self.strategy.get_ai_costs()
+                        with self.data_lock:
+                            self.cached_ai_costs = costs
+                        self.last_times["billing"] = curr_t
+                    except Exception as e:
+                        log_error(f"Billing Update Error: {e}")
             except RuntimeError: break
             except Exception as e:
                 log_error(f"AI Rec Update Error: {e}")

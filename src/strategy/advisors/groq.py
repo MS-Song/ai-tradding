@@ -30,6 +30,8 @@ class GroqAdvisor(BaseLLMAdvisor):
                 response = requests.post(url, headers=headers, json=payload, timeout=timeout)
                 if response.status_code == 200:
                     res_json = response.json()
+                    from src.usage_tracker import AIUsageTracker
+                    AIUsageTracker.log_call(self.model_id)
                     return res_json['choices'][0]['message']['content']
                 else:
                     log_error(f"Groq API Error ({self.model_id}): {response.status_code} - {response.text}")

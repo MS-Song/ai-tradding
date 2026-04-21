@@ -23,6 +23,8 @@ class GeminiAdvisor(BaseLLMAdvisor):
                 response = requests.post(url, headers=headers, json=payload, timeout=timeout)
                 if response.status_code == 200:
                     res_json = response.json()
+                    from src.usage_tracker import AIUsageTracker
+                    AIUsageTracker.log_call(self.model_id)
                     return res_json['candidates'][0]['content']['parts'][0]['text']
                 else:
                     log_error(f"Gemini API Error ({self.model_id}): {response.status_code} - {response.text}")

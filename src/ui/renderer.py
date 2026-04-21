@@ -26,7 +26,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     is_v = getattr(strategy.api.auth, 'is_virtual', True)
     debug_tag = " [디버그]" if getattr(strategy, "debug_mode", False) else ""
     mode_tag = f" [모의]{debug_tag}" if is_v else f" [실전]{debug_tag}"
-    version_text = f"[AI TRADING SYSTEM ver 1.2.3]{mode_tag}"
+    version_text = f"[AI TRADING SYSTEM ver 1.2.4]{mode_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg
@@ -222,7 +222,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         strat_info = f"TP:\033[91m{strategy.base_tp:+.1f}%\033[0m(\033[91m{tp_cur:+.1f}%\033[0m) SL:\033[94m{strategy.base_sl:+.1f}%\033[0m(\033[94m{sl_cur:+.1f}%\033[0m)"
         algo_label = align_kr(f"{al_mark}ALGO", L2)
         algo_info = f"[{auto_st_algo}] {a_cfg.get('amount_per_trade'):,}원/{a_cfg.get('max_investment_per_stock'):,}원 (누적:{daily_amts['ALGO']:,.0f})"
-        line_strat = f"{strat_label} | {align_kr(strat_info, C1)} | {algo_label} | {algo_info}"
+        costs = dm.cached_ai_costs
+        cost_info = f" | AI 비용(추정): \033[96mgemini({costs.get('gemini',0):,.0f}원) groq({costs.get('groq',0):,.0f}원)\033[0m"
+        line_strat = f"{strat_label} | {align_kr(strat_info, C1)} | {algo_label} | {algo_info}{cost_info}"
         buf.write(align_kr(line_strat, tw) + "\n")
 
         # Line 3: BEAR + BULL
