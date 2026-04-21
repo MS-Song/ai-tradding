@@ -38,10 +38,11 @@ def main():
             cycle += 1
             if not auth.is_token_valid(): auth.generate_token()
             
-            # [수정] 주기적 시황 분석 스케줄러 (백그라운드 실행) - 1시간(60분) 고정
-            interval = 60
+            # [수정] 주기적 시황 분석 스케줄러 (실전 20분 / 모의 60분 정책 준수)
+            is_v = getattr(strategy.api.auth, 'is_virtual', True)
+            interval = 20 if not is_v else 60
             if not strategy.is_analyzing and (time.time() - strategy.last_market_analysis_time) > (interval * 60):
-                threading.Thread(target=strategy.perform_full_market_analysis, daemon=True).start()
+                threading.Thread(target=strategy.run_scheduled_analysis, daemon=True).start()
             
             # 5초 = 100 tick × 0.05s / TUI는 10tick(0.5s)마다 1번 렌더링
             for i in range(100):

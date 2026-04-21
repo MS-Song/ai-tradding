@@ -8,6 +8,9 @@ from src.logger import logger, log_error, trading_log
 
 class AnalysisMixin:
     def perform_full_market_analysis(self, retry=True) -> bool:
+        """시장 분석을 수행 (수동 호출 및 자동 호출 공용)"""
+        was_analyzing = self.is_analyzing
+        self.is_analyzing = True
         self.current_action = "시장분석"
         try:
             self.analyzer.update()
@@ -15,13 +18,38 @@ class AnalysisMixin:
             self.last_market_analysis_time = time.time()
             self.is_ready = True
             logger.info("시장 분석 완료 및 전략 적용 성공")
-            self.current_action = "대기중"
             return True
         except Exception as e:
-            log_error(f"시장 분석 실패 (진입 차단 해제): {e}")
+            log_error(f"시장 분석 실패: {e}")
             self.is_ready = True 
-            self.current_action = "대기중"
             return False
+        finally:
+            # 상위에서 이미 플래그를 관리 중인 경우(run_scheduled_analysis 등) 건드리지 않음
+            if not was_analyzing:
+                self.is_analyzing = False
+                self.current_action = "대기중"
+
+    def run_scheduled_analysis(self):
+        """백그라운드에서 주기적으로 호출되어 시황 분석, AI 조언 수집, 전략 반영을 일괄 수행"""
+        if self.is_analyzing: return
+        self.is_analyzing = True
+        try:
+            # 1. 시장 시황 분석 (Vibe 결정 및 종목별 프리셋 적용)
+            # 내부에서 is_analyzing을 True로 유지함
+            self.perform_full_market_analysis()
+            
+            # 2. AI 조언 수집
+            self.get_ai_advice()
+            
+            # 3. AI 전략 파싱 및 전역 설정 반영
+            self.parse_and_apply_ai_strategy()
+            
+            logger.info("✅ 주기적 AI 시황 분석 완료")
+        except Exception as e:
+            log_error(f"주기적 분석 오류: {e}")
+        finally:
+            self.is_analyzing = False
+            self.current_action = "대기중"
 
     def update_ai_recommendations(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], progress_cb: Optional[Callable] = None, on_item_found: Optional[Callable] = None):
         try: 
@@ -50,8 +78,23 @@ class AnalysisMixin:
             
             self.ai_briefing = future_briefing.result()
             self.ai_detailed_opinion = future_detailed.result()
-            if future_holdings: self.ai_holdings_opinion = future_holdings.result()
+            if future_holdings:
+                self.ai_holdings_opinion = future_holdings.result()
+                self.ai_holdings_update_time = time.time()
         return self.ai_briefing
+
+    def refresh_holdings_opinion(self, progress_cb: Optional[Callable] = None):
+        """보유 종목의 AI 진단 의견만 실시간으로 갱신 ( interaction.py 'R' 연동 )"""
+        holdings = self.api.get_balance()
+        if not holdings:
+            self.ai_holdings_opinion = "보유 중인 종목이 없습니다."
+            self.ai_holdings_update_time = time.time()
+            return
+
+        res = self.ai_advisor.get_holdings_report_advice(holdings, self.analyzer.kr_vibe, self.analyzer.current_data, progress_cb=progress_cb)
+        if res:
+            self.ai_holdings_opinion = res
+            self.ai_holdings_update_time = time.time()
 
     def parse_and_apply_ai_strategy(self) -> bool:
         if not self.ai_briefing: return False

@@ -219,11 +219,13 @@ class BaseLLMAdvisor(BaseAdvisor):
         answer = self._call_api(prompt)
         if answer:
             try:
-                sid_match = re.search(r"전략번호[:\s]*(\d{2})", answer)
-                tp_match = re.search(r"익절[:\s]*([+-]?[\d.]+)", answer)
-                sl_match = re.search(r"손절[:\s]*([+-]?[\d.]+)", answer)
-                lt_match = re.search(r"유효시간[:\s]*(\d+)분", answer)
-                reason_match = re.search(r"근거[:\s]*(.*)", answer)
+                # 더 유연한 파싱 (볼드체 및 다양한 구분자 허용)
+                sid_match = re.search(r"전략번호[^\d]*(\d{2})", answer)
+                tp_match = re.search(r"익절[^\d+-]*([+-]?[\d.]+)", answer)
+                sl_match = re.search(r"손절[^\d+-]*([+-]?[\d.]+)", answer)
+                lt_match = re.search(r"유효시간[^\d]*(\d+)", answer)
+                reason_match = re.search(r"근거[:\s주사항]*([^\n]*)", answer)
+                
                 if sid_match and tp_match and sl_match:
                     sid = sid_match.group(1)
                     if sid not in PRESET_STRATEGIES or sid == "00": sid = "01"
@@ -233,7 +235,7 @@ class BaseLLMAdvisor(BaseAdvisor):
                         "lifetime_mins": int(lt_match.group(1)) if lt_match else 120,
                         "reason": reason_match.group(1).strip() if reason_match else "AI 분석 기반"
                     }
-            except Exception as e: log_error(f"AI 파싱 오류: {e}")
+            except Exception as e: log_error(f"AI 전략 파싱 오류: {e}")
         return None
 
     def final_buy_confirm(self, code, name, vibe, detail, news, indicators=None, score=0.0):
@@ -244,11 +246,19 @@ class BaseLLMAdvisor(BaseAdvisor):
         """
         answer = self._call_api(prompt)
         if answer:
-            decision_match = re.search(r"결정[:\s]*(Yes|No)", answer, re.I)
-            reason_match = re.search(r"사유[:\s]*(.*)", answer)
-            decision = decision_match.group(1).strip().capitalize() if decision_match else "No"
+            # 결정 파싱 강화: 마크다운 강조, 한글 답변, 다양한 구분자 대응
+            decision_match = re.search(r"결정[^\w]*\b(Yes|No|예|아니오)\b", answer, re.I)
+            reason_match = re.search(r"사유[^\w]*([^\n]*)", answer)
+            
+            raw_decision = decision_match.group(1).strip().lower() if decision_match else "no"
+            decision = (raw_decision in ["yes", "예"])
             reason = reason_match.group(1).strip() if reason_match else "판단 근거 부족"
-            return (decision == "Yes"), reason
+            
+            # 만약 결정 라벨이 없는데 답변이 매우 긍정적이고 'Yes'를 포함하고 있다면 구제책 마련
+            if not decision_match and ("Yes" in answer or "승인" in answer or "추천" in answer) and "No" not in answer:
+                decision = True
+                
+            return decision, reason
         return False, "API 호출 실패"
 
     def verify_market_vibe(self, current_data, heuristic_vibe):
@@ -263,20 +273,24 @@ class BaseLLMAdvisor(BaseAdvisor):
         prompt = f"Close in 10m. {name}({code}) Profit: {rt:+.2f}%. Sell or Hold? Reason: one line."
         answer = self._call_api(prompt, timeout=30)
         if answer:
-            decision_match = re.search(r"결정[:\s]*(Sell|Hold)", answer, re.I)
-            reason_match = re.search(r"사유[:\s]*(.*)", answer)
-            decision = decision_match.group(1).strip().capitalize() if decision_match else "Sell"
-            return (decision == "Sell"), reason_match.group(1).strip() if reason_match else "보수적 판단"
+            decision_match = re.search(r"결정[^\w]*\b(Sell|Hold|매도|보유)\b", answer, re.I)
+            reason_match = re.search(r"사유[^\w]*([^\n]*)", answer)
+            
+            raw_decision = decision_match.group(1).strip().lower() if decision_match else "sell"
+            decision = (raw_decision in ["sell", "매도"])
+            return decision, reason_match.group(1).strip() if reason_match else "보수적 판단"
         return True, "API 호출 실패"
 
     def compare_stock_superiority(self, candidate, holdings_info, vibe):
         prompt = f"Limit 8 reached. Candidate: {candidate['name']}. Better than anyone in holdings? Yes/No, SellID: XXXXXX, Reason: one line."
         answer = self._call_api(prompt, timeout=40)
         if answer:
-            decision_match = re.search(r"교체여부[:\s]*(Yes|No)", answer, re.I)
-            code_match = re.search(r"매도종목코드[:\s]*([0-9A-Z]+|None)", answer)
-            reason_match = re.search(r"사유[:\s]*(.*)", answer)
-            decision = decision_match.group(1).strip().capitalize() if decision_match else "No"
-            sell_code = code_match.group(1).strip() if code_match and code_match.group(1) != "None" else None
-            return (decision == "Yes" and sell_code is not None), sell_code, reason_match.group(1).strip() if reason_match else "교체 근거 부족"
+            decision_match = re.search(r"(?:교체여부|결정)[^\w]*\b(Yes|No|예|아니오)\b", answer, re.I)
+            code_match = re.search(r"(?:매도종목코드|코드)[^\w]*\b([0-9A-Z]+)\b", answer)
+            reason_match = re.search(r"사유[^\w]*([^\n]*)", answer)
+            
+            raw_decision = decision_match.group(1).strip().lower() if decision_match else "no"
+            decision = (raw_decision in ["yes", "예"])
+            sell_code = code_match.group(1).strip() if code_match and code_match.group(1).upper() != "NONE" else None
+            return (decision and sell_code is not None), sell_code, reason_match.group(1).strip() if reason_match else "교체 근거 부족"
         return False, None, "API 호출 실패"

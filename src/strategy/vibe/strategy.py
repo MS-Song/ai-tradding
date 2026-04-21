@@ -50,6 +50,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self.ai_recommendations: List[dict] = []
         self.ai_briefing, self.ai_detailed_opinion = "", ""
         self.ai_holdings_opinion = ""
+        self.ai_holdings_update_time = 0.0
         self.recommendation_history: Dict[str, List[dict]] = {}
         self.yesterday_recs: List[dict] = []
         self.yesterday_recs_processed: List[dict] = []

@@ -363,11 +363,19 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     
     if rem > 0: buf.write(f"\033[K {dm.last_log_msg if dm.last_log_msg and (time.time()-dm.last_log_time<60) else ''}\n"); rem -= 1
     if rem > 0:
-        logs = list(reversed(dm.trading_logs)); skip = len(logs) - (rem - 1)
-        if skip > 0: buf.write(f"\033[K \033[90m... 💬 {skip}건의 로그 생략됨 ...\033[0m\n"); logs = logs[-(rem-1):]; rem -= 1
-        for tl in logs:
-            if rem <= 0: break
-            buf.write(f"\033[K {tl}\n"); rem -= 1
+        logs = list(reversed(dm.trading_logs))
+        if len(logs) > rem:
+            # 보일 수 있는 만큼(rem-1개) 최신 로그를 먼저 출력
+            display_count = rem - 1
+            skip = len(logs) - display_count
+            for i in range(display_count):
+                buf.write(f"\033[K {logs[i]}\n")
+            buf.write(f"\033[K \033[90m... 💬 {skip}건의 로그 생략됨 ...\033[0m\n")
+            rem = 0
+        else:
+            for tl in logs:
+                buf.write(f"\033[K {tl}\n")
+                rem -= 1
     while rem > 0: buf.write("\033[K\n"); rem -= 1
     lines = buf.getvalue().split('\n')
     if lines and not lines[-1]: lines.pop()

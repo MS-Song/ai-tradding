@@ -65,7 +65,7 @@ class ExecutionMixin:
                             p3_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원)")
                             m_id = self.last_buy_models.get(code, "")
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도", profit=p3_profit, model_id=m_id)
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도", profit=p3_profit, model_id="TL/SP")
                             self._save_all_states()
                     elif skip_trade: p_strat['is_p3_processed'] = True
             else:
@@ -80,7 +80,7 @@ class ExecutionMixin:
                             p3_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원) | SL→본전(+0.2%)")
                             m_id = self.last_buy_models.get(code, "")
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도", profit=p3_profit, model_id=m_id)
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도", profit=p3_profit, model_id="TL/SP")
                             self._save_all_states()
                 elif phase['id'] == "P4" and float(item.get("evlu_pfls_rt", 0.0)) < 0 and f"p4_{today}_{code}" not in self._p3_global_processed:
                     if (time.time() - self.last_buy_times.get(code, 0)) < 3600:
@@ -93,7 +93,7 @@ class ExecutionMixin:
                             p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
                             m_id = self.last_buy_models.get(code, "")
-                            trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit, model_id=m_id)
+                            trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit, model_id="TL/SP")
                             self._save_all_states()
 
             if phase['id'] == 'P4' and not skip_trade and not self._p4_ai_done_this_cycle:
@@ -143,7 +143,7 @@ class ExecutionMixin:
                 if self.api.order_market(code, sell_qty, False)[0]:
                     self.record_sell(code)
                     m_id = self.last_buy_models.get(code, "")
-                    trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id=m_id)
+                    trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id="TL/SP")
                     self._save_all_states()
                     results.append(f"자동 {action}{f'({action_reason})' if action_reason else ''}: {item.get('prdt_name')} {sell_qty}주")
                 self.current_action = "대기중"
@@ -184,13 +184,17 @@ class ExecutionMixin:
         except: pass
 
         is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news, indicators=indicators, score=score)
+        m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else ""
+        
         if not is_confirmed:
             if re.search(r"(?<![0-9])0원", reason) or "가격이 0원" in reason: return False, f"데이터 지연 보류: {reason}"
             self.rejected_stocks[code] = {"reason": reason, "time": time.time()}
+            # [추가] 거절 로그 영속성 확보
+            trading_log.log_rejection(code, name, reason, model_id=m_id)
             self._save_all_states()
             return False, reason
-        if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor:
-            self.last_buy_models[code] = self.ai_advisor.last_used_advisor.model_id
+        
+        if m_id: self.last_buy_models[code] = m_id
         return True, "승인됨"
 
     def get_replacement_target(self, candidate_code: str, candidate_name: str, score: float, holdings: List[dict]) -> Tuple[bool, Optional[str], str]:

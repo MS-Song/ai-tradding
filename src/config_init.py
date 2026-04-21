@@ -158,11 +158,17 @@ def ensure_env(force=False):
             for i, m in enumerate(gemini_models):
                 print(f"   {i+1}: {m}")
             
-            # 기존 값 찾기
-            curr_seq = env_data.get("LLM_SEQUENCE", "GEMINI:gemini-3.1-flash-lite-preview")
-            gemini_entries = [entry.split(":")[1] for entry in curr_seq.split(",") if entry.startswith("GEMINI:")]
-            curr_p = gemini_entries[0] if gemini_entries else gemini_models[0]
-            curr_s = gemini_entries[1] if len(gemini_entries) > 1 else (gemini_models[1] if len(gemini_models) > 1 else curr_p)
+            # 기존 값 찾기 (개별 설정값 우선, 없으면 시퀀스에서 추출)
+            curr_p = env_data.get("GEMINI_MODEL", "")
+            curr_s = env_data.get("GEMINI_SECONDARY_MODEL", "")
+            
+            if not curr_p or not curr_s:
+                curr_seq = env_data.get("LLM_SEQUENCE", "")
+                gemini_entries = [entry.split(":")[1] for entry in curr_seq.split(",") if entry.startswith("GEMINI:")]
+                if not curr_p: curr_p = gemini_entries[0] if gemini_entries else gemini_models[0]
+                if not curr_s: curr_s = gemini_entries[1] if len(gemini_entries) > 1 else (gemini_models[1] if len(gemini_models) > 1 else curr_p)
+            
+            p_model, s_model = curr_p, curr_s
 
             m1 = input(f"  > Gemini 주 모델 (Primary) 선택 (번호/이름) [{curr_p}]: ").strip()
             if not m1: p_model = curr_p
@@ -176,11 +182,11 @@ def ensure_env(force=False):
             
             selected_llm_options.append(("GEMINI", p_model, "Gemini Primary"))
             selected_llm_options.append(("GEMINI", s_model, "Gemini Secondary"))
-            results["GEMINI_MODEL"] = p_model # 하위 호환성 유지용
+            results["GEMINI_MODEL"] = p_model
+            results["GEMINI_SECONDARY_MODEL"] = s_model
             
-            # Rate Limit 설정 추가
-            gemini_cps = handle_input("GEMINI_MAX_CPS", "  > Gemini 초당 최대 호출 횟수 (기본 1.0)", "1.0", "text", env_data)
-            results["GEMINI_MAX_CPS"] = gemini_cps
+            # Gemini CPS 설정
+            results["GEMINI_MAX_CPS"] = handle_input("GEMINI_MAX_CPS", "  > Gemini 초당 최대 호출 횟수 (기본 1.0)", "1.0", "text", env_data)
 
         # 2-2. Groq 설정
         groq_key = handle_input("GROQ_API_KEY", "Groq API Key (없으면 엔터)", None, "text", env_data)
@@ -192,10 +198,17 @@ def ensure_env(force=False):
             for i, m in enumerate(groq_models):
                 print(f"   {i+1}: {m}")
             
-            curr_seq = env_data.get("LLM_SEQUENCE", "")
-            groq_entries = [entry.split(":")[1] for entry in curr_seq.split(",") if entry.startswith("GROQ:")]
-            curr_p = groq_entries[0] if groq_entries else groq_models[0]
-            curr_s = groq_entries[1] if len(groq_entries) > 1 else (groq_models[1] if len(groq_models) > 1 else curr_p)
+            # 기존 값 찾기 (개별 설정값 우선, 없으면 시퀀스에서 추출)
+            curr_p = env_data.get("GROQ_MODEL", "")
+            curr_s = env_data.get("GROQ_SECONDARY_MODEL", "")
+
+            if not curr_p or not curr_s:
+                curr_seq = env_data.get("LLM_SEQUENCE", "")
+                groq_entries = [entry.split(":")[1] for entry in curr_seq.split(",") if entry.startswith("GROQ:")]
+                if not curr_p: curr_p = groq_entries[0] if groq_entries else groq_models[0]
+                if not curr_s: curr_s = groq_entries[1] if len(groq_entries) > 1 else (groq_models[1] if len(groq_models) > 1 else curr_p)
+
+            p_model, s_model = curr_p, curr_s
 
             m1 = input(f"  > Groq 주 모델 (Primary) 선택 (번호/이름) [{curr_p}]: ").strip()
             if not m1: p_model = curr_p
@@ -209,10 +222,11 @@ def ensure_env(force=False):
             
             selected_llm_options.append(("GROQ", p_model, "Groq Primary"))
             selected_llm_options.append(("GROQ", s_model, "Groq Secondary"))
+            results["GROQ_MODEL"] = p_model
+            results["GROQ_SECONDARY_MODEL"] = s_model
 
-            # Rate Limit 설정 추가
-            groq_cps = handle_input("GROQ_MAX_CPS", "  > Groq 초당 최대 호출 횟수 (무료 0.1~0.2 권장)", "0.5", "text", env_data)
-            results["GROQ_MAX_CPS"] = groq_cps
+            # Groq CPS 설정
+            results["GROQ_MAX_CPS"] = handle_input("GROQ_MAX_CPS", "  > Groq 초당 최대 호출 횟수 (무료 0.1~0.2 권장)", "0.5", "text", env_data)
 
         # 2-3. 최종 우선순위(Fail-over) 설정
         if not selected_llm_options:
@@ -224,7 +238,6 @@ def ensure_env(force=False):
                 print(f"   {i+1}. {opt[2]} ({opt[1]})")
             
             curr_seq_raw = env_data.get("LLM_SEQUENCE", "")
-            # 기존 순번 계산 (매칭되는 인덱스 찾기)
             existing_indices = []
             if curr_seq_raw:
                 for entry in curr_seq_raw.split(","):
@@ -233,7 +246,27 @@ def ensure_env(force=False):
                             existing_indices.append(str(idx + 1))
                             break
             
-            default_seq_str = ",".join(existing_indices[:3]) if existing_indices else "1"
+            default_indices = []
+            seen_providers = set()
+            # 1. 기존에 쓰던 모델이 있다면 우선순위 유지
+            for idx_str in existing_indices:
+                try:
+                    idx = int(idx_str) - 1
+                    if 0 <= idx < len(selected_llm_options):
+                        provider = selected_llm_options[idx][0]
+                        default_indices.append(idx_str)
+                        seen_providers.add(provider)
+                except: pass
+            
+            # 2. 새롭게 활성화된 서비스(Gemini 등)가 리스트에 없으면 추가
+            for idx, opt in enumerate(selected_llm_options):
+                provider = opt[0]
+                idx_str = str(idx + 1)
+                if provider not in seen_providers and idx_str not in default_indices:
+                    default_indices.append(idx_str)
+                    seen_providers.add(provider)
+            
+            default_seq_str = ",".join(default_indices[:3]) if default_indices else "1"
             
             print(f"\n  [우선순위 설정] 번호를 순서대로 입력하세요 (최대 3개, 예: 1,3,2)")
             while True:
@@ -258,12 +291,23 @@ def ensure_env(force=False):
                     results["LLM_SEQUENCE"] = ",".join(final_seq)
                     break
 
-        # 3. 파일 저장
+        # 3. 파일 저장 및 정리
         if not os.path.exists(env_path):
             with open(env_path, "w", encoding="utf-8") as f: f.write("")
+        
+        # KIS 키 변동 시 토큰 캐시 삭제
+        if results.get("KIS_APPKEY") != env_data.get("KIS_APPKEY") or results.get("KIS_SECRET") != env_data.get("KIS_SECRET"):
+            if os.path.exists(".token_cache.json"):
+                try: os.remove(".token_cache.json")
+                except: pass
+        
         for key, val in results.items():
             set_key(env_path, key, str(val))
             
+        # Rate Limit 캐시 초기화 (변경 즉시 반영)
+        from src.strategy.advisors.base import BaseLLMAdvisor
+        BaseLLMAdvisor._last_call_times = {}
+
         print("\n ✅ 모든 설정이 안전하게 저장되었습니다.")
         print("="*60 + "\n")
         load_dotenv(env_path, override=True)

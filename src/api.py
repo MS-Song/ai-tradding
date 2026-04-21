@@ -14,6 +14,7 @@ import threading
 from urllib.parse import urlparse
 
 from src.utils import retry_api
+from src.logger import log_error
 
 class KISAPI:
     def __init__(self, auth: KISAuth):
@@ -38,6 +39,18 @@ class KISAPI:
         self._domain_lock = threading.Lock()
         self._last_request_times = {} # {domain: timestamp}
         self._min_interval = 0.33      # 초당 3회 초과 요청 방지 (0.33초 간격)
+
+    def clear_cache(self):
+        """저장된 모든 시세 및 지수 캐시를 강제로 삭제"""
+        self._hot_cache = []
+        self._last_hot_time = 0
+        self._vol_cache = []
+        self._last_vol_time = 0
+        self._detail_cache = {}
+        self._chart_cache = {}
+        self._index_cache = {}
+        self._index_src_fail_counts = {"yahoo": 0, "naver_api": 0, "naver_crawl": 0}
+        self._index_src_disable_until = {"yahoo": 0, "naver_api": 0, "naver_crawl": 0}
 
     def _wait_for_domain_delta(self, url: str):
         """동일 도메인에 대해 일정 시간 간격(self._min_interval)을 두고 호출하도록 제어"""
@@ -435,7 +448,6 @@ class KISAPI:
         """지수 데이터 수집 오케스트레이터: yahoo → naver_api → naver_crawl 순서로 시도.
         소스 실패 시 fail_count 증가, 3회 초과 시 해당 소스를 10분간 차단하고 다음 소스로 전환.
         모든 소스 실패 시 만료된 캐시를 최종 폴백으로 반환."""
-        from src.logger import log_error
         curr_t = time.time()
 
         # 120초(2분) 캐시 체크
@@ -676,7 +688,6 @@ class KISAPI:
             return self._hot_cache or []
         except Exception as e:
             try:
-                from src.logger import log_error
                 log_error(f"get_naver_hot_stocks Error: {e}")
             except: pass
             return self._hot_cache or []  # 실패 시 기존 캐시 반환
@@ -721,7 +732,6 @@ class KISAPI:
             return self._vol_cache or []
         except Exception as e:
             try:
-                from src.logger import log_error
                 log_error(f"get_naver_volume_stocks Error: {e}")
             except: pass
             return self._vol_cache or []  # 실패 시 기존 캐시 반환
@@ -777,7 +787,6 @@ class KISAPI:
             return theme_map
         except Exception as e:
             try:
-                from src.logger import log_error
                 log_error(f"get_naver_theme_data Error: {e}")
             except: pass
             return {}

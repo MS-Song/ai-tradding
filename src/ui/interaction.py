@@ -64,30 +64,117 @@ def draw_recommendation_report(strategy, dm, tw, th):
 
 def draw_holdings_detail(strategy, dm, tw, th):
     import io
-    buf = io.StringIO(); buf.write("\033[H\033[2J")
-    buf.write("\033[44;37m" + align_kr(" [AI HOLDINGS PORTFOLIO REPORT] ", tw, 'center') + "\033[0m\n\n")
-    asset = dm.cached_asset; p_c = "\033[91m" if asset['pnl'] > 0 else "\033[94m" if asset['pnl'] < 0 else "\033[0m"
-    p_rt = (asset['pnl'] / (asset['total_asset'] - asset['pnl']) * 100) if (asset['total_asset'] - asset['pnl']) > 0 else 0
-    buf.write(align_kr(f" [자산 요약] 총자산: {asset['total_asset']:,.0f} | 평가손익: {p_c}{int(asset['pnl']):+,} ({p_rt:+.2f}%)\033[0m | 현금: {asset['cash']:,.0f}", tw) + "\n")
-    buf.write("-" * tw + "\n\n")
-    if not dm.cached_holdings: buf.write(align_kr("현재 보유 중인 종목이 없습니다.", tw, 'center') + "\n")
-    else:
-        buf.write("\033[1m" + f"{align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('수익률', 10)} | {align_kr('평가손액', 12)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('업종PER', 7)}" + "\033[0m\n")
-        buf.write("-" * tw + "\n")
-        for h in dm.cached_holdings:
-            code = h['pdno']; pnl_rt = float(h.get('evlu_pfls_rt', 0)); pnl_amt = int(float(h.get('evlu_pfls_amt', 0)))
-            color = "\033[91m" if pnl_amt > 0 else "\033[94m" if pnl_amt < 0 else "\033[0m"
-            detail = strategy.api.get_naver_stock_detail(code, force=True)
-            buf.write(f"{align_kr(code, 8)} | {align_kr(h['prdt_name'], 14)} | {color}{align_kr(f'{pnl_rt:+.2f}%', 10, 'right')}\033[0m | {color}{align_kr(f'{pnl_amt:+,}', 12, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')}\n")
-    buf.write("\n" + "-" * tw + "\n\033[1;96m" + " [AI 포트폴리오 매니저의 실시간 진단 의견]" + "\033[0m\n")
-    if strategy.ai_holdings_opinion:
-        for line in strategy.ai_holdings_opinion.split('\n'):
-            if line.strip(): buf.write(f"  {line.strip()}\n")
-    else: buf.write(" ⚠️ 아직 생성된 보유 종목 분석 의견이 없습니다. '8:시황'을 실행하세요.\n")
-    buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
-    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
-    while not get_key_immediate(): time.sleep(0.1)
-    buf.close()
+    import threading
+    from datetime import datetime
+    
+    current_tab = 1
+    _is_running_analysis = False
+    
+    def run_bg_analysis():
+        nonlocal _is_running_analysis
+        _is_running_analysis = True
+        dm.set_busy("AI 통합 분석 중")
+        try:
+            # 1. 포트폴리오 진단
+            strategy.refresh_holdings_opinion(progress_cb=lambda c, t: dm.set_busy(f"진단({c}/{t})"))
+            # 2. 리밸런싱 제안
+            if hasattr(strategy, "rebalance_eng"):
+                dm.set_busy("리밸런싱 분석 중")
+                strategy.rebalance_eng.analyze_and_suggest(dm.cached_holdings, dm.cached_asset['total_asset'], force=True)
+        finally:
+            _is_running_analysis = False
+            dm.clear_busy()
+            # 분석 완료 후 노이즈 방지를 위해 버퍼 비우기
+            time.sleep(0.2)
+            flush_input()
+
+    while True:
+        buf = io.StringIO(); buf.write("\033[H\033[2J")
+        buf.write("\033[44;37m" + align_kr(" [AI HOLDINGS & REBALANCE REPORT] ", tw, 'center') + "\033[0m\n")
+        
+        # 탭 메뉴 바
+        t1 = "\033[7m" if current_tab == 1 else ""
+        t2 = "\033[7m" if current_tab == 2 else ""
+        menu = f" {t1} 1.포트폴리오 진단 \033[0m | {t2} 2.리밸런싱 제안 \033[0m "
+        buf.write(align_kr(menu, tw, 'center') + "\n")
+        buf.write("=" * tw + "\n\n")
+
+        if current_tab == 1:
+            # 1. 포트폴리오 진단
+            asset = dm.cached_asset; p_c = "\033[91m" if asset['pnl'] > 0 else "\033[94m" if asset['pnl'] < 0 else "\033[0m"
+            p_rt = (asset['pnl'] / (asset['total_asset'] - asset['pnl']) * 100) if (asset['total_asset'] - asset['pnl']) > 0 else 0
+            buf.write(align_kr(f" [자산 요약] 총자산: {asset['total_asset']:,.0f} | 평가손익: {p_c}{int(asset['pnl']):+,} ({p_rt:+.2f}%)\033[0m | 현금: {asset['cash']:,.0f}", tw) + "\n")
+            buf.write("-" * tw + "\n")
+            
+            if not dm.cached_holdings:
+                buf.write(align_kr("현재 보유 중인 종목이 없습니다.", tw, 'center') + "\n")
+            else:
+                buf.write("\033[1m" + f"{align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('수익률', 10)} | {align_kr('평가손액', 12)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)}" + "\033[0m\n")
+                buf.write("-" * tw + "\n")
+                max_h = max(3, th - 15)
+                for h in dm.cached_holdings[:max_h]:
+                    code = h['pdno']; pnl_rt = float(h.get('evlu_pfls_rt', 0)); pnl_amt = int(float(h.get('evlu_pfls_amt', 0)))
+                    color = "\033[91m" if pnl_amt > 0 else "\033[94m" if pnl_amt < 0 else "\033[0m"
+                    detail = strategy.api.get_naver_stock_detail(code, force=False)
+                    buf.write(f"{align_kr(code, 8)} | {align_kr(h['prdt_name'], 14)} | {color}{align_kr(f'{pnl_rt:+.2f}%', 10, 'right')}\033[0m | {color}{align_kr(f'{pnl_amt:+,}', 12, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')}\n")
+
+            buf.write("\n\033[1;96m" + " [AI 포트폴리오 매니저의 실시간 진단 의견]" + "\033[0m")
+            if hasattr(strategy, 'ai_holdings_update_time') and strategy.ai_holdings_update_time > 0:
+                t_str = datetime.fromtimestamp(strategy.ai_holdings_update_time).strftime('%H:%M:%S')
+                buf.write(f" (분석완료: {t_str})\n")
+            else: buf.write("\n")
+            
+            if _is_running_analysis:
+                buf.write(f"\n  \033[93m🔄 포트폴리오를 입체 분석 중입니다... ({dm.global_busy_msg or '대기중'})\033[0m\n")
+            elif strategy.ai_holdings_opinion:
+                max_lines = max(3, th - buf.getvalue().count('\n') - 5)
+                lines = [l.strip() for l in strategy.ai_holdings_opinion.split('\n') if l.strip()]
+                for line in lines[:max_lines]: buf.write(f"  {line}\n")
+            else:
+                buf.write("\n  ⚠️ 아직 진단 데이터가 없습니다. 'R' 키를 눌러 AI 분석을 시작하세요.\n")
+
+        elif current_tab == 2:
+            # 2. 리밸런싱 제안
+            buf.write("\033[1;92m" + " [AI 포트폴리오 리밸런싱 지능형 제안]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            
+            if _is_running_analysis:
+                buf.write(f"\n  \033[93m🧠 Gemini가 최적의 포트폴리오 비중을 계산 중입니다... ({dm.global_busy_msg or '대기중'})\033[0m\n")
+            elif hasattr(strategy, "rebalance_eng"):
+                advice = strategy.rebalance_eng.get_advice()
+                if advice and "분석되지 않았습니다" not in advice:
+                    lines = [l.strip() for l in advice.split('\n') if l.strip()]
+                    max_lines = max(10, th - 10)
+                    for line in lines[:max_lines]: buf.write(f"  {line}\n")
+                else: 
+                    buf.write("\n  ⚠️ 리밸런싱 분석 결과가 없습니다.\n")
+                    buf.write("  'R' 키를 눌러 [진단 + 리밸런싱] 통합 AI 분석을 요청하세요.\n")
+            else: buf.write("  리밸런싱 엔진 로드 실패.\n")
+
+        # 하단 상태 바 및 키 안내
+        buf.write("\n" + "-" * tw + "\n")
+        status_line = f" \033[93m[작업중]\033[0m {dm.global_busy_msg}" if _is_running_analysis else " \033[92m[준비완료]\033[0m AI 분석 가능"
+        buf.write(status_line + "\n")
+        buf.write(align_kr(" [1, 2]: 탭 전환 | 'R': 실시간 AI 분석 시작 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
+        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+        
+        # 키 입력 루프 (비차단 렌더링을 위해 짧은 대기 후 재진입)
+        inner_cycle = 0
+        while inner_cycle < 10: 
+            k = get_key_immediate()
+            if k:
+                kl = k.lower()
+                if kl == '1': current_tab = 1; break
+                elif kl == '2': current_tab = 2; break
+                elif kl == 'r':
+                    if not _is_running_analysis:
+                        threading.Thread(target=run_bg_analysis, daemon=True).start()
+                    break
+                elif kl in ['q', '\x1b', ' ']:
+                    buf.close()
+                    return
+            time.sleep(0.01)
+            inner_cycle += 1
 
 def draw_hot_stocks_detail(strategy, dm, tw, th):
     sys.stdout.write("\033[H\033[2J")
@@ -158,144 +245,182 @@ def draw_stock_analysis(strategy, dm, code, tw, th):
 def draw_ai_logs_report(strategy, dm, tw, th):
     import io
     import copy
-    buf = io.StringIO(); buf.write("\033[H\033[2J")
-    buf.write("\033[44;37m" + align_kr(" [AI DECISION & STRATEGY REASON LOGS] ", tw, 'center') + "\033[0m\n")
+    from src.logger import trading_log
     
-    # 1. 매수 거절 내역
-    buf.write("\033[1;91m" + " [AI 매수 거절 내역 (당일/최근 10건)]" + "\033[0m\n")
-    buf.write("-" * tw + "\n")
-    if not strategy.rejected_stocks:
-        buf.write("  최근 24시간 내 매수 거절 내역이 없습니다.\n")
-    else:
-        buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | 거절 사유 (Gemini Feedback)" + "\033[0m\n")
-        buf.write("-" * tw + "\n")
+    current_tab = 1
+    while True:
+        buf = io.StringIO(); buf.write("\033[H\033[2J")
+        buf.write("\033[44;37m" + align_kr(" [AI DECISION & LOG REPORT] ", tw, 'center') + "\033[0m\n")
         
-        with dm.data_lock:
-            rejected = copy.deepcopy(strategy.rejected_stocks)
+        # 탭 메뉴 바
+        tab1_s = "\033[7m" if current_tab == 1 else ""
+        tab2_s = "\033[7m" if current_tab == 2 else ""
+        tab3_s = "\033[7m" if current_tab == 3 else ""
+        
+        menu_bar = f" {tab1_s} 1.매수거절(역사) \033[0m | {tab2_s} 2.종목교체(역사) \033[0m | {tab3_s} 3.전략수립근거(보유) \033[0m "
+        buf.write(align_kr(menu_bar, tw, 'center') + "\n")
+        buf.write("=" * tw + "\n\n")
+
+        if current_tab == 1:
+            # 1. 매수 거절 내역 (전체 히스토리)
+            buf.write("\033[1;91m" + " [AI 매수 거절 히스토리 (최근 내역)]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            rejections = trading_log.data.get("rejections", [])
+            if not rejections:
+                buf.write("  기록된 매수 거절 내역이 없습니다.\n")
+            else:
+                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('모델', 8)} | 거절 사유" + "\033[0m\n")
+                buf.write("-" * tw + "\n")
+                
+                # 화면 높이에 맞춰 개수 조정 (동적 슬라이싱)
+                max_items = max(5, th - 10)
+                for item in rejections[:max_items]:
+                    t_str = item['time'].split(' ')[-1]
+                    m_id = item.get('model_id', '')
+                    m_name = m_id[:8] if m_id else '---'
+                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {item['reason']}\n")
+
+        elif current_tab == 2:
+            # 2. 종목 교체 내역 (Replacement)
+            buf.write("\033[1;92m" + " [종목 한도(8개) 초과에 따른 교체 매매 히스토리]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            if not strategy.replacement_logs:
+                buf.write("  최근 종목 교체 내역이 없습니다.\n")
+            else:
+                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('OUT(매도)', 18)} | {align_kr('IN(매수)', 18)} | 교체 사유" + "\033[0m\n")
+                buf.write("-" * tw + "\n")
+                max_items = max(5, th - 10)
+                for item in strategy.replacement_logs[:max_items]:
+                    out_info = f"[{item.get('out_code','?')}] {item.get('out_name','?')[:12]}"
+                    in_info = f"[{item.get('in_code','?')}] {item.get('in_name','?')[:12]}"
+                    buf.write(f" {align_kr(item['time'], 10)} | {align_kr(out_info, 18)} | {align_kr(in_info, 18)} | {item['reason']}\n")
+
+        elif current_tab == 3:
+            # 3. 종목별 전략 수립 사유
+            buf.write("\033[1;96m" + " [현재 보유 종목별 AI 전략 수립 근거]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            presets = strategy.preset_eng.preset_strategies
+            active_presets = {k: v for k, v in presets.items() if v.get('preset_id') != '00'}
             
-        r_list = []
-        for code, data in rejected.items():
-            reason = data.get('reason', data) if isinstance(data, dict) else data
-            ts = data.get('time', 0) if isinstance(data, dict) else 0
-            r_list.append({"code": code, "reason": reason, "time": ts})
+            if not active_presets:
+                buf.write("  현재 AI 프리셋 전략이 할당된 종목이 없습니다.\n")
+            else:
+                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('전략명', 12)} | 분석 근거" + "\033[0m\n")
+                buf.write("-" * tw + "\n")
+                with dm.data_lock:
+                    p_items = copy.deepcopy(active_presets)
+                
+                p_list = []
+                for code, p in p_items.items():
+                    # 실제로 현재 잔고에 있는 종목만 보여줌
+                    if any(h['pdno'] == code for h in dm.cached_holdings):
+                        buy_time = p.get('buy_time', '1970-01-01 00:00:00')
+                        p_list.append({"code": code, "p": p, "buy_time": buy_time})
+                
+                p_list.sort(key=lambda x: x['buy_time'], reverse=True)
+                
+                max_items = max(5, th - 10)
+                for item in p_list[:max_items]:
+                    code = item["code"]
+                    p = item["p"]
+                    b_time_str = p.get('buy_time', '??').split(' ')[-1] if 'buy_time' in p else '??'
+                    detail = strategy.api.get_naver_stock_detail(code)
+                    name = detail.get('name', code)
+                    buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {p.get('reason', '')}\n")
+
+        buf.write("\n" + "-" * tw + "\n")
+        buf.write(align_kr(" [1, 2, 3]: 탭 전환 | 아무 키나 누르면 돌아갑니다. ", tw, 'center') + "\n")
+        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
         
-        # 시간 역순 정렬 후 최근 10건 슬라이싱 (공간 확보)
-        r_list.sort(key=lambda x: x['time'], reverse=True)
-        r_list = r_list[:10]
-        
-        for item in r_list:
-            code = item["code"]
-            reason = item["reason"]
-            rj_time = datetime.fromtimestamp(item["time"]).strftime('%H:%M:%S') if item["time"] > 0 else '??:??:??'
-            detail = strategy.api.get_naver_stock_detail(code)
-            name = detail.get('name', 'Unknown')
-            buf.write(f" {align_kr(rj_time, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {reason}\n")
-    
-    # 2. 종목 교체 내역 (Replacement)
-    buf.write("\033[1;92m" + " [종목 한도 초과(8개)에 따른 교체 매매 내역 (최근 10건)]" + "\033[0m\n")
-    buf.write("-" * tw + "\n")
-    if not strategy.replacement_logs:
-        buf.write("  최근 종목 교체 내역이 없습니다.\n")
-    else:
-        buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('OUT(매도)', 18)} | {align_kr('IN(매수)', 18)} | 교체 사유" + "\033[0m\n")
-        buf.write("-" * tw + "\n")
-        for item in strategy.replacement_logs[:10]:
-            out_info = f"[{item.get('out_code','?')}] {item.get('out_name','?')}"
-            in_info = f"[{item.get('in_code','?')}] {item.get('in_name','?')}"
-            buf.write(f" {align_kr(item['time'], 10)} | {align_kr(out_info, 18)} | {align_kr(in_info, 18)} | {item['reason']}\n")
-    
-    buf.write("=" * tw + "\n")
-    
-    # 3. 종목별 전략 수립 사유
-    buf.write("\033[1;96m" + " [종목별 AI 전략 수립 근거]" + "\033[0m\n")
-    buf.write("-" * tw + "\n")
-    presets = strategy.preset_eng.preset_strategies
-    active_presets = {k: v for k, v in presets.items() if v.get('preset_id') != '00'}
-    
-    if not active_presets:
-        buf.write("  현재 AI 프리셋 전략이 할당된 종목이 없습니다.\n")
-    else:
-        buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('전략명', 12)} | 할당 근거 및 AI 분석" + "\033[0m\n")
-        buf.write("-" * tw + "\n")
-        with dm.data_lock:
-            p_items = copy.deepcopy(active_presets)
-            
-        p_list = []
-        for code, p in p_items.items():
-            buy_time = p.get('buy_time', '1970-01-01 00:00:00')
-            p_list.append({"code": code, "p": p, "buy_time": buy_time})
-            
-        # 시간(buy_time) 역순 정렬 후 최근 10건 슬라이싱
-        p_list.sort(key=lambda x: x['buy_time'], reverse=True)
-        p_list = p_list[:10]
-        
-        for item in p_list:
-            code = item["code"]
-            p = item["p"]
-            # YYYY-MM-DD HH:MM:SS 형식을 HH:MM:SS로 줄여 표시
-            b_time_str = p.get('buy_time', '??:??:??').split(' ')[-1] if 'buy_time' in p else '??:??:??'
-            name = strategy.api.get_naver_stock_detail(code).get('name', code)
-            buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {p.get('reason', 'AI 분석 기반 자동 선정')}\n")
-    
-    buf.write("-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
-    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
-    while not get_key_immediate(): time.sleep(0.1)
-    buf.close()
+        while True:
+            k = get_key_immediate()
+            if k:
+                kl = k.lower()
+                if kl == '1': current_tab = 1; break
+                elif kl == '2': current_tab = 2; break
+                elif kl == '3': current_tab = 3; break
+                elif kl in ['q', '\x1b', '\r', ' ']: # Q, ESC, Enter, Space로만 종료
+                    buf.close()
+                    return
+            time.sleep(0.01)
 
 def draw_performance_report(strategy, dm, tw, th):
     import io
     from src.logger import trading_log
-    buf = io.StringIO(); buf.write("\033[H\033[2J")
-    buf.write("\033[44;37m" + align_kr(" [AI TRADING PERFORMANCE DASHBOARD] ", tw, 'center') + "\033[0m\n\n")
     
-    # 1. 수익금 TOP 10 (Hall of Fame)
-    top_stocks = trading_log.get_top_profitable_stocks(10)
-    buf.write("\033[1;93m" + " [종목별 누적 수익금 TOP 10 (Hall of Fame)]" + "\033[0m\n")
-    buf.write("-" * tw + "\n")
-    if not top_stocks:
-        buf.write("  누적 수익 데이터를 수집 중입니다.\n")
-    else:
-        buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 16)} | {align_kr('누적수익금', 16)} | 매매횟수" + "\033[0m\n")
-        for i, (code, s) in enumerate(top_stocks, 1):
-            color = "\033[91m" if s['total_profit'] > 0 else "\033[94m"
-            buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:16], 16)} | {color}{align_kr(f'{int(s['total_profit']):+,}원', 16, 'right')}\033[0m | {s['count']}회\n")
-            
-    buf.write("\n" + "=" * tw + "\n\n")
-    
-    # 2. 모델별 통합 성과 (A/B Stats)
-    model_stats = trading_log.get_model_performance()
-    buf.write("\033[1;96m" + " [AI 모델별 통합 승률 및 성과 지표]" + "\033[0m\n")
-    buf.write("-" * tw + "\n")
-    if not model_stats:
-        buf.write("  모델별 성과 데이터가 없습니다.\n")
-    else:
-        buf.write("\033[1m" + f" {align_kr('모델', 10)} | {align_kr('매수건', 8)} | {align_kr('매도건', 8)} | {align_kr('WIN RATE', 12)} | {align_kr('누적수익금', 16)}" + "\033[0m\n")
-        for m, s in model_stats.items():
-            win_rate = (s['wins'] / s['total_trades'] * 100) if s['total_trades'] > 0 else 0
-            w_color = "\033[91m" if win_rate >= 50 else "\033[94m"
-            p_color = "\033[91m" if s['total_profit'] > 0 else "\033[94m"
-            buf.write(f" {align_kr(m, 10)} | {align_kr(str(s['buy_count']), 8, 'right')} | {align_kr(str(s['total_trades']), 8, 'right')} | {w_color}{align_kr(f'{win_rate:.1f}%', 12, 'right')}\033[0m | {p_color}{align_kr(f'{int(s['total_profit']):+,}원', 16, 'right')}\033[0m\n")
-
-    buf.write("\n" + "=" * tw + "\n\n")
-    
-    # 3. AI 리밸런싱 제안
-    buf.write("\033[1;92m" + " [AI 포트폴리오 리밸런싱 지능형 제안]" + "\033[0m\n")
-    buf.write("-" * tw + "\n")
-    if hasattr(strategy, "rebalance_eng"):
-        advice = strategy.rebalance_eng.get_advice()
-        for line in advice.split('\n'):
-            if line.strip(): buf.write(f"  {line.strip()}\n")
-    else: buf.write("  리밸런싱 분석 중...\n")
-
-    buf.write("\n" + "-" * tw + "\n" + align_kr(" 'R'을 눌러 분석 갱신 | 아무 키나 누르면 돌아갑니다. ", tw, 'center') + "\n")
-    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+    current_tab = 1
     while True:
-        k = get_key_immediate()
-        if k:
-            if k.lower() == 'r': return 'R'
-            break
-        time.sleep(0.1)
-    buf.close()
+        buf = io.StringIO(); buf.write("\033[H\033[2J")
+        buf.write("\033[44;37m" + align_kr(" [AI TRADING PERFORMANCE DASHBOARD] ", tw, 'center') + "\033[0m\n")
+        
+        # 탭 메뉴 바
+        t1 = "\033[7m" if current_tab == 1 else ""
+        t2 = "\033[7m" if current_tab == 2 else ""
+        t3 = "\033[7m" if current_tab == 3 else ""
+        
+        menu = f" {t1} 1.수익 상위(Top 20) \033[0m | {t2} 2.손실 상위(Shame 20) \033[0m | {t3} 3.모델별 성과 \033[0m "
+        buf.write(align_kr(menu, tw, 'center') + "\n")
+        buf.write("=" * tw + "\n\n")
+
+        if current_tab == 1:
+            # 1. 수익금 TOP 20
+            top_stocks = trading_log.get_top_profitable_stocks(20)
+            buf.write("\033[1;93m" + " [종목별 누적 수익금 TOP 20 (Hall of Fame)]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            if not top_stocks:
+                buf.write("  누적 수익 데이터를 수집 중입니다.\n")
+            else:
+                buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 16)} | {align_kr('누적수익금', 18)} | {align_kr('모델', 8)} | 매매" + "\033[0m\n")
+                max_items = max(10, th - 12)
+                for i, (code, s) in enumerate(top_stocks[:max_items], 1):
+                    color = "\033[91m"
+                    buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:16], 16)} | {color}{align_kr(f'{int(s['total_profit']):+,}원', 18, 'right')}\033[0m | {align_kr(s.get('model','---'), 8)} | {s['count']}회\n")
+
+        elif current_tab == 2:
+            # 2. 손실금 TOP 20
+            loss_stocks = trading_log.get_top_loss_stocks(20)
+            buf.write("\033[1;91m" + " [종목별 누적 손실금 TOP 20 (Hall of Shame)]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            if not loss_stocks:
+                buf.write("  누적 손실 데이터가 없습니다 (클린 포트폴리오!).\n")
+            else:
+                buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 16)} | {align_kr('누적손실금', 18)} | {align_kr('모델', 8)} | 매매" + "\033[0m\n")
+                max_items = max(10, th - 12)
+                for i, (code, s) in enumerate(loss_stocks[:max_items], 1):
+                    color = "\033[94m"
+                    buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:16], 16)} | {color}{align_kr(f'{int(s['total_profit']):+,}원', 18, 'right')}\033[0m | {align_kr(s.get('model','---'), 8)} | {s['count']}회\n")
+
+        elif current_tab == 3:
+            # 3. 모델별 통합 성과
+            model_stats = trading_log.get_model_performance()
+            buf.write("\033[1;96m" + " [AI 모델별 통합 승률 및 수익 성과]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            if not model_stats:
+                buf.write("  모델별 성과 데이터가 없습니다.\n")
+            else:
+                buf.write("\033[1m" + f" {align_kr('모델', 10)} | {align_kr('매수', 8)} | {align_kr('결과', 8)} | {align_kr('승률', 10)} | {align_kr('누적수익금', 18)}" + "\033[0m\n")
+                for m, s in model_stats.items():
+                    win_rate = (s['wins'] / s['total_trades'] * 100) if s['total_trades'] > 0 else 0
+                    w_color = "\033[91m" if win_rate >= 50 else "\033[94m"
+                    p_color = "\033[91m" if s['total_profit'] > 0 else "\033[94m"
+                    buf.write(f" {align_kr(m, 10)} | {align_kr(str(s['buy_count']), 8, 'right')} | {align_kr(str(s['total_trades']), 8, 'right')} | {w_color}{align_kr(f'{win_rate:.1f}%', 10, 'right')}\033[0m | {p_color}{align_kr(f'{int(s['total_profit']):+,}원', 18, 'right')}\033[0m\n")
+
+        buf.write("\n" + "-" * tw + "\n")
+        buf.write(align_kr(" [1, 2, 3]: 탭 전환 | 'R': 리밸런싱 갱신(Holdings탭 이동됨) | 아무 키나 종료 ", tw, 'center') + "\n")
+        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+        
+        while True:
+            k = get_key_immediate()
+            if k:
+                kl = k.lower()
+                if kl == '1': current_tab = 1; break
+                elif kl == '2': current_tab = 2; break
+                elif kl == '3': current_tab = 3; break
+                elif kl == 'r': return 'R'
+                elif kl in ['q', '\x1b', '\r', ' ']:
+                    buf.close()
+                    return
+            time.sleep(0.01)
 
 def get_input(dm, prompt, tw):
     """[Task 4] 입력 중에도 렌더링이 멈추지 않도록 콜백 연동"""
@@ -360,9 +485,13 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 elif mode == 'p':
                     res = draw_performance_report(strategy, dm, tw_r, th_r)
                     if res == 'R':
+                        sys.stdout.write("\n" + align_kr("\033[1;93m 🔄 AI 리밸런싱 포트폴리오를 분석하고 있습니다. 잠시만 기다려주세요... \033[0m", tw_r, 'center') + "\n")
+                        sys.stdout.flush()
                         dm.set_busy("리밸런싱 분석 중")
-                        strategy.check_rebalance(dm.cached_holdings, dm.cached_asset['total_asset'], force=True)
+                        # [오류 수정] 올바른 엔진 메서드 호출: analyze_and_suggest
+                        strategy.rebalance_eng.analyze_and_suggest(dm.cached_holdings, dm.cached_asset['total_asset'], force=True)
                         dm.clear_busy()
+                        flush_input()
                         draw_performance_report(strategy, dm, tw_r, th_r)
                 enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
             finally: 
@@ -409,11 +538,21 @@ def perform_interaction(key, api, strategy, dm, cycle):
             os.system('cls' if os.name == 'nt' else 'clear')
             print("\n" + "="*60 + "\n ⚙️  KIS-Vibe-Trader 환경 설정 모드\n" + "="*60); flush_input()
             ensure_env(force=True); load_dotenv(override=True); config = get_config()
-            new_auth = KISAuth(); api.auth = new_auth; api.domain = new_auth.domain; strategy.api = api
+            new_auth = KISAuth(); api.auth = new_auth; api.domain = new_auth.domain; api.clear_cache(); strategy.api = api
             strategy.reload_config(config)
             enter_alt_screen(); set_terminal_raw(); dm.strategy.last_size = (0, 0)
-            dm.show_status("✅ 환경 설정 완료")
-            dm.update_all_data(new_auth.is_virtual, force=True)
+            
+            # [개선] 통합 데이터 업데이트 호출 (자산, 지수, 종목 상세 TP/SL 등)
+            dm.set_busy("데이터 동기화 중...")
+            is_v = getattr(api.auth, 'is_virtual', True)
+            dm.update_all_data(is_v, force=True)
+                        
+            dm.show_status("✅ 모든 데이터 동기화 완료")
+            dm.clear_busy()
+            dm.is_full_screen_active = False # [수정] 렌더링 차단 해제 후 그리기
+            strategy.is_ready = True         # [수정] 데이터 워커 활성화
+            dm.add_log("🔄 시스템 설정 반영 및 데이터 동기화가 완료되었습니다.")
+            draw_tui(strategy, dm, cycle)
         finally:
             dm.is_full_screen_active = False
         return
@@ -444,7 +583,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             if success:
                                 curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
                                 profit = (curr_p - float(h.get('pchs_avg_pric', 0))) * qty
-                                trading_log.log_trade("수동매도", code, name, curr_p, qty, f"수동 매도 ({p_disp})", profit=profit)
+                                trading_log.log_trade("수동매도", code, name, curr_p, qty, f"수동 매도 ({p_disp})", profit=profit, model_id="수동")
                                 dm.show_status(f"✅ 매도 성공: {name}"); dm.update_all_data(True, force=True)
                             else: dm.show_status(f"❌ 매도 실패: {msg}", True)
                         finally: dm.clear_busy()
@@ -466,7 +605,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             success, msg = api.order_market(code, qty, True, price)
                             if success:
                                 curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
-                                trading_log.log_trade("수동매수", code, name, curr_p, qty, f"수동 매수 ({p_disp})")
+                                trading_log.log_trade("수동매수", code, name, curr_p, qty, f"수동 매수 ({p_disp})", model_id="수동")
                                 dm.show_status(f"✅ 매수 성공: {name}")
                                 if is_new: strategy.auto_assign_preset(code, name)
                                 dm.update_all_data(True, force=True)

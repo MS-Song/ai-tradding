@@ -4,6 +4,7 @@ import concurrent.futures
 from datetime import datetime
 from src.utils import is_market_open
 from src.theme_engine import analyze_popular_themes
+from src.logger import log_error, log_trade, trading_log, cleanup_text_log
 
 class DataManager:
     def __init__(self, api, strategy):
@@ -138,7 +139,6 @@ class DataManager:
         self.trading_logs.append(f"\033[95m[TRADING] [{t_str}] {msg}\033[0m")
         if len(self.trading_logs) > 10:
             self.trading_logs.pop(0)
-        from src.logger import log_trade
         log_trade(msg)
 
     def update_all_data(self, is_virtual, force=False):
@@ -195,7 +195,6 @@ class DataManager:
                 self.add_log("전체 데이터 동기화 완료")
                 return True
         except Exception as e:
-            from src.logger import log_error
             log_error(f"Update Error: {e}")
             return False
         finally:
@@ -219,7 +218,6 @@ class DataManager:
                 self.is_kr_market_active = kospi_info.get("status") == "02" if (kospi_info and "status" in kospi_info) else is_market_open()
             except RuntimeError: break # 종료 시 즉시 중단
             except Exception as e:
-                from src.logger import log_error
                 log_error(f"Market Trend Update Error: {e}")
 
             # 2) 네이버 인기/거래량 종목 수집 (실패해도 나머지 진행)
@@ -234,7 +232,6 @@ class DataManager:
                 self.last_times["ranking"] = curr_t
             except RuntimeError: break
             except Exception as e:
-                from src.logger import log_error
                 log_error(f"Hot/Vol Ranking Update Error: {e}")
                 h_raw, v_raw, themes = self.cached_hot_raw, self.cached_vol_raw, []
 
@@ -246,7 +243,6 @@ class DataManager:
                 self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
             except RuntimeError: break
             except Exception as e:
-                from src.logger import log_error
                 log_error(f"AI Rec Update Error: {e}")
             finally:
                 self.clear_busy("INDEX")
@@ -385,7 +381,6 @@ class DataManager:
                                     if qty > 0:
                                         success, msg = self.api.order_market(code_r, qty, True)
                                         if success:
-                                            from src.logger import trading_log
                                             m_id = self.strategy.ai_advisor.last_used_model_id if hasattr(self.strategy.ai_advisor, 'last_used_model_id') else ""
                                             trading_log.log_trade(f"자동{rec_type}", code_r, rec['name'], p['price'], qty, f"자동 {rec_type} 실행", model_id=m_id)
                                             msg_txt = f"자동{rec_type}: {rec['name']} {qty}주"
@@ -398,10 +393,14 @@ class DataManager:
                                             self.add_log(f"{rec_type} 실패: {msg}")
 
                     if self.strategy.auto_ai_trade and self.strategy.ai_recommendations:
-                        for top_ai in self.strategy.ai_recommendations:
-                            # 1. 인버스 필터 (평시 장세에서 인버스 스킵)
-                            if top_ai.get('is_inverse', False) and "defensive" not in vibe.lower() and "bear" not in vibe.lower():
-                                continue
+                        # [제약] Phase 3(CONCLUSION) 이후로는 신규 자율 매수 금지 (마무리 단계 집중)
+                        # Phase 4의 '종가 베팅' 전용 로직만 허용하기 위함
+                        phase = self.strategy.get_market_phase()
+                        if phase['id'] in ['P1', 'P2']:
+                            for top_ai in self.strategy.ai_recommendations:
+                                # 1. 인버스 필터 (평시 장세에서 인버스 스킵)
+                                if top_ai.get('is_inverse', False) and "defensive" not in vibe.lower() and "bear" not in vibe.lower():
+                                    continue
 
                             # 2. 보유 현황 및 투자 한도 체크
                             holding_item = next((h for h in self.cached_holdings if h['pdno'] == top_ai['code']), None)
@@ -515,7 +514,6 @@ class DataManager:
                                 if qty > 0:
                                     success, msg = self.api.order_market(top_ai['code'], qty, True)
                                     if success:
-                                        from src.logger import trading_log
                                         m_id = self.strategy.ai_advisor.last_used_model_id if hasattr(self.strategy.ai_advisor, 'last_used_model_id') else ""
                                         trading_log.log_trade("AI자율매수", top_ai['code'], top_ai['name'], p['price'], qty, replacement_memo, model_id=m_id)
                                         self.add_trading_log(f"✨ AI자율매수: {top_ai['name']} {qty}주 선점")
@@ -539,7 +537,6 @@ class DataManager:
                 time.sleep(5 if is_virtual else 0.5)
                 self.last_update_time = datetime.now().strftime('%H:%M:%S')
             except Exception as e:
-                from src.logger import log_error
                 log_error(f"Data Update Error: {e}")
             finally:
                 self.clear_busy("DATA")
@@ -557,7 +554,6 @@ class DataManager:
                     self.add_trading_log("✨ 테마 데이터베이스 갱신 완료")
             except Exception as e:
                 try:
-                    from src.logger import log_error
                     log_error(f"Theme Update Error: {e}")
                 except: pass
             finally:
@@ -570,7 +566,6 @@ class DataManager:
         """로그 파일을 주기적으로 정리 (1시간 주기, 영업일 기준 2일치 유지)"""
         while self.is_running:
             try:
-                from src.logger import trading_log, cleanup_text_log
                 self.set_busy("로그 정리 중")
                 self.add_log("로그 파일 정리를 시작합니다...")
                 
@@ -589,7 +584,6 @@ class DataManager:
                     self.add_log("로그 파일이 이미 최신 상태입니다.")
                     
             except Exception as e:
-                from src.logger import log_error
                 log_error(f"Log Cleanup Worker Error: {e}")
             finally:
                 self.clear_busy()
