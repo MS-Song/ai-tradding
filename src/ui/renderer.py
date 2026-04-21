@@ -24,8 +24,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     # [수정] 헤더바 레이아웃: 버전/VIBE/작업 정보를 좌측에, 시간은 우측에 배치
     # 버전/상태/작업 정보를 왼쪽에 배치, 시간과 스레드 카운트를 오른쪽 끝에 배치
     is_v = getattr(strategy.api.auth, 'is_virtual', True)
-    mode_tag = " [모의]" if is_v else " [실전]"
-    version_text = f"[AI TRADING SYSTEM ver 1.2.2]{mode_tag}"
+    debug_tag = " [디버그]" if getattr(strategy, "debug_mode", False) else ""
+    mode_tag = f" [모의]{debug_tag}" if is_v else f" [실전]{debug_tag}"
+    version_text = f"[AI TRADING SYSTEM ver 1.2.3]{mode_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg

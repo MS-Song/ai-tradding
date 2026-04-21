@@ -2,7 +2,7 @@ import threading
 import time
 import concurrent.futures
 from datetime import datetime
-from src.utils import is_market_open
+from src.utils import is_market_open, is_ai_enabled_time
 from src.theme_engine import analyze_popular_themes
 from src.logger import log_error, log_trade, trading_log, cleanup_text_log
 
@@ -237,9 +237,15 @@ class DataManager:
 
             # 3) AI 추천 갱신 (실패해도 루프 계속)
             try:
-                def rec_prog_cb(c, t, msg=""):
-                    self.set_busy(f"AI분석({c}/{t})", "INDEX")
-                self.strategy.update_ai_recommendations(themes, h_raw, v_raw, progress_cb=rec_prog_cb)
+                # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
+                if is_ai_enabled_time() or getattr(self.strategy, "debug_mode", False):
+                    def rec_prog_cb(c, t, msg=""):
+                        self.set_busy(f"AI분석({c}/{t})", "INDEX")
+                    self.strategy.update_ai_recommendations(themes, h_raw, v_raw, progress_cb=rec_prog_cb)
+                else:
+                    # 추천 정보 초기화 (장 마감 대응)
+                    self.strategy.ai_recommendations = []
+                
                 self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
             except RuntimeError: break
             except Exception as e:
@@ -425,6 +431,13 @@ class DataManager:
 
                             # [추가] 이미 거절된 종목은 로깅 없이 즉시 스킵
                             if top_ai['code'] in self.strategy.rejected_stocks:
+                                continue
+
+                            # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
+                            if not is_ai_enabled_time() and not getattr(self.strategy, "debug_mode", False):
+                                # P4 종가 베팅 로직은 execution.py 내부에서 phase 체크를 하므로 
+                                # 여기서는 일반 자율 매수(P1, P2)만 차단함.
+                                # 단, 사용자가 요청한 사항은 '자동 실행' 전체 차단이므로 로그를 남김
                                 continue
 
                             # 3. AI 최종 매수 컨펌 (최초 거절 시에만 로깅됨)

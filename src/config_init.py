@@ -32,6 +32,7 @@ def get_config():
                 "max_investment_per_stock": int(env_data.get("AI_MAX_INVESTMENT_PER_STOCK", 2000000)),
                 "auto_mode": env_data.get("AI_AUTO_MODE", "FALSE") == "TRUE",
                 "auto_apply": env_data.get("AUTO_APPLY_AI_STRATEGY", "FALSE") == "TRUE",
+                "debug_mode": env_data.get("AI_DEBUG_MODE", "FALSE") == "TRUE",
                 "preferred_model": env_data.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview"),
                 "llm_sequence": [tuple(item.split(":")) for item in env_data.get("LLM_SEQUENCE", "GEMINI:gemini-3.1-flash-lite-preview").split(",") if ":" in item]
             },
@@ -84,6 +85,7 @@ def ensure_env(force=False):
             ("AI_MIN_SCORE", "AI 추천 진입 최소 점수 (0-100)", "60.0", "text"),
             ("AI_MAX_INVESTMENT_PER_STOCK", "AI 추천 종목당 최대 투자액 (원)", "2000000", "text"),
             ("AI_AUTO_MODE", "AI 자율 매수(AUTO) 모드 사용 (Y/N)", "FALSE", "bool"),
+            ("AI_DEBUG_MODE", "AI 디버그 모드 (장외 AI 강제실행) (Y/N)", "FALSE", "bool"),
             ("AUTO_APPLY_AI_STRATEGY", "AI 시황 분석 전략 자동 반영 여부 (Y/N)", "FALSE", "bool"),
             ("BASE_SEED_MONEY", "총 누적 입금액(초기 시드 + 추가 입금액) (원)", "0", "text")
         ]

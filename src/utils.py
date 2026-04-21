@@ -228,6 +228,12 @@ def is_market_open():
     if now.weekday() >= 5: return False
     return dtime(9, 0) <= now.time() <= dtime(15, 30)
 
+def is_ai_enabled_time():
+    """AI 자동 기능 실행 가능 시간 체크 (장 시작 20분 전 ~ 장 마감 20분 후)"""
+    now = datetime.now()
+    if now.weekday() >= 5: return False
+    return dtime(8, 40) <= now.time() <= dtime(15, 50)
+
 def is_us_market_open():
     now = datetime.now()
     if now.weekday() >= 5: return False

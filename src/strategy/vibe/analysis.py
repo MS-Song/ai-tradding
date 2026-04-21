@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor
 from src.logger import logger, log_error, trading_log
+from src.utils import is_ai_enabled_time
 
 class AnalysisMixin:
     def perform_full_market_analysis(self, retry=True) -> bool:
@@ -32,6 +33,12 @@ class AnalysisMixin:
     def run_scheduled_analysis(self):
         """백그라운드에서 주기적으로 호출되어 시황 분석, AI 조언 수집, 전략 반영을 일괄 수행"""
         if self.is_analyzing: return
+        
+        # [추가] AI 토큰 절약을 위한 시간 기반 차단 (디버그 모드 제외)
+        if not is_ai_enabled_time() and not getattr(self, "debug_mode", False):
+            logger.info("AI 기능을 호출하지 않습니다. (Market closed)")
+            return
+
         self.is_analyzing = True
         try:
             # 1. 시장 시황 분석 (Vibe 결정 및 종목별 프리셋 적용)

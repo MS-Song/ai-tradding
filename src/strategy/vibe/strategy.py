@@ -67,6 +67,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
             "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False),
             "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
+            "debug_mode": v_cfg.get("ai_config", {}).get("debug_mode", False),
             "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview")
         }
         
@@ -82,6 +83,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self.indicator_eng = IndicatorEngine()
         self.rebalance_eng = RebalanceEngine(api, self.ai_advisor)
         self.preset_eng = PresetStrategyEngine(self.ai_advisor, api, lambda: self.current_market_vibe, self._save_all_states)
+        self.analyzer.debug_mode = self.debug_mode # [추가]
         self._load_all_states()
         self.state_mgr.update_yesterday_recs()
 
@@ -122,12 +124,14 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
                 "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
                 "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False),
                 "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
+                "debug_mode": v_cfg.get("ai_config", {}).get("debug_mode", False),
                 "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview")
             })
             llm_seq = v_cfg.get("ai_config", {}).get("llm_sequence", [("GEMINI", self.ai_config.get("preferred_model", "gemini-3.1-flash-lite-preview"))])
             self.ai_advisor = MultiLLMAdvisor(self.api, llm_seq)
             self.alpha_eng.ai_advisor = self.ai_advisor
             self.analyzer.ai_advisor = self.ai_advisor
+            self.analyzer.debug_mode = self.debug_mode # [추가]
             self.preset_eng.ai_advisor = self.ai_advisor
             logger.info("🔧 시스템 설정 동기화 완료")
             return True
@@ -207,6 +211,13 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
     def auto_ai_trade(self): return self.ai_config["auto_mode"]
     @auto_ai_trade.setter
     def auto_ai_trade(self, val): self.ai_config["auto_mode"] = val
+    
+    @property
+    def debug_mode(self): return self.ai_config.get("debug_mode", False)
+    @debug_mode.setter
+    def debug_mode(self, val): 
+        self.ai_config["debug_mode"] = val
+        if hasattr(self, 'analyzer'): self.analyzer.debug_mode = val
 
     @property
     def bear_config(self): return self.recovery_eng.config

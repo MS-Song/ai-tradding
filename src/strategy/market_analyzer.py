@@ -2,6 +2,7 @@ import time
 from typing import Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.logger import log_error
+from src.utils import is_ai_enabled_time
 
 class MarketAnalyzer:
     def __init__(self, api):
@@ -17,6 +18,7 @@ class MarketAnalyzer:
         self.last_kosdaq_rate = 0.0
         self.ai_override_msg = ""
         self.finalized_ai_vibe = None # 캐시된 마지막 AI 판정
+        self.debug_mode = False       # [추가]
 
     def update(self) -> Tuple[str, bool]:
         symbol_map = {
@@ -73,6 +75,11 @@ class MarketAnalyzer:
         elif is_fluctuated and len(self.ai_call_timestamps) < 3:
             call_ai = True # 변동 감지 & 3회 리미트 미달
             
+        # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
+        if call_ai and not is_ai_enabled_time() and not self.debug_mode:
+            call_ai = False
+            self.ai_override_msg = " [AI 중단: Market Closed]"
+
         if call_ai:
             self.ai_call_timestamps.append(now)
             self.last_kospi_rate = cur_kospi_rate

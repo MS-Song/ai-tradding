@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 from typing import List, Tuple, Optional
 from src.logger import logger, log_error, trading_log
+from src.utils import is_ai_enabled_time
 
 class ExecutionMixin:
     def run_cycle(self, market_trend="neutral", skip_trade=False):
@@ -50,11 +51,17 @@ class ExecutionMixin:
             if p_strat:
                 if p_strat.get('deadline') and now_str > p_strat['deadline']:
                     logger.info(f"Time-Stop: {item.get('prdt_name')} 전략 만료, 재분석 실행")
-                    if not self.auto_assign_preset(code, item.get('prdt_name')):
-                        curr_rt = float(item.get("evlu_pfls_rt", 0.0))
-                        if curr_rt >= 0.5:
-                            p_strat['tp'] = max(0.5, curr_rt / 2.0)
-                        p_strat['deadline'] = None 
+                    # [추가] AI 실행 시간 체크 (디버그 제외) - 자동 재할당 차단
+                    if is_ai_enabled_time() or getattr(self, "debug_mode", False):
+                        if not self.auto_assign_preset(code, item.get('prdt_name')):
+                            curr_rt = float(item.get("evlu_pfls_rt", 0.0))
+                            if curr_rt >= 0.5:
+                                p_strat['tp'] = max(0.5, curr_rt / 2.0)
+                            p_strat['deadline'] = None 
+                    else:
+                        logger.info(f"Time-Stop 건너뜀 (Market closed): {item.get('prdt_name')}")
+                        # 시간 만료되었으므로 데드라인 초기화하여 반복 로깅 방지
+                        p_strat['deadline'] = None
                     self._save_all_states()
 
                 if phase['id'] == "P3" and not p_strat.get('is_p3_processed') and float(item.get("evlu_pfls_rt", 0.0)) >= 0.5:
@@ -105,6 +112,12 @@ class ExecutionMixin:
                         self._p4_ai_done_this_cycle = True
                         self.current_action = "P4 AI판단"
                         try:
+                            # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
+                            if not is_ai_enabled_time() and not getattr(self, "debug_mode", False):
+                                self._p3_global_processed[p4_ai_key] = True
+                                logger.info(f"P4 AI판단 건너뜀 (Market closed/AI Disabled): {item.get('prdt_name')}")
+                                continue
+
                             detail = self.api.get_naver_stock_detail(code)
                             news = self.api.get_naver_stock_news(code)
                             should_sell, reason = self.ai_advisor.closing_sell_confirm(code, item.get('prdt_name'), self.current_market_vibe, rt, detail, news)
