@@ -186,7 +186,7 @@ class TradingLogManager:
         return amounts
 
     def get_top_profitable_stocks(self, limit=20):
-        """누적 수익금이 높은 상위 종목 집계 ([Phase 4])"""
+        """누적 수익금이 0원 초과인 상위 종목 집계 ([Phase 4])"""
         stock_stats = {}
         with self.lock:
             for t in self.data.get("trades", []):
@@ -196,18 +196,21 @@ class TradingLogManager:
                     stock_stats[code] = {"name": t.get("name", "Unknown"), "total_profit": 0.0, "count": 0, "model": ""}
                 
                 stock_stats[code]["count"] += 1
-                if any(x in t.get("type", "") for x in ["익절", "손절", "청산", "확정", "매도", "종료"]):
+                t_type = t.get("type", "")
+                if any(x in t_type for x in ["익절", "손절", "청산", "확정", "매도", "종료"]):
                     profit = t.get("profit", 0.0)
                     stock_stats[code]["total_profit"] += profit
                     m_id = t.get("model_id", "")
-                    if m_id:
-                        stock_stats[code]["model"] = self._normalize_model_name(m_id)
+                    # 모델명이 없더라도 타입을 통해 추론 시도
+                    stock_stats[code]["model"] = self._normalize_model_name(m_id, t_type)
         
+        # 수익금 순 정렬 및 0원 초과 필터링
         sorted_stats = sorted(stock_stats.items(), key=lambda x: x[1]["total_profit"], reverse=True)
-        return sorted_stats[:limit]
+        profitable = [s for s in sorted_stats if s[1]["total_profit"] > 0]
+        return profitable[:limit]
 
     def get_top_loss_stocks(self, limit=20):
-        """누적 손실금이 높은 상위 종목 집계 (Hall of Shame)"""
+        """누적 손실금이 발생한 상위 종목 집계 (Hall of Shame)"""
         stock_stats = {}
         with self.lock:
             for t in self.data.get("trades", []):
@@ -217,20 +220,27 @@ class TradingLogManager:
                     stock_stats[code] = {"name": t.get("name", "Unknown"), "total_profit": 0.0, "count": 0, "model": ""}
                 
                 stock_stats[code]["count"] += 1
-                if any(x in t.get("type", "") for x in ["익절", "손절", "청산", "확정", "매도", "종료"]):
+                t_type = t.get("type", "")
+                if any(x in t_type for x in ["익절", "손절", "청산", "확정", "매도", "종료"]):
                     profit = t.get("profit", 0.0)
                     stock_stats[code]["total_profit"] += profit
                     m_id = t.get("model_id", "")
-                    if m_id:
-                        stock_stats[code]["model"] = self._normalize_model_name(m_id)
+                    stock_stats[code]["model"] = self._normalize_model_name(m_id, t_type)
         
+        # 손실금 순(수익금 오름차순) 정렬 및 음수 필터링
         sorted_stats = sorted(stock_stats.items(), key=lambda x: x[1]["total_profit"], reverse=False)
         losses = [s for s in sorted_stats if s[1]["total_profit"] < 0]
         return losses[:limit]
 
-    def _normalize_model_name(self, m_id: str) -> str:
-        """모델 코드를 사람이 읽기 쉬운 약어로 정규화"""
-        if not m_id: return "익명"
+    def _normalize_model_name(self, m_id: str, t_type: str = "") -> str:
+        """모델 코드를 사람이 읽기 쉬운 약어로 정규화. 모델 정보가 없으면 타입을 통해 추론 시도."""
+        if not m_id:
+            # 과거 로그 호환: 타입을 보고 수동/TL/SP 추론
+            t_low = t_type.lower()
+            if any(x in t_low for x in ["수동", "manual"]): return "수동"
+            if any(x in t_low for x in ["자동", "p3", "p4", "청산", "확정", "익절", "손절"]): return "TL/SP"
+            return "익명"
+            
         m_id_low = m_id.lower()
         if m_id_low in ["manual", "수동", "수동매도", "수동매수"]: return "수동"
         if m_id_low in ["tl/sp", "auto", "logic"]: return "TL/SP"
@@ -249,12 +259,12 @@ class TradingLogManager:
         with self.lock:
             for t in self.data.get("trades", []):
                 m_id = t.get("model_id", "")
-                m_name = self._normalize_model_name(m_id)
+                t_type = t.get("type", "")
+                m_name = self._normalize_model_name(m_id, t_type)
                 
                 if m_name not in model_stats:
                     model_stats[m_name] = {"total_trades": 0, "wins": 0, "total_profit": 0.0, "buy_count": 0}
                 
-                t_type = t.get("type", "")
                 if "매수" in t_type:
                     model_stats[m_name]["buy_count"] += 1
                 elif any(x in t_type for x in ["익절", "손절", "청산", "확정", "매도", "종료"]):

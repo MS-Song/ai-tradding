@@ -38,23 +38,9 @@ class RebalanceEngine:
                 "profit": f"{h.get('evlu_pfls_rt', 0)}%"
             })
 
-        # 2. AI 리밸런싱 프롬프트 구성
-        prompt = f"""
-        당신은 포트폴리오 전략가입니다. 아래 포트폴리오의 비중과 수익률을 보고 리밸런싱 제안을 하세요.
-        [포트폴리오 데이터]
-        {json.dumps(portfolio_summary, ensure_ascii=False)}
+        # 2. AI 리밸런싱 조언 요청 (Advisor 인터페이스 사용)
+        advice = self.ai_advisor.get_rebalance_advice(portfolio_summary)
         
-        [가이드라인]
-        - 특정 종목 비중이 30% 이상이면 리스크 분산을 위해 비중 축소 제안.
-        - 수익률 15% 이상 종목은 부분 익절 후 저평가주 교체 제안.
-        - 성과가 저조한 종목 중 비중이 큰 종목은 과감한 리밸런싱 제안.
-        
-        [답변 형식]
-        - 3줄 이내로 간결하게 핵심만 한국어로 기술.
-        - '~하는 것을 권장합니다' 체 사용.
-        """
-
-        advice = self.ai_advisor._safe_gemini_call(prompt)
         if advice:
             self.rebalance_advice = advice.strip()
             self.last_check_time = now

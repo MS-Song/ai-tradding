@@ -47,6 +47,7 @@ class MultiLLMAdvisor(BaseAdvisor):
     def get_stock_report_advice(self, *args, **kwargs): return self._try_all("get_stock_report_advice", *args, **kwargs)
     def get_holdings_report_advice(self, *args, **kwargs): return self._try_all("get_holdings_report_advice", *args, **kwargs)
     def get_hot_stocks_report_advice(self, *args, **kwargs): return self._try_all("get_hot_stocks_report_advice", *args, **kwargs)
+    def get_rebalance_advice(self, *args, **kwargs): return self._try_all("get_rebalance_advice", *args, **kwargs)
     def verify_market_vibe(self, *args, **kwargs): return self._try_all("verify_market_vibe", *args, **kwargs)
 
     def simulate_preset_strategy(self, *args, **kwargs):

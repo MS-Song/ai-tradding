@@ -46,6 +46,10 @@ class BaseAdvisor(ABC):
         pass
 
     @abstractmethod
+    def get_rebalance_advice(self, portfolio_summary: List[dict]) -> Optional[str]:
+        pass
+
+    @abstractmethod
     def compare_stock_superiority(self, candidate: dict, holdings_info: List[dict], vibe: str) -> Tuple[bool, Optional[str], str]:
         pass
 
@@ -182,6 +186,25 @@ class BaseLLMAdvisor(BaseAdvisor):
         장세: {vibe} | 지수: {json.dumps(market_data)}
         {"\n".join(enriched_holdings)}
         1.진단 2.대응(Hold/Sell/Add) 3.리스크 4.한줄평. 한국어.
+        """
+        return self._call_api(prompt)
+
+    def get_rebalance_advice(self, portfolio_summary):
+        prompt = f"""
+        당신은 수석 포트폴리오 전략가입니다. 아래 포트폴리오의 비중과 수익률을 분석하여 최적의 리밸런싱 제안을 하세요.
+        
+        [포트폴리오 데이터]
+        {json.dumps(portfolio_summary, ensure_ascii=False)}
+        
+        [전략 가이드라인]
+        - 특정 종목 비중이 25%~30% 이상이면 리스크 분산을 위해 비중 축소(수익 실현)를 고려하세요.
+        - 수익률이 매우 높지만 모멘텀이 둔화된 종목은 부분 익절 후 저평가 우량주 교체를 제안하세요.
+        - 손실이 크지만 비중이 높은 종목은 리스크 관리 차원의 비중 축소나 종목 교체를 제안하세요.
+        - 현금 비중이 너무 높다면 신규 진입 시점을 찾아보도록 조언하세요.
+        
+        [답변 형식 (엄수)]
+        - 3~4줄 이내로 간결하게 핵심 전략만 기술.
+        - 전문가답고 단호한 한국어 어조 (~하는 것을 권장합니다, ~하십시오).
         """
         return self._call_api(prompt)
 
