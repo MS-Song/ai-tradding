@@ -48,7 +48,7 @@ class MarketAnalyzer:
             
         return self.kr_vibe, self.is_panic
         
-    def _verify_with_ai(self, heuristic_vibe: str) -> str:
+    def _verify_with_ai(self, heuristic_vibe: str, force_ai: bool = False) -> str:
         """AI를 통해 시장 장세를 검증받고 오버라이드. (장애 허용 지원)"""
         # 기본적으로 알고리즘 결과를 디폴트로 세팅
         if not self.ai_advisor:
