@@ -1,8 +1,8 @@
 {
   "2026-04": {
-    "total_calls": 8,
+    "total_calls": 24,
     "models": {
-      "gemini-3-flash-preview": 8
+      "gemini-3-flash-preview": 24
     }
   }
 }

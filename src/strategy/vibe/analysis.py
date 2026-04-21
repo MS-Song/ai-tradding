@@ -15,7 +15,7 @@ class AnalysisMixin:
         self.current_action = "시장분석"
         try:
             self.analyzer.update()
-            self.apply_ai_strategy_to_all(None)
+            # self.apply_ai_strategy_to_all(None)  <-- 통합 리뷰로 대체됨
             self.last_market_analysis_time = time.time()
             self.is_ready = True
             logger.info("시장 분석 완료 및 전략 적용 성공")
@@ -41,9 +41,13 @@ class AnalysisMixin:
 
         self.is_analyzing = True
         try:
-            # 1. 시장 시황 분석 (Vibe 결정 및 종목별 프리셋 적용)
-            # 내부에서 is_analyzing을 True로 유지함
+            # 1. 시장 시황 분석 (Vibe 결정 등)
             self.perform_full_market_analysis()
+
+            # 1.1 보유 종목 통합 진단 및 자율 매도/전략 갱신 실행 (신규 통합 로직)
+            batch_results = self.perform_portfolio_batch_review()
+            for res in batch_results:
+                logger.info(f"  {res}")
             
             # 2. AI 조언 수집
             self.get_ai_advice()
@@ -141,15 +145,36 @@ class AnalysisMixin:
                 new_amt = self.recovery_eng.config.get("average_down_amount", 500000)
                 log_error(f"AI 금액 파싱 실패, 기존값 {new_amt:,}원 유지")
 
+            # 역산 시점의 Vibe 및 Phase 보정치 합산 추출
+            phase_cfg = self.get_market_phase()
             tp_mod, sl_mod = self.exit_mgr.get_vibe_modifiers(self.analyzer.kr_vibe)
+            
+            # Phase 보정치 합산 (ExitManager.get_thresholds 로직과 동일하게)
+            if phase_cfg:
+                tp_mod += phase_cfg.get('tp_delta', 0)
+                if not (self.analyzer.kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg['id'] == "P1"):
+                    sl_mod += phase_cfg.get('sl_delta', 0)
+
+            # AI 제안 최종 목표값에서 보정치를 차감하여 베이스 수치 역산
             calculated_base_tp = target_tp - tp_mod
             calculated_base_sl = target_sl - sl_mod
             
-            self.exit_mgr.base_tp = max(2.0, calculated_base_tp)
-            self.exit_mgr.base_sl = min(-2.0, calculated_base_sl)
+            # 베이스 수치 하한값 완화: 최종 TP/SL은 이미 target_tp/sl(2.5%/-2.5%)에서 검증됨
+            # 베이스 자체는 보정치에 따라 0에 가까워질 수 있으므로 하한을 0.1/-0.1로 낮춤
+            self.exit_mgr.base_tp = max(0.1, calculated_base_tp)
+            self.exit_mgr.base_sl = min(-0.1, calculated_base_sl)
             
-            self.recovery_eng.config.update({"min_loss_to_buy": target_trig_bear, "average_down_amount": new_amt, "max_investment_per_stock": int(new_amt * 5)})
-            self.bull_config.update({"min_profit_to_pyramid": target_trig_bull, "average_down_amount": new_amt, "max_investment_per_stock": int(new_amt * 5)})
+            # 물타기/불타기는 역산 없이 절대치로 설정 (엔진 내부에서 TP와 충돌 방지 로직 작동)
+            self.recovery_eng.config.update({
+                "min_loss_to_buy": target_trig_bear, 
+                "average_down_amount": new_amt, 
+                "max_investment_per_stock": int(new_amt * 5)
+            })
+            self.bull_config.update({
+                "min_profit_to_pyramid": target_trig_bull, 
+                "average_down_amount": new_amt, 
+                "max_investment_per_stock": int(new_amt * 5)
+            })
             
             trading_log.log_config(f"AI 전략 자동 반영: TP +{target_tp}%, SL {target_sl}%, 물타기 {target_trig_bear}%, 불타기 +{target_trig_bull}%, 금액 {new_amt:,}원")
             self._save_all_states()

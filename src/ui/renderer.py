@@ -176,7 +176,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         b_cfg = strategy.bear_config
         u_cfg = strategy.bull_config
 
-        auto_st_algo = "\033[93mON\033[0m" if a_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
+        # auto_st_algo 제거 (하단 AI 추천 헤더와 중복 방지)
         auto_st_bear = "\033[93mON\033[0m" if b_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
         auto_st_bull = "\033[93mON\033[0m" if u_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
 
@@ -221,7 +221,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         strat_label = align_kr(f"{st_mark}STRAT", L1)
         strat_info = f"TP:\033[91m{strategy.base_tp:+.1f}%\033[0m(\033[91m{tp_cur:+.1f}%\033[0m) SL:\033[94m{strategy.base_sl:+.1f}%\033[0m(\033[94m{sl_cur:+.1f}%\033[0m)"
         algo_label = align_kr(f"{al_mark}ALGO", L2)
-        algo_info = f"[{auto_st_algo}] {a_cfg.get('amount_per_trade'):,}원/{a_cfg.get('max_investment_per_stock'):,}원 (누적:{daily_amts['ALGO']:,.0f})"
+        algo_info = f"{a_cfg.get('amount_per_trade'):,}원/{a_cfg.get('max_investment_per_stock'):,}원 (누적:{daily_amts['ALGO']:,.0f})"
         costs = dm.cached_ai_costs
         cost_info = f" | AI 비용(추정): \033[96mgemini({costs.get('gemini',0):,.0f}원) groq({costs.get('groq',0):,.0f}원)\033[0m"
         line_strat = f"{strat_label} | {align_kr(strat_info, C1)} | {algo_label} | {algo_info}{cost_info}"
@@ -334,7 +334,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             txt = f"({theme})[{item['code']}] {name}{suffix} ({p:,}/{c}{rate_str}\033[0m)"
             return align_kr(txt, width)
 
-        ai_mode_label = "AUTO" if strategy.auto_ai_trade else "MANUAL"
+        b_st = "ON" if strategy.auto_ai_trade else "OFF"
+        s_st = "ON" if strategy.auto_sell_mode else "OFF"
+        ai_mode_label = f"매수:{b_st}|매도:{s_st}"
         buf.write(
             f"\033[1;93m{align_kr('🔥 실시간 인기 종목', col_w)}\033[0m ｜ "
             f"\033[1;96m{align_kr('📊 거래량 상위 종목', col_w)}\033[0m ｜ "

@@ -1,6 +1,7 @@
 import time
 import re
 import os
+import json
 from datetime import datetime, time as dtime
 from typing import Dict, List, Tuple, Optional
 from src.logger import logger, log_error
@@ -67,6 +68,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             "min_score": v_cfg.get("ai_config", {}).get("min_score", 60.0),
             "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
             "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False),
+            "auto_sell": v_cfg.get("ai_config", {}).get("auto_sell", False),
             "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
             "debug_mode": v_cfg.get("ai_config", {}).get("debug_mode", False),
             "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview")
@@ -124,6 +126,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
                 "min_score": v_cfg.get("ai_config", {}).get("min_score", 60.0),
                 "max_investment_per_stock": v_cfg.get("ai_config", {}).get("max_investment_per_stock", 2000000),
                 "auto_mode": v_cfg.get("ai_config", {}).get("auto_mode", False),
+                "auto_sell": v_cfg.get("ai_config", {}).get("auto_sell", False),
                 "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
                 "debug_mode": v_cfg.get("ai_config", {}).get("debug_mode", False),
                 "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview")
@@ -194,8 +197,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         res = self.preset_eng.auto_assign_preset(code, name)
         return res
 
-    def assign_preset(self, code: str, preset_id: str, name: str, tp: float, sl: float, reason: str = ""):
-        return self.preset_eng.assign_preset(code, preset_id, name, tp, sl, reason)
+    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = "", name: str = "", lifetime_mins: int = None):
+        return self.preset_eng.assign_preset(code, preset_id, tp, sl, reason, lifetime_mins, name)
 
     def get_preset_label(self, code: str) -> str:
         if code in self.exit_mgr.manual_thresholds: return "수동"
@@ -212,6 +215,11 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
     def auto_ai_trade(self): return self.ai_config["auto_mode"]
     @auto_ai_trade.setter
     def auto_ai_trade(self, val): self.ai_config["auto_mode"] = val
+    
+    @property
+    def auto_sell_mode(self): return self.ai_config.get("auto_sell", False)
+    @auto_sell_mode.setter
+    def auto_sell_mode(self, val): self.ai_config["auto_sell"] = val
     
     @property
     def debug_mode(self): return self.ai_config.get("debug_mode", False)
@@ -284,5 +292,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
                     res_info = requests.get(url_info, headers=headers, timeout=5)
                     if res_info.status_code == 200:
                         res["gemini"] = max(res["gemini"], 12450.0)
+                else:
+                    # gcloud auth 실패 시 기존 방식 유지
+                    pass
             except: pass
         return res

@@ -76,3 +76,6 @@ class MultiLLMAdvisor(BaseAdvisor):
             tag = self._get_model_tag()
             return superior, sell_code, f"{tag} {reason}"
         return False, None, "All LLM services failed"
+
+    def get_portfolio_strategic_review(self, *args, **kwargs):
+        return self._try_all("get_portfolio_strategic_review", *args, **kwargs)

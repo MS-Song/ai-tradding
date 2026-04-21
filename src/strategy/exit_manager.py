@@ -47,4 +47,10 @@ class ExitManager:
             if price_data['vol'] / price_data['prev_vol'] >= 1.5:
                 target_tp += 2.0; is_vol_spike = True # 거래량 폭발 시 익절가 상향
                 
+        # 5. 수수료 및 최소 수익 방어 (Fee Guard)
+        # 거래 수수료(약 0.23%)와 슬리피지를 고려하여 최종 익절가는 최소 1.0% 이상으로 유지
+        # 이는 시장 급락(Bear/Defensive) 시 보정치가 베이스를 깎아먹어 발생하는 '초저수익 매도'를 방지함
+        if target_tp < 1.0:
+            target_tp = 1.0
+            
         return round(target_tp, 1), round(target_sl, 1), is_vol_spike

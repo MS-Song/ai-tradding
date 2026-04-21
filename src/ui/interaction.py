@@ -692,19 +692,16 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 if not f_h: dm.show_status("⚠️ 보유 종목 없음", True)
                 else:
                     def task_bulk():
-                        total = len(f_h); success = 0
-                        dm.set_busy("AI 일괄 전략 할당")
+                        dm.set_busy("AI 통합 전략 진단")
                         try:
-                            for i, h in enumerate(f_h, 1):
-                                code, name = h['pdno'], h['prdt_name']
-                                dm.show_status(f"🧠 [{i}/{total}] {name} 분석 중...")
-                                result = strategy.auto_assign_preset(code, name)
-                                if result:
-                                    success += 1
-                                    dm.add_trading_log(f"✅ [{name}] {result['preset_name']} TP:{result['tp']:+.1f}% SL:{result['sl']:.1f}%")
-                                else:
-                                    dm.add_trading_log(f"⚠️ [{name}] AI 전략 추천 실패 (표준 유지)")
-                            dm.show_status(f"✅ 일괄 할당 완료: {success}/{total}")
+                            # [최적화] 개별 분석 대신 배치 분석(1회 호출) 요청
+                            # 수동 실행이므로 즉시 매도는 차단(skip_trade=True)하고 권고만 받음
+                            batch_results = strategy.perform_portfolio_batch_review(skip_trade=True)
+                            
+                            for res in batch_results:
+                                dm.add_trading_log(f"📋 {res}")
+                            
+                            dm.show_status("✅ 일괄 전략 진단 완료")
                         finally: dm.clear_busy()
                     command_queue.put((task_bulk, (), {}))
             elif res_code.strip().isdigit():

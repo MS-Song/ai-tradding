@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import List, Tuple, Optional
 from src.logger import logger, log_error, trading_log
 from src.utils import is_ai_enabled_time
+from src.strategy.constants import PRESET_STRATEGIES
 
 class ExecutionMixin:
     def run_cycle(self, market_trend="neutral", skip_trade=False):
@@ -220,3 +221,93 @@ class ExecutionMixin:
             detail = self.api.get_naver_stock_detail(h['pdno'])
             holdings_info.append({"code": h['pdno'], "name": h['prdt_name'], "rt": float(h.get('evlu_pfls_rt', 0)), "detail": str(detail)})
         return self.ai_advisor.compare_stock_superiority(candidate_info, holdings_info, self.current_market_vibe)
+
+    def perform_portfolio_batch_review(self, skip_trade=False) -> List[str]:
+        """보유 종목 전체에 대해 AI 통합 진단을 수행하고 매도 또는 전략 갱신을 실행합니다."""
+        holdings = self.api.get_balance()
+        if not holdings: return []
+        
+        results = []
+        # 1. AI 진단을 위한 데이터 보강 (뉴스, 상세 지표 등)
+        holdings_data = []
+        for h in holdings:
+            code = h['pdno']
+            detail = self.api.get_naver_stock_detail(code)
+            news = self.api.get_naver_stock_news(code)
+            holdings_data.append({
+                "code": code, "name": h['prdt_name'],
+                "rt": float(h.get('evlu_pfls_rt', 0)),
+                "per": detail.get('per'), "pbr": detail.get('pbr'),
+                "news": ", ".join(news[:2])
+            })
+        
+        # 2. AI Advisor 호출 (배치 분석)
+        review = self.ai_advisor.get_portfolio_strategic_review(holdings_data, self.current_market_vibe, self.current_market_data)
+        if not review: return ["⚠️ AI 포트폴리오 통합 분석 실패"]
+        
+        # 3. 분석 결과에 따른 액션 실행
+        market_open = is_ai_enabled_time() or getattr(self, "debug_mode", False)
+        # 자율 매도 모드(AUTO)가 켜져 있다면 skip_trade 옵션과 상관없이 매매 허용
+        can_sell = market_open and (self.auto_sell_mode or not skip_trade)
+        
+        for code, opinion in review.items():
+            name = next((h['name'] for h in holdings_data if h['code'] == code), code)
+            action = opinion.get("action", "HOLD").upper()
+            reason = opinion.get("reason", "AI 분석 결과")
+            
+            if action == "SELL":
+                # [매매 시도 기록] 실제 주문 전 AI의 결정을 먼저 로그에 남김
+                trading_log.log_config(f"🤖 AI 자율 매도 결정: [{code}]{name} | 사유: {reason}")
+                
+                if can_sell:
+                    # [즉시 매매 실행]
+                    h_item = next((h for h in holdings if h['pdno'] == code), None)
+                    if h_item:
+                        sell_qty = int(float(h_item.get('hldg_qty', 0)))
+                        dm_tag = self.ai_advisor.last_used_advisor.short_id if hasattr(self.ai_advisor, 'last_used_advisor') else "AI"
+                        
+                        success, res_data = self.api.order_market(code, sell_qty, False)
+                        if success:
+                            curr_price = float(h_item.get('prpr', 0))
+                            profit = (curr_price - float(h_item.get('pchs_avg_pric', 0))) * sell_qty
+                            results.append(f"🤖 AI 자율 매도: {name} ({int(profit):+,}원)")
+                            trading_log.log_trade("AI자율매도", code, name, curr_price, sell_qty, f"AI 선제적 매도: {reason}", profit=profit, model_id=dm_tag)
+                            self.record_sell(code)
+                            # 전략 삭제
+                            if code in self.preset_strategies: self.assign_preset(code, "00", name=name)
+                        else:
+                            trading_log.log_config(f"❌ AI 매도 주문 실패: [{code}]{name} | 사유: {res_data}")
+                            results.append(f"❌ AI 매도 실패: {name}")
+                else:
+                    # [장외 시간 또는 skip_trade] - AI 자율 모드인 경우 전략 수치를 타이트하게 조정하여 장 오픈 즉시 대응
+                    results.append(f"🔒 AI 매도 권고(장외): {name} | 사유: {reason}")
+                    trading_log.log_config(f"🤖 AI 매도 권고(장외): [{code}]{name} | 사유: {reason}")
+                    
+                    if self.auto_sell_mode:
+                        # 다음 거래일 시가 부근에서 즉시 매도되도록 대응
+                        h_item = next((h for h in holdings if h['pdno'] == code), None)
+                        if h_item and code in self.preset_strategies:
+                            curr_rt = float(h_item.get('evlu_pfls_rt', 0))
+                            if curr_rt >= 0:
+                                # 수익권인 경우: 익절선을 현재 수익률보다 약간 낮게 설정하여 즉시 익절 유도
+                                self.preset_strategies[code]['tp'] = max(0.1, curr_rt - 0.1)
+                                self.preset_strategies[code]['sl'] = -0.1 # 손절 최소화
+                            else:
+                                # 손실권인 경우: 손절선을 현재 수익률보다 약간 높게(0에 가깝게) 설정하여 즉시 손절 유도
+                                self.preset_strategies[code]['sl'] = min(-0.1, curr_rt + 0.1)
+                                self.preset_strategies[code]['tp'] = 0.5 # 익절 기대 포기
+                            
+                            self.preset_strategies[code]['reason'] = f"[장외매도준비] {reason}"
+                            self._save_all_states()
+                            results.append(f"🛡️ {name} 장전 매도 준비 완료 (타이트닝)")
+            
+            elif action == "HOLD":
+                # [전략 갱신]
+                pid = opinion.get("preset_id", "01")
+                tp, sl = float(opinion.get("tp", 5.0)), float(opinion.get("sl", -5.0))
+                lifetime = int(opinion.get("lifetime", 120))  # 유효 시간 추가
+                if self.assign_preset(code, pid, tp, sl, reason, name=name, lifetime_mins=lifetime):
+                    p_name = PRESET_STRATEGIES.get(pid, {}).get("name", pid)
+                    results.append(f"📝 전략 갱신: {name} [{p_name}] TP:{tp:+.1f}% SL:{sl:.1f}%")
+        
+        return results

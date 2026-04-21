@@ -53,6 +53,13 @@ class BaseAdvisor(ABC):
     def compare_stock_superiority(self, candidate: dict, holdings_info: List[dict], vibe: str) -> Tuple[bool, Optional[str], str]:
         pass
 
+    @abstractmethod
+    def get_portfolio_strategic_review(self, holdings_data: List[dict], vibe: str, market_data: dict) -> Optional[dict]:
+        """
+        보유 종목 전체를 한 번에 진단하여 매도 여부 및 전략 업데이트를 결정합니다.
+        """
+        pass
+
 class BaseLLMAdvisor(BaseAdvisor):
     # API 키별 마지막 호출 시간을 추적하기 위한 클래스 변수 (모든 인스턴스가 공유)
     _last_call_times = {}
@@ -317,3 +324,48 @@ class BaseLLMAdvisor(BaseAdvisor):
             sell_code = code_match.group(1).strip() if code_match and code_match.group(1).upper() != "NONE" else None
             return (decision and sell_code is not None), sell_code, reason_match.group(1).strip() if reason_match else "교체 근거 부족"
         return False, None, "API 호출 실패"
+
+    def get_portfolio_strategic_review(self, holdings_data, vibe, market_data):
+        if not holdings_data: return None
+        
+        preset_list = "\n".join([f"  {sid}: {s['name']}" for sid, s in PRESET_STRATEGIES.items() if sid != "00"])
+        holdings_txt = "\n".join([
+            f"- {h['name']}({h['code']}): 수익률 {h['rt']:+.2f}% | PER:{h.get('per')} | 뉴스:{h.get('news', 'None')}"
+            for h in holdings_data
+        ])
+
+        prompt = f"""
+        당신은 수석 포트폴리오 매니저입니다. 현재 보유 종목들을 진단하여 [즉시 매도] 또는 [전략 갱신]을 결정하세요.
+        [장세] {vibe} | [지수] {json.dumps(market_data)}
+        [보유종목]
+{holdings_txt}
+
+        [가이드라인]
+        1. 시황이 Bear/Defensive이거나 종목에 중대한 악재가 있는 경우 과감히 'SELL'(즉시 매도)을 결정하세요.
+        2. 유지할 경우, 아래 프리셋 중 가장 적합한 전략과 최적의 TP/SL, 그리고 해당 전략의 유효 시간(lifetime, 분 단위)을 제안하세요.
+        [프리셋 전략 리스트]
+{preset_list}
+
+        [응답 형식 - 반드시 JSON으로만 응답]
+        {{
+          "종목코드": {{
+            "action": "SELL" 또는 "HOLD",
+            "preset_id": "XX",
+            "tp": 5.0,
+            "sl": -5.0,
+            "lifetime": 120,
+            "reason": "결정 사유 (한 줄)"
+          }},
+          ...
+        }}
+        """
+        
+        answer = self._call_api(prompt, timeout=60)
+        if answer:
+            try:
+                # JSON 문자열만 추출 (마크다운 코드 블록 제거)
+                json_str = re.search(r"(\{.*\})", answer, re.DOTALL).group(1)
+                return json.loads(json_str)
+            except Exception as e:
+                log_error(f"포트폴리오 리뷰 파싱 오류: {e}")
+        return None
