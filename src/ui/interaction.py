@@ -649,6 +649,8 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                 strategy.ai_recommendations.append(i)
                                 strategy.ai_recommendations.sort(key=lambda x: x['score'], reverse=True)
                     with dm.data_lock: strategy.ai_recommendations = []
+                    # [추가] 수동 시황 분석 시 Vibe부터 최신화 (force_ai=True로 시간 제한 우회)
+                    strategy.determine_market_trend(force_ai=True)
                     strategy.update_ai_recommendations(get_cached_themes(), dm.cached_hot_raw, dm.cached_vol_raw, progress_cb=prog_cb, on_item_found=item_cb)
                     advice = strategy.get_ai_advice(progress_cb=lambda c, t: prog_cb(c, t, "심층분석"))
                     if advice and "⚠️" not in advice:

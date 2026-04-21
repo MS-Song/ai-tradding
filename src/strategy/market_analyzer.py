@@ -20,7 +20,7 @@ class MarketAnalyzer:
         self.finalized_ai_vibe = None # 캐시된 마지막 AI 판정
         self.debug_mode = False       # [추가]
 
-    def update(self) -> Tuple[str, bool]:
+    def update(self, force_ai: bool = False) -> Tuple[str, bool]:
         symbol_map = {
             "KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KPI200": "KPI200", "VOSPI": "VOSPI",
             "FX_USDKRW": "FX_USDKRW", "DOW": "DOW", "NASDAQ": "NASDAQ", "S&P500": "S&P500",
@@ -44,7 +44,7 @@ class MarketAnalyzer:
             heuristic_vibe = "Neutral"
             
         # 2. AI 검증 로직 연결 (단, 오류나 토큰 초과 시 원래 휴리스틱으로 Fallback)
-        self.kr_vibe = self._verify_with_ai(heuristic_vibe)
+        self.kr_vibe = self._verify_with_ai(heuristic_vibe, force_ai=force_ai)
             
         return self.kr_vibe, self.is_panic
         
@@ -75,8 +75,8 @@ class MarketAnalyzer:
         elif is_fluctuated and len(self.ai_call_timestamps) < 3:
             call_ai = True # 변동 감지 & 3회 리미트 미달
             
-        # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
-        if call_ai and not is_ai_enabled_time() and not self.debug_mode:
+        # [추가] AI 실행 가능 시간 체크 (디버그 모드 및 수동 요청 제외)
+        if call_ai and not force_ai and not is_ai_enabled_time() and not self.debug_mode:
             call_ai = False
             self.ai_override_msg = " [AI 중단: Market Closed]"
 

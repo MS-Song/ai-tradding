@@ -24,9 +24,6 @@ def main():
     dm = DataManager(api, strategy)
     auth.on_error_message = lambda msg: dm.show_status(msg, is_error=True)
     
-    dm = DataManager(api, strategy)
-    auth.on_error_message = lambda msg: dm.show_status(msg, is_error=True)
-    
     enter_alt_screen()
     dm.start_workers(auth.is_virtual)
     set_terminal_raw()

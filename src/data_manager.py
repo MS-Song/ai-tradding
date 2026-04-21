@@ -243,8 +243,9 @@ class DataManager:
                         self.set_busy(f"AI분석({c}/{t})", "INDEX")
                     self.strategy.update_ai_recommendations(themes, h_raw, v_raw, progress_cb=rec_prog_cb)
                 else:
-                    # 추천 정보 초기화 (장 마감 대응)
-                    self.strategy.ai_recommendations = []
+                    # [수정] 장 마감 후 자동 갱신은 하지 않지만, 수동 분석 결과('8:시황')가 지워지는 것을 방지하기 위해 
+                    # ai_recommendations = [] 초기화 로직을 제거함 (깜빡임 문제 해결)
+                    pass
                 
                 self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
             except RuntimeError: break
