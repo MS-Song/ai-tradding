@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Powered by Gemini](https://img.shields.io/badge/AI-Gemini%202.5%20Flash-blueviolet.svg)](https://aistudio.google.com/)
 [![Market](https://img.shields.io/badge/Market-Korea%20Stock-red.svg)](https://apiportal.koreainvestment.com/)
-[![Version](https://img.shields.io/badge/version-1.2.1-green.svg)](https://github.com/MS-Song/ai-tradding/releases)
+[![Version](https://img.shields.io/badge/version-1.2.3-green.svg)](https://github.com/MS-Song/ai-tradding/releases)
 
 > **"단순한 매매가 아닙니다. 시장의 흐름(Vibe)을 읽는 AI 자율 트레이딩 엔진입니다."**
 > KIS-Vibe-Trader는 시니어 아키텍트의 설계 사상이 반영된 객체지향형 트레이딩 시스템으로, 시장 감성(Vibe)과 AI 분석(Gemini)을 결합하여 최적의 매매 전략을 자율적으로 도출합니다.
@@ -19,9 +19,10 @@
 - **📋 Preset Strategy Engine**: KIS 공식 10대 매매 전략(골든크로스, 모멘텀, 52주신고가 등)을 내장하여 종목별로 최적의 전략을 AI가 시뮬레이션하고, 각 종목의 변동성/체력에 맞춰 **동적 TP/SL을 실시간 계산**하여 개별 최적화합니다.
 - **🛡️ 6-Pillar Architecture**: `ExitManager`, `MarketAnalyzer`, `RecoveryEngine`, `PyramidingEngine`, `VibeAlphaEngine`, `PresetStrategyEngine` 6대 핵심 모듈이 독립적이면서도 유기적으로 협력하여 자산을 안전하게 관리합니다.
 - **🕒 Time-based Market Phase**: 장 시작부터 마감까지 시간대별로 최적화된 매매 리듬(OFFENSIVE/CONVERGENCE 등 4단계)을 적용합니다. 익절/손절선을 시간대에 맞춰 자동으로 미세 보정합니다.
-- **🚀 Autonomous Trading (AUTO)**: AI가 발굴한 저평가/모멘텀 종목을 보합권 선취매 영역에서 스스로 매집하고, 동적 익절/손절 전략에 따라 자동으로 엑시트합니다.
-- **🔒 Anti-Ping-Pong Cooldown**: 익절/손절 후 **2시간 재진입 금지**, 매수 직후 **1시간 P4 장마감 청산 보호(종가베팅 보호)**, 물타기 후 **30분 손절 유예** 로직으로 연속 핑퐁 매매를 원천 차단합니다.
-- **📊 Real-time TUI Interface**: 터미널 기반의 직관적인 UI(TUI)를 통해 국내/해외 지수, 포트폴리오 상태, AI 추천 종목을 한눈에 파악할 수 있으며 누적 시드머니(Seed) 설정 기반의 **정확한 누적 수익률 평가**가 가능합니다.
+- **🚀 Autonomous Trading (AUTO)**: AI가 발굴한 저평가/모멘텀 종목을 보합권 선취매 영역에서 스스로 매집하고, 동적 익절/손절 전략에 따라 자동으로 엑시트합니다. **[1.2 신규] AI 자율 매도(Proactive Exit)를 통해 악재 발생 시 선제적으로 포지션을 정리합니다.**
+- **🔒 Anti-Ping-Pong Cooldown**: 익절/손절 후 **2시간 재진입 금지**, 매수 직후 **1시간 청산/매도 보호**, 물타기 후 **30분 손절 유예** 로직으로 연속 핑퐁 매매를 원천 차단합니다.
+- **📊 Real-time TUI Interface**: 터미널 기반의 직관적인 UI(TUI)를 제공합니다. **[1.2 신규] 탭 기반의 AI 로그와 모델별(Gemini Pro/Flash, 수동 등) 승률을 추적하는 성과 대시보드(Hall of Fame/Shame)를 지원하며, 실시간 AI API 호출 비용을 확인할 수 있습니다.**
+- **⏱️ AI Token Optimization**: 장중(08:40~15:50)에만 AI API를 호출하여 비용을 최적화하며, 통합 배치 리뷰(Batch Review)를 통해 1회의 호출로 전 종목을 동시 분석합니다.
 
 ---
 
@@ -94,6 +95,21 @@ python main.py
 ---
 
 ## 📝 Changelog
+
+### v1.2.3 (2026-04-22)
+- **성과 대시보드 고도화 (`P` 키)**: 명예의 전당(TOP 10 수익/손실) 및 모델별(G3.1P, G3.1FL, 수동 등) 승률/수익 통합 추적 기능 추가.
+- **AI 로그 탭 UI (`A` 키)**: 매수 거절 사유, 전략 수립 근거, 최대 보유(8종목) 도달 시 교체 매매(Replacement) 내역을 탭 형태로 제공.
+- **실시간 데이터 무결성 보장**: AI 환각 방지를 위한 정규식 필터링 및 실시간 데이터 절대 신뢰 로직 적용.
+
+### v1.2.2 (2026-04-21)
+- **AI API 토큰 최적화**: 운영 시간(08:40~15:50) 외 AI 자동 호출 차단 (비용 절감). 장외 테스트를 위한 'AI 디버그 모드' 도입.
+- **API 비용 추적**: TUI 상단 헤더 영역에 Gemini API 월간 누적 사용 비용 실시간 추산 및 표시 기능 추가.
+- **로그 렌더링 개선**: 터미널 높이 초과 시 최신 로그를 상단에 유지하고 오래된 로그를 하단에서 생략(Omit)하도록 출력 최적화.
+
+### v1.2.0 (2026-04-20)
+- **AI 자율 매도 (Proactive Exit)**: AI가 시황/뉴스 악재 판단 시 설정된 TP/SL 도달 전이라도 선제적으로 포지션을 정리하는 로직 도입 (AUTO ON/OFF 지원).
+- **통합 배치 리뷰 (Batch Review)**: 개별 종목 호출 방식을 폐지하고, 전 종목을 단 1회의 API 호출로 분석하여 속도 및 토큰 효율성 극대화.
+- **장외 시간 대응(Tightening)**: 장외 시간에 매도 권고 발생 시 익일 개장 직후 즉시 처분되도록 익절/손절선 0.1% 자동 타이트닝 적용.
 
 ### v1.2.1 (2026-04-17)
 - **자산 트래킹 개편**: 누적 입금액(Seed) 기반으로 정확한 누적 수익금과 수익률(%) 자동 계산 로직 도입 (`S` 셋업 메뉴 통합).
