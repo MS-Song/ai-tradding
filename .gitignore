@@ -9,8 +9,8 @@ target/
 .trading_state.json
 trading_state.json
 trading.log
+trading_logs.json
 error.log
 activate_venv.sh
 run.sh
 .worktrees/
-trading_logs.json

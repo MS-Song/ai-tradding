@@ -27,23 +27,36 @@ class ExecutionMixin:
 
         if phase['id'] == "P4" and not self.global_panic and self.current_market_vibe.upper() in ["BULL", "NEUTRAL"] and self.auto_ai_trade:
             if getattr(self, "_last_closing_bet_date", None) != today and self.ai_recommendations:
-                top_rec = self.ai_recommendations[0]
-                code, name = top_rec['code'], top_rec['name']
-                if any(h.get('pdno') == code for h in holdings):
-                    logger.info(f"P4 종가 베팅 건너뜀 (이미 보유 중): {name} ({code})")
-                    self._last_closing_bet_date = today
-                else:
-                    qty = math.floor(self.ai_config["amount_per_trade"] / float(top_rec.get('price', 0))) if float(top_rec.get('price', 0)) > 0 else 0
-                    if qty > 0 and not skip_trade:
-                        success, _ = self.api.order_market(code, qty, True)
-                        if success:
-                            self._last_closing_bet_date = today
-                            results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
-                            m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else ""
-                            trading_log.log_trade("P4종가매수", code, name, float(top_rec.get('price', 0)), qty, "AI 추천 기반 종가 베팅", model_id=m_id)
-                            self.record_buy(code, float(top_rec.get('price', 0)))
-                            self.auto_assign_preset(code, name)
-                            self._save_all_states()
+                # 1~3순위까지 순회하며 종가 베팅 종목 탐색
+                for top_rec in self.ai_recommendations[:3]:
+                    code, name = top_rec['code'], top_rec['name']
+                    if any(h.get('pdno') == code for h in holdings):
+                        logger.info(f"P4 종가 베팅 기보유 종목 보호 갱신: {name} ({code})")
+                        results.append(f"🛡️ P4 종가베팅 유지/보호: {name}")
+                        self.last_buy_times[code] = time.time()  # 당일 매수 보호 로직 적용 (청산 방어)
+                        self._last_closing_bet_date = today
+                        self._save_all_states()
+                        break  # 기보유 종목으로 베팅 확정하고 종료
+                    else:
+                        price = float(top_rec.get('price', 0))
+                        qty = math.floor(self.ai_config["amount_per_trade"] / price) if price > 0 else 0
+                        # 가용 현금이 주가 이상이라면 최소 1주 매수 보장
+                        if qty == 0 and asset_info.get('cash', 0) >= price:
+                            qty = 1
+                            
+                        if qty > 0 and not skip_trade:
+                            success, msg = self.api.order_market(code, qty, True)
+                            if success:
+                                self._last_closing_bet_date = today
+                                results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
+                                m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else ""
+                                trading_log.log_trade("P4종가매수", code, name, price, qty, "AI 추천 기반 종가 베팅", model_id=m_id)
+                                self.record_buy(code, price)
+                                self.auto_assign_preset(code, name)
+                                self._save_all_states()
+                                break  # 매수 성공 시 종료
+                            else:
+                                logger.warning(f"P4 종가 베팅 실패 ({name}): {msg} -> 다음 순위 탐색")
 
         for item in holdings:
             code = item.get("pdno")
