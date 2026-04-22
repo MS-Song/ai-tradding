@@ -50,13 +50,25 @@ def draw_recommendation_report(strategy, dm, tw, th):
             detail = strategy.api.get_naver_stock_detail(code)
             buf.write(f"{align_kr(r['theme'], 8)} | {align_kr(code, 8)} | {align_kr(gem_mark + r['name'], 14)} | {align_kr(f'{int(float(r.get('price',0))):,}', 9, 'right')} | {align_kr(f'{color}{rate:+.1f}%\033[0m', 7, 'right')} | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(f'{r['score']:.1f}', 6, 'right')} | {r['reason']}\n")
     buf.write("\n" + "-" * tw + "\n\033[1;92m" + " [AI 수석 전략가 입체 분석 및 대응 전략 (초압축)]" + "\033[0m\n")
-    if strategy.ai_detailed_opinion:
-        # [Task 9] 높이 제한에 따른 출력 라인 수 조절
-        lines = [l.strip() for l in strategy.ai_detailed_opinion.split('\n') if l.strip()]
-        max_lines = max(5, th - buf.getvalue().count('\n') - 4)
-        for line in lines[:max_lines]:
-            buf.write(f" > {line}\n")
-    else: buf.write(" ⚠️ 아직 생성된 상세 분석 의견이 없습니다. '8:시황'을 실행하세요.\n")
+    
+    # [Task 10] 리포트 캐싱 및 1회 분석 로직
+    curr_t = time.time()
+    if not strategy.rec_report_cache or (curr_t - strategy.rec_report_time > 600): # 10분 캐시
+        if recs:
+            buf.write("\033[93m  🧠 추천 종목들을 입체 분석 중입니다... 잠시만 기다려주세요.\033[0m\n")
+            sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+            report = strategy.ai_advisor.get_detailed_report_advice(recs, strategy.current_market_vibe)
+            strategy.rec_report_cache = report
+            strategy.rec_report_time = curr_t
+            # 분석 후 버퍼 갱신을 위해 리턴 후 재호출하거나, 그냥 여기서 다시 그림 (여기서는 간단히 덮어쓰기)
+            buf.seek(0); buf.truncate()
+            return draw_recommendation_report(strategy, dm, tw, th) # 재귀 호출로 캐시된 데이터 표시
+    
+    if strategy.rec_report_cache:
+        for line in strategy.rec_report_cache.split('\n'):
+            if line.strip(): buf.write(f"  > {line.strip()}\n")
+    else: buf.write("  ⚠️ 분석된 데이터가 없습니다. 먼저 '8:시황' 분석을 수행하세요.\n")
+    
     buf.write("-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
     sys.stdout.write(buf.getvalue()); sys.stdout.flush()
     while not get_key_immediate(): time.sleep(0.1)
@@ -67,95 +79,76 @@ def draw_holdings_detail(strategy, dm, tw, th):
     import threading
     from datetime import datetime
     
-    current_tab = 1
     _is_running_analysis = False
     
     def run_bg_analysis():
         nonlocal _is_running_analysis
         _is_running_analysis = True
-        dm.set_busy("AI 통합 분석 중")
+        dm.set_busy("AI 포트폴리오 진단 중")
         try:
-            # 1. 포트폴리오 진단
             strategy.refresh_holdings_opinion(progress_cb=lambda c, t: dm.set_busy(f"진단({c}/{t})"))
-            # 2. 리밸런싱 제안
-            if hasattr(strategy, "rebalance_eng"):
-                dm.set_busy("리밸런싱 분석 중")
-                strategy.rebalance_eng.analyze_and_suggest(dm.cached_holdings, dm.cached_asset['total_asset'], force=True)
         finally:
             _is_running_analysis = False
             dm.clear_busy()
-            # 분석 완료 후 노이즈 방지를 위해 버퍼 비우기
             time.sleep(0.2)
             flush_input()
 
     while True:
         buf = io.StringIO(); buf.write("\033[H\033[2J")
-        buf.write("\033[44;37m" + align_kr(" [AI HOLDINGS & REBALANCE REPORT] ", tw, 'center') + "\033[0m\n")
+        buf.write("\033[44;37m" + align_kr(" [AI HOLDINGS PORTFOLIO REPORT] ", tw, 'center') + "\033[0m\n")
+        buf.write("=" * tw + "\n")
+
+        # 자산 요약
+        asset = dm.cached_asset; p_c = "\033[91m" if asset['pnl'] > 0 else "\033[94m" if asset['pnl'] < 0 else "\033[0m"
+        p_rt = (asset['pnl'] / (asset['total_asset'] - asset['pnl']) * 100) if (asset['total_asset'] - asset['pnl']) > 0 else 0
+        buf.write(align_kr(f" [자산 요약] 총자산: {asset['total_asset']:,.0f} | 평가손익: {p_c}{int(asset['pnl']):+,} ({p_rt:+.2f}%)\033[0m | 현금: {asset['cash']:,.0f}", tw) + "\n")
+        buf.write("-" * tw + "\n")
         
-        # 탭 메뉴 바
-        t1 = "\033[7m" if current_tab == 1 else ""
-        t2 = "\033[7m" if current_tab == 2 else ""
-        menu = f" {t1} 1.포트폴리오 진단 \033[0m | {t2} 2.리밸런싱 제안 \033[0m "
-        buf.write(align_kr(menu, tw, 'center') + "\n")
-        buf.write("=" * tw + "\n\n")
-
-        if current_tab == 1:
-            # 1. 포트폴리오 진단
-            asset = dm.cached_asset; p_c = "\033[91m" if asset['pnl'] > 0 else "\033[94m" if asset['pnl'] < 0 else "\033[0m"
-            p_rt = (asset['pnl'] / (asset['total_asset'] - asset['pnl']) * 100) if (asset['total_asset'] - asset['pnl']) > 0 else 0
-            buf.write(align_kr(f" [자산 요약] 총자산: {asset['total_asset']:,.0f} | 평가손익: {p_c}{int(asset['pnl']):+,} ({p_rt:+.2f}%)\033[0m | 현금: {asset['cash']:,.0f}", tw) + "\n")
+        if not dm.cached_holdings:
+            buf.write(align_kr("현재 보유 중인 종목이 없습니다.", tw, 'center') + "\n")
+        else:
+            buf.write("\033[1m" + f"{align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('수익률', 10)} | {align_kr('평가손액', 12)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)}" + "\033[0m\n")
             buf.write("-" * tw + "\n")
-            
-            if not dm.cached_holdings:
-                buf.write(align_kr("현재 보유 중인 종목이 없습니다.", tw, 'center') + "\n")
-            else:
-                buf.write("\033[1m" + f"{align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('수익률', 10)} | {align_kr('평가손액', 12)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)}" + "\033[0m\n")
-                buf.write("-" * tw + "\n")
-                max_h = max(3, th - 15)
-                for h in dm.cached_holdings[:max_h]:
-                    code = h['pdno']; pnl_rt = float(h.get('evlu_pfls_rt', 0)); pnl_amt = int(float(h.get('evlu_pfls_amt', 0)))
-                    color = "\033[91m" if pnl_amt > 0 else "\033[94m" if pnl_amt < 0 else "\033[0m"
-                    detail = strategy.api.get_naver_stock_detail(code, force=False)
-                    buf.write(f"{align_kr(code, 8)} | {align_kr(h['prdt_name'], 14)} | {color}{align_kr(f'{pnl_rt:+.2f}%', 10, 'right')}\033[0m | {color}{align_kr(f'{pnl_amt:+,}', 12, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')}\n")
+            max_h = max(3, th - 15)
+            for h in dm.cached_holdings[:max_h]:
+                code = h['pdno']; pnl_rt = float(h.get('evlu_pfls_rt', 0)); pnl_amt = int(float(h.get('evlu_pfls_amt', 0)))
+                color = "\033[91m" if pnl_amt > 0 else "\033[94m" if pnl_amt < 0 else "\033[0m"
+                detail = strategy.api.get_naver_stock_detail(code, force=False)
+                buf.write(f"{align_kr(code, 8)} | {align_kr(h['prdt_name'], 14)} | {color}{align_kr(f'{pnl_rt:+.2f}%', 10, 'right')}\033[0m | {color}{align_kr(f'{pnl_amt:+,}', 12, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')}\n")
 
-            buf.write("\n\033[1;96m" + " [AI 포트폴리오 매니저의 실시간 진단 의견]" + "\033[0m")
-            if hasattr(strategy, 'ai_holdings_update_time') and strategy.ai_holdings_update_time > 0:
-                t_str = datetime.fromtimestamp(strategy.ai_holdings_update_time).strftime('%H:%M:%S')
-                buf.write(f" (분석완료: {t_str})\n")
-            else: buf.write("\n")
-            
-            if _is_running_analysis:
-                buf.write(f"\n  \033[93m🔄 포트폴리오를 입체 분석 중입니다... ({dm.global_busy_msg or '대기중'})\033[0m\n")
-            elif strategy.ai_holdings_opinion:
-                max_lines = max(3, th - buf.getvalue().count('\n') - 5)
-                lines = [l.strip() for l in strategy.ai_holdings_opinion.split('\n') if l.strip()]
-                for line in lines[:max_lines]: buf.write(f"  {line}\n")
-            else:
-                buf.write("\n  ⚠️ 아직 진단 데이터가 없습니다. 'R' 키를 눌러 AI 분석을 시작하세요.\n")
-
-        elif current_tab == 2:
-            # 2. 리밸런싱 제안
-            buf.write("\033[1;92m" + " [AI 포트폴리오 리밸런싱 지능형 제안]" + "\033[0m\n")
-            buf.write("-" * tw + "\n")
-            
-            if _is_running_analysis:
-                buf.write(f"\n  \033[93m🧠 Gemini가 최적의 포트폴리오 비중을 계산 중입니다... ({dm.global_busy_msg or '대기중'})\033[0m\n")
-            elif hasattr(strategy, "rebalance_eng"):
-                advice = strategy.rebalance_eng.get_advice()
-                if advice and "분석되지 않았습니다" not in advice:
-                    lines = [l.strip() for l in advice.split('\n') if l.strip()]
-                    max_lines = max(10, th - 10)
-                    for line in lines[:max_lines]: buf.write(f"  {line}\n")
-                else: 
-                    buf.write("\n  ⚠️ 리밸런싱 분석 결과가 없습니다.\n")
-                    buf.write("  'R' 키를 눌러 [진단 + 리밸런싱] 통합 AI 분석을 요청하세요.\n")
-            else: buf.write("  리밸런싱 엔진 로드 실패.\n")
+        buf.write("\n\033[1;96m" + " [AI 포트폴리오 매니저의 실시간 진단 의견]" + "\033[0m")
+        if hasattr(strategy, 'ai_holdings_update_time') and strategy.ai_holdings_update_time > 0:
+            t_str = datetime.fromtimestamp(strategy.ai_holdings_update_time).strftime('%H:%M:%S')
+            buf.write(f" (분석완료: {t_str})\n")
+        else: buf.write("\n")
+        
+        if _is_running_analysis:
+            buf.write(f"\n  \033[93m🔄 포트폴리오를 입체 분석 중입니다... ({dm.global_busy_msg or '대기중'})\033[0m\n")
+        elif strategy.ai_holdings_opinion:
+            max_lines = max(3, th - buf.getvalue().count('\n') - 5)
+            lines = [l.strip() for l in strategy.ai_holdings_opinion.split('\n') if l.strip()]
+            for line in lines[:max_lines]: buf.write(f"  {line}\n")
+        else:
+            buf.write("\n  ⚠️ 아직 진단 데이터가 없습니다. 'R' 키를 눌러 AI 분석을 시작하세요.\n")
 
         # 하단 상태 바 및 키 안내
         buf.write("\n" + "-" * tw + "\n")
-        status_line = f" \033[93m[작업중]\033[0m {dm.global_busy_msg}" if _is_running_analysis else " \033[92m[준비완료]\033[0m AI 분석 가능"
+        if _is_running_analysis:
+            status_line = f" \033[93m[작업중]\033[0m {dm.global_busy_msg}"
+        elif hasattr(strategy, 'ai_holdings_update_time') and strategy.ai_holdings_update_time > 0:
+            elapsed = time.time() - strategy.ai_holdings_update_time
+            t_str = datetime.fromtimestamp(strategy.ai_holdings_update_time).strftime('%H:%M:%S')
+            status_line = f" \033[92m[분석완료]\033[0m {t_str} ({int(elapsed//60)}분 전)"
+        else:
+            status_line = " \033[90m[미분석]\033[0m AI 진단 데이터 없음"
         buf.write(status_line + "\n")
-        buf.write(align_kr(" [1, 2]: 탭 전환 | 'R': 실시간 AI 분석 시작 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
+        
+        # R키 안내: 10분 이상 경과 또는 미분석 시에만 표시
+        has_recent = hasattr(strategy, 'ai_holdings_update_time') and strategy.ai_holdings_update_time > 0 and (time.time() - strategy.ai_holdings_update_time < 600)
+        if has_recent:
+            buf.write(align_kr(" Q, ESC, SPACE: 종료 | R: AI 재진단 ", tw, 'center') + "\n")
+        else:
+            buf.write(align_kr(" Q, ESC, SPACE: 종료 | \033[93mR: AI 진단 시작\033[0m ", tw, 'center') + "\n")
         sys.stdout.write(buf.getvalue()); sys.stdout.flush()
         
         # 키 입력 루프 (비차단 렌더링을 위해 짧은 대기 후 재진입)
@@ -164,13 +157,11 @@ def draw_holdings_detail(strategy, dm, tw, th):
             k = get_key_immediate()
             if k:
                 kl = k.lower()
-                if kl == '1': current_tab = 1; break
-                elif kl == '2': current_tab = 2; break
-                elif kl == 'r':
+                if kl == 'r':
                     if not _is_running_analysis:
                         threading.Thread(target=run_bg_analysis, daemon=True).start()
                     break
-                elif kl in ['q', '\x1b', ' ']:
+                elif kl in ['q', 'esc', ' ']:
                     buf.close()
                     return
             time.sleep(0.01)
@@ -195,11 +186,18 @@ def draw_hot_stocks_detail(strategy, dm, tw, th):
             detail = strategy.api.get_naver_stock_detail(code)
             sys.stdout.write(f"{align_kr(str(idx), 4)} | {align_kr(code, 8)} | {align_kr(item.get('name','')[:10], 14)} | {align_kr(f'{int(float(item.get("price",0))):,}', 10, 'right')} | {color}{align_kr(f'{rate:+.2f}%', 8, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')}\n")
     sys.stdout.flush()
-    sys.stdout.write("\n" + "-" * tw + "\n\033[1;95m" + " [트렌드 분석 중... 잠시 기다려주세요]" + "\033[0m\n"); sys.stdout.flush()
-    report = strategy.ai_advisor.get_hot_stocks_report_advice(hot, themes, strategy.current_market_vibe)
-    sys.stdout.write("\033[1;95m" + " [AI 트렌드 분석가의 인기 테마 진단]" + "\033[0m\n")
-    if report:
-        for line in report.split('\n'):
+    
+    # [Task 10] 인기 테마 리포트 캐싱 (5분/300초 기준)
+    curr_t = time.time()
+    if not strategy.hot_report_cache or (curr_t - strategy.hot_report_time > 300):
+        sys.stdout.write("\n" + "-" * tw + "\n\033[1;95m" + " [트렌드 분석 중... 잠시 기다려주세요]" + "\033[0m\n"); sys.stdout.flush()
+        report = strategy.ai_advisor.get_hot_stocks_report_advice(hot, themes, strategy.current_market_vibe)
+        strategy.hot_report_cache = report
+        strategy.hot_report_time = curr_t
+    
+    sys.stdout.write("\033[1;95m" + " [AI 트렌드 분석가의 인기 테마 진단 (초압축)]" + "\033[0m\n")
+    if strategy.hot_report_cache:
+        for line in strategy.hot_report_cache.split('\n'):
             if line.strip(): sys.stdout.write(f"  {line.strip()}\n")
     else: sys.stdout.write("  ⚠️ 리포트를 생성할 수 없습니다.\n")
     sys.stdout.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n"); sys.stdout.flush()
@@ -256,47 +254,86 @@ def draw_ai_logs_report(strategy, dm, tw, th):
         tab1_s = "\033[7m" if current_tab == 1 else ""
         tab2_s = "\033[7m" if current_tab == 2 else ""
         tab3_s = "\033[7m" if current_tab == 3 else ""
+        tab4_s = "\033[7m" if current_tab == 4 else ""
         
-        menu_bar = f" {tab1_s} 1.매수거절(역사) \033[0m | {tab2_s} 2.종목교체(역사) \033[0m | {tab3_s} 3.전략수립근거(보유) \033[0m "
+        menu_bar = f" {tab1_s} 1.매수거절 \033[0m | {tab2_s} 2.종목교체 \033[0m | {tab3_s} 3.매수사유 \033[0m | {tab4_s} 4.전략수립근거(보유) \033[0m "
         buf.write(align_kr(menu_bar, tw, 'center') + "\n")
         buf.write("=" * tw + "\n\n")
 
         if current_tab == 1:
-            # 1. 매수 거절 내역 (전체 히스토리)
-            buf.write("\033[1;91m" + " [AI 매수 거절 히스토리 (최근 내역)]" + "\033[0m\n")
+            buf.write("\033[1;91m" + " [AI 매수 거절 히스토리 (오늘)]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             rejections = trading_log.data.get("rejections", [])
-            if not rejections:
-                buf.write("  기록된 매수 거절 내역이 없습니다.\n")
+            today = datetime.now().strftime('%Y-%m-%d')
+            today_rejections = [r for r in rejections if r.get('time', '').startswith(today)]
+            
+            if not today_rejections:
+                buf.write("  오늘 기록된 매수 거절 내역이 없습니다.\n")
             else:
                 buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('모델', 8)} | 거절 사유" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
-                
-                # 화면 높이에 맞춰 개수 조정 (동적 슬라이싱)
                 max_items = max(5, th - 10)
-                for item in rejections[:max_items]:
+                for item in today_rejections[:max_items]:
                     t_str = item['time'].split(' ')[-1]
                     m_id = item.get('model_id', '')
-                    m_name = m_id[:8] if m_id else '---'
-                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {item['reason']}\n")
+                    m_name = trading_log._normalize_model_name(m_id)
+                    reason = item['reason'].replace('\n', ' ')
+                    # 가용 너비 계산 (시간 10 + 코드 8 + 종목명 14 + 모델 8 + 구분자 12 = 52)
+                    avail_w = max(20, tw - 55)
+                    if get_visual_width(reason) > avail_w:
+                        while get_visual_width(reason) > avail_w - 2: reason = reason[:-1]
+                        reason += ".."
+                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {reason}\n")
 
         elif current_tab == 2:
-            # 2. 종목 교체 내역 (Replacement)
-            buf.write("\033[1;92m" + " [종목 한도(8개) 초과에 따른 교체 매매 히스토리]" + "\033[0m\n")
+            buf.write("\033[1;92m" + " [종목 한도(8개) 초과에 따른 당일 교체 히스토리]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
-            if not strategy.replacement_logs:
-                buf.write("  최근 종목 교체 내역이 없습니다.\n")
+            today = datetime.now().strftime('%Y-%m-%d')
+            today_replacements = [r for r in strategy.replacement_logs if r.get('time', '').startswith(today)]
+            
+            if not today_replacements:
+                buf.write("  오늘 기록된 종목 교체 내역이 없습니다.\n")
             else:
-                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('OUT(매도)', 18)} | {align_kr('IN(매수)', 18)} | 교체 사유" + "\033[0m\n")
+                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('OUT(매도)', 15)} | {align_kr('IN(매수)', 15)} | 교체 사유" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
                 max_items = max(5, th - 10)
-                for item in strategy.replacement_logs[:max_items]:
-                    out_info = f"[{item.get('out_code','?')}] {item.get('out_name','?')[:12]}"
-                    in_info = f"[{item.get('in_code','?')}] {item.get('in_name','?')[:12]}"
-                    buf.write(f" {align_kr(item['time'], 10)} | {align_kr(out_info, 18)} | {align_kr(in_info, 18)} | {item['reason']}\n")
+                for item in today_replacements[:max_items]:
+                    t_str = item['time'].split(' ')[-1]
+                    out_info = f"[{item.get('out_code','?')}] {item.get('out_name','?')[:8]}"
+                    in_info = f"[{item.get('in_code','?')}] {item.get('in_name','?')[:8]}"
+                    reason = item['reason'].replace('\n', ' ')
+                    # 가용 너비 계산 (10 + 15 + 15 + 9 = 49)
+                    avail_w = max(20, tw - 52)
+                    if get_visual_width(reason) > avail_w:
+                        while get_visual_width(reason) > avail_w - 2: reason = reason[:-1]
+                        reason += ".."
+                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(out_info, 15)} | {align_kr(in_info, 15)} | {reason}\n")
 
         elif current_tab == 3:
-            # 3. 종목별 전략 수립 사유
+            buf.write("\033[1;93m" + " [AI 당일 매수 승인 및 진입 근거]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            reasons = trading_log.data.get("buy_reasons", [])
+            today = datetime.now().strftime('%Y-%m-%d')
+            today_reasons = [r for r in reasons if r.get('time', '').startswith(today)]
+            
+            if not today_reasons:
+                buf.write("  오늘 기록된 매수 승인 사유가 없습니다.\n")
+            else:
+                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('모델', 8)} | 매수 승인 사유" + "\033[0m\n")
+                buf.write("-" * tw + "\n")
+                max_items = max(5, th - 10)
+                for item in today_reasons[:max_items]:
+                    t_str = item['time'].split(' ')[-1]
+                    m_id = item.get('model_id', '')
+                    m_name = trading_log._normalize_model_name(m_id)
+                    reason = item['reason'].replace('\n', ' ')
+                    avail_w = max(20, tw - 55)
+                    if get_visual_width(reason) > avail_w:
+                        while get_visual_width(reason) > avail_w - 2: reason = reason[:-1]
+                        reason += ".."
+                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {reason}\n")
+
+        elif current_tab == 4:
             buf.write("\033[1;96m" + " [현재 보유 종목별 AI 전략 수립 근거]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             presets = strategy.preset_eng.preset_strategies
@@ -317,19 +354,25 @@ def draw_ai_logs_report(strategy, dm, tw, th):
                         buy_time = p.get('buy_time', '1970-01-01 00:00:00')
                         p_list.append({"code": code, "p": p, "buy_time": buy_time})
                 
-                p_list.sort(key=lambda x: x['buy_time'], reverse=True)
+                p_list.sort(key=lambda x: x['buy_time'] if x['buy_time'] else '0000', reverse=True)
                 
                 max_items = max(5, th - 10)
                 for item in p_list[:max_items]:
                     code = item["code"]
                     p = item["p"]
-                    b_time_str = p.get('buy_time', '??').split(' ')[-1] if 'buy_time' in p else '??'
+                    b_time_str = p.get('buy_time', '??').split(' ')[-1] if p.get('buy_time') else '??'
                     detail = strategy.api.get_naver_stock_detail(code)
                     name = detail.get('name', code)
-                    buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {p.get('reason', '')}\n")
+                    reason = p.get('reason', '').replace('\n', ' ')
+                    # 가용 너비 계산 (10 + 8 + 14 + 12 + 15 = 59)
+                    avail_w = max(20, tw - 62)
+                    if get_visual_width(reason) > avail_w:
+                        while get_visual_width(reason) > avail_w - 2: reason = reason[:-1]
+                        reason += ".."
+                    buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {reason}\n")
 
         buf.write("\n" + "-" * tw + "\n")
-        buf.write(align_kr(" [1, 2, 3]: 탭 전환 | 아무 키나 누르면 돌아갑니다. ", tw, 'center') + "\n")
+        buf.write(align_kr(" [1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
         sys.stdout.write(buf.getvalue()); sys.stdout.flush()
         
         while True:
@@ -339,7 +382,8 @@ def draw_ai_logs_report(strategy, dm, tw, th):
                 if kl == '1': current_tab = 1; break
                 elif kl == '2': current_tab = 2; break
                 elif kl == '3': current_tab = 3; break
-                elif kl in ['q', '\x1b', '\r', ' ']: # Q, ESC, Enter, Space로만 종료
+                elif kl == '4': current_tab = 4; break
+                elif kl in ['q', 'esc', ' ']:
                     buf.close()
                     return
             time.sleep(0.01)
@@ -358,37 +402,85 @@ def draw_performance_report(strategy, dm, tw, th):
         t2 = "\033[7m" if current_tab == 2 else ""
         t3 = "\033[7m" if current_tab == 3 else ""
         
-        menu = f" {t1} 1.수익 상위(Top 20) \033[0m | {t2} 2.손실 상위(Shame 20) \033[0m | {t3} 3.모델별 성과 \033[0m "
+        menu = f" {t1} 1.수익 상위(Top 10) \033[0m | {t2} 2.손실 상위(Shame 10) \033[0m | {t3} 3.모델별 성과 \033[0m "
         buf.write(align_kr(menu, tw, 'center') + "\n")
         buf.write("=" * tw + "\n\n")
 
         if current_tab == 1:
-            # 1. 수익금 TOP 20
-            top_stocks = trading_log.get_top_profitable_stocks(20)
-            buf.write("\033[1;93m" + " [종목별 누적 수익금 TOP 20 (Hall of Fame)]" + "\033[0m\n")
+            # 1. 수익금 TOP 10
+            top_stocks = trading_log.get_top_profitable_stocks(10)
+            buf.write("\033[1;93m" + " [종목별 누적 수익금 TOP 10 (Hall of Fame)]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             if not top_stocks:
                 buf.write("  누적 수익 데이터를 수집 중입니다.\n")
             else:
-                buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 16)} | {align_kr('누적수익금', 18)} | {align_kr('모델', 8)} | 매매" + "\033[0m\n")
+                buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 12)} | {align_kr('TOTAL (회수)', 18)} | {align_kr('모델별 (회수)', 25)}" + "\033[0m\n")
+                buf.write("-" * tw + "\n")
                 max_items = max(10, th - 12)
-                for i, (code, s) in enumerate(top_stocks[:max_items], 1):
+                item_count = 0
+                for i, (code, s) in enumerate(top_stocks, 1):
+                    if item_count >= max_items: break
                     color = "\033[91m"
-                    buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:16], 16)} | {color}{align_kr(f'{int(s['total_profit']):+,}원', 18, 'right')}\033[0m | {align_kr(s.get('model','---'), 8)} | {s['count']}회\n")
+                    total_val = f"{int(s['total_profit']):+,} ({s['count']}회)"
+                    buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:12], 12)} | {color}{align_kr(total_val, 18, 'right')}\033[0m | ")
+                    
+                    # 모델별 상세
+                    m_items = list(s['models'].items())
+                    if m_items:
+                        first_m, first_s = m_items[0]
+                        m_val = f"{first_m} {int(first_s['profit']):+,} ({first_s['count']}회)"
+                        m_color = "\033[91m" if first_s['profit'] > 0 else "\033[94m" if first_s['profit'] < 0 else "\033[90m"
+                        buf.write(f"{m_color}{align_kr(m_val, 25, 'left')}\033[0m\n")
+                        item_count += 1
+                        
+                        for m_name, m_stat in m_items[1:]:
+                            if item_count >= max_items: break
+                            m_val = f"{m_name} {int(m_stat['profit']):+,} ({m_stat['count']}회)"
+                            m_color = "\033[91m" if m_stat['profit'] > 0 else "\033[94m" if m_stat['profit'] < 0 else "\033[90m"
+                            buf.write(f" {' '*4} | {' '*8} | {' '*12} | {' '*18} | {m_color}{align_kr(m_val, 25, 'left')}\033[0m\n")
+                            item_count += 1
+                    else:
+                        buf.write("\n")
+                    buf.write("-" * tw + "\n")
+                    item_count += 1
 
         elif current_tab == 2:
-            # 2. 손실금 TOP 20
-            loss_stocks = trading_log.get_top_loss_stocks(20)
-            buf.write("\033[1;91m" + " [종목별 누적 손실금 TOP 20 (Hall of Shame)]" + "\033[0m\n")
+            # 2. 손실금 TOP 10
+            loss_stocks = trading_log.get_top_loss_stocks(10)
+            buf.write("\033[1;91m" + " [종목별 누적 손실금 TOP 10 (Hall of Shame)]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             if not loss_stocks:
                 buf.write("  누적 손실 데이터가 없습니다 (클린 포트폴리오!).\n")
             else:
-                buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 16)} | {align_kr('누적손실금', 18)} | {align_kr('모델', 8)} | 매매" + "\033[0m\n")
+                buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 12)} | {align_kr('TOTAL (회수)', 18)} | {align_kr('모델별 (회수)', 25)}" + "\033[0m\n")
+                buf.write("-" * tw + "\n")
                 max_items = max(10, th - 12)
-                for i, (code, s) in enumerate(loss_stocks[:max_items], 1):
+                item_count = 0
+                for i, (code, s) in enumerate(loss_stocks, 1):
+                    if item_count >= max_items: break
                     color = "\033[94m"
-                    buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:16], 16)} | {color}{align_kr(f'{int(s['total_profit']):+,}원', 18, 'right')}\033[0m | {align_kr(s.get('model','---'), 8)} | {s['count']}회\n")
+                    total_val = f"{int(s['total_profit']):+,} ({s['count']}회)"
+                    buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:12], 12)} | {color}{align_kr(total_val, 18, 'right')}\033[0m | ")
+                    
+                    # 모델별 상세
+                    m_items = list(s['models'].items())
+                    if m_items:
+                        first_m, first_s = m_items[0]
+                        m_val = f"{first_m} {int(first_s['profit']):+,} ({first_s['count']}회)"
+                        m_color = "\033[91m" if first_s['profit'] > 0 else "\033[94m" if first_s['profit'] < 0 else "\033[90m"
+                        buf.write(f"{m_color}{align_kr(m_val, 25, 'left')}\033[0m\n")
+                        item_count += 1
+                        
+                        for m_name, m_stat in m_items[1:]:
+                            if item_count >= max_items: break
+                            m_val = f"{m_name} {int(m_stat['profit']):+,} ({m_stat['count']}회)"
+                            m_color = "\033[91m" if m_stat['profit'] > 0 else "\033[94m" if m_stat['profit'] < 0 else "\033[90m"
+                            buf.write(f" {' '*4} | {' '*8} | {' '*12} | {' '*18} | {m_color}{align_kr(m_val, 25, 'left')}\033[0m\n")
+                            item_count += 1
+                    else:
+                        buf.write("\n")
+                    buf.write("-" * tw + "\n")
+                    item_count += 1
 
         elif current_tab == 3:
             # 3. 모델별 통합 성과
@@ -406,7 +498,7 @@ def draw_performance_report(strategy, dm, tw, th):
                     buf.write(f" {align_kr(m, 10)} | {align_kr(str(s['buy_count']), 8, 'right')} | {align_kr(str(s['total_trades']), 8, 'right')} | {w_color}{align_kr(f'{win_rate:.1f}%', 10, 'right')}\033[0m | {p_color}{align_kr(f'{int(s['total_profit']):+,}원', 18, 'right')}\033[0m\n")
 
         buf.write("\n" + "-" * tw + "\n")
-        buf.write(align_kr(" [1, 2, 3]: 탭 전환 | 'R': 리밸런싱 갱신(Holdings탭 이동됨) | 아무 키나 종료 ", tw, 'center') + "\n")
+        buf.write(align_kr(" [1, 2, 3]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
         sys.stdout.write(buf.getvalue()); sys.stdout.flush()
         
         while True:
@@ -416,8 +508,7 @@ def draw_performance_report(strategy, dm, tw, th):
                 if kl == '1': current_tab = 1; break
                 elif kl == '2': current_tab = 2; break
                 elif kl == '3': current_tab = 3; break
-                elif kl == 'r': return 'R'
-                elif kl in ['q', '\x1b', '\r', ' ']:
+                elif kl in ['q', 'esc', ' ']:
                     buf.close()
                     return
             time.sleep(0.01)
@@ -445,11 +536,11 @@ def perform_interaction(key, api, strategy, dm, cycle):
     from dotenv import load_dotenv
     
     flush_input()
-    key_map = {'ㅂ': 'q', 'ㅃ': 'q', 'ㅅ': 's', 'ㄴ': 's', 'ㅈ': 's', 'ㅁ': 'a', 'ㅣ': 'l', 'ㅠ': 'b', 'ㅇ': 'd', 'ㅎ': 'h', 'ㅔ': 'p', 'ㅖ': 'p', 'ㅏ': 'k'}
+    key_map = {'ㅂ': 'q', 'ㅃ': 'q', 'ㅅ': 's', 'ㄴ': 's', 'ㅈ': 's', 'ㅁ': 'a', 'ㅣ': 'l', 'ㅠ': 'b', 'ㅇ': 'd', 'ㅎ': 'h', 'ㅔ': 'p', 'ㅖ': 'p'}
     mode = (key[-1] if 'alt+' in key else key).lower()
     if mode in key_map: mode = key_map[mode]
     
-    if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p', 'k']: return
+    if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p']: return
     
     # [수정] tw, th를 미리 계산하여 사용 가능하게 함
     try:
@@ -483,16 +574,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw_r, th_r)
                 elif mode == 'a': draw_ai_logs_report(strategy, dm, tw_r, th_r)
                 elif mode == 'p':
-                    res = draw_performance_report(strategy, dm, tw_r, th_r)
-                    if res == 'R':
-                        sys.stdout.write("\n" + align_kr("\033[1;93m 🔄 AI 리밸런싱 포트폴리오를 분석하고 있습니다. 잠시만 기다려주세요... \033[0m", tw_r, 'center') + "\n")
-                        sys.stdout.flush()
-                        dm.set_busy("리밸런싱 분석 중")
-                        # [오류 수정] 올바른 엔진 메서드 호출: analyze_and_suggest
-                        strategy.rebalance_eng.analyze_and_suggest(dm.cached_holdings, dm.cached_asset['total_asset'], force=True)
-                        dm.clear_busy()
-                        flush_input()
-                        draw_performance_report(strategy, dm, tw_r, th_r)
+                    draw_performance_report(strategy, dm, tw_r, th_r)
                 enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
             finally: 
                 dm.clear_busy()
@@ -739,15 +821,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             finally: dm.clear_busy()
                         command_queue.put((task_single, (res_strat,), {}))
 
-        elif mode == 'k':
-            res = get_input(dm, "> 일일 수익률 기준점을 현재 자산으로 초기화할까요? (y/n): ", tw)
-            if res and res.lower() == 'y':
-                cur_asset = dm.cached_asset.get('total_asset', 0)
-                if cur_asset > 0:
-                    strategy.reset_daily_pnl(cur_asset)
-                    dm.show_status(f"📅 일일 기준점 초기화 완료: {cur_asset:,.0f}원")
-                else:
-                    dm.show_status("❌ 자산 데이터가 없어 초기화할 수 없습니다.", True)
+
 
     except Exception as e:
         from src.logger import log_error

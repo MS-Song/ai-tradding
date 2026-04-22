@@ -63,6 +63,12 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self.start_day_asset = 0.0
         self.last_asset_date = ""
         
+        # --- 리포트 캐싱 (Task 10) ---
+        self.hot_report_cache = ""
+        self.hot_report_time = 0.0
+        self.rec_report_cache = ""
+        self.rec_report_time = 0.0
+        
         self.ai_config = {
             "amount_per_trade": v_cfg.get("ai_config", {}).get("amount_per_trade", 500000),
             "min_score": v_cfg.get("ai_config", {}).get("min_score", 60.0),

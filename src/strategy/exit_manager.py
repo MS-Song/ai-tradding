@@ -33,7 +33,11 @@ class ExitManager:
         
         # 시간 페이즈 보정 합산
         if phase_cfg:
-            tp_mod += phase_cfg.get('tp_delta', 0)
+            # [보정] 하락장/방어모드에서 페이즈(P2:CONVERGENCE)에 의한 추가 익절가 하향은 방지 (이미 충분히 타이트함)
+            # 단, 손절가는 리스크 관리를 위해 페이즈 보정을 유지함
+            if not (kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg.get('tp_delta', 0) < 0):
+                tp_mod += phase_cfg.get('tp_delta', 0)
+                
             # 하락장 예외: Bear/Defensive일 때는 P1의 SL 완화 적용 안 함
             if not (kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg['id'] == "P1"):
                 sl_mod += phase_cfg.get('sl_delta', 0)

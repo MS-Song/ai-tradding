@@ -2,6 +2,7 @@ import json
 import re
 import threading
 import time
+from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -117,8 +118,16 @@ class BaseLLMAdvisor(BaseAdvisor):
             for code, ind in indicators.items():
                 bb = ind.get('bb', {})
                 indicators_txt += f" {code}: RSI {ind.get('rsi', 0):.0f}, %b {bb.get('percent_b', 0):.1f}"
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
         prompt = f"""
+        현재 시각: {now_str}
         당신은 시장의 흐름에 민감한 초단기 데이트레이더(Scalper)입니다. 오늘의 변동성만을 수익의 원천으로 삼습니다. 아래 정보로 간결한 전략을 제시하세요. 불필요한 공백/수식어 금지.
+        
+        [중요: 실시간 데이터 신뢰 지침]
+        1. 제공된 실시간 가격, 등락률, 시가총액 등은 당신의 내부 지식(과거 학습 데이터)과 다르더라도 현재 시장의 '절대적 진실'입니다. 데이터 오류라고 의심하거나 비판하지 말고, 이 수치를 바탕으로 현재 시장의 수급과 에너지를 분석하십시오.
+        2. 특히 **AI[추천]** 섹션의 **권장가**는 반드시 위에서 제공된 해당 종목의 **현재가와 1원도 틀리지 않게 동일하게 작성**하십시오. 당신의 판단으로 가격을 낮게 잡거나 과거의 가격으로 수정하는 것을 엄격히 금지합니다.
+        3. 수량(M주)은 제공된 [현재가]를 기준으로 당신의 [매수 설정금액]을 넘지 않도록 계산하여 제안하십시오.
+
         - 지수: {json.dumps(market_data)} | Vibe: {vibe}
         - 포트: {holdings_txt if holdings else "None"}
         - 추천: {recs_txt if recs_txt else "None"} {indicators_txt}
@@ -135,7 +144,8 @@ class BaseLLMAdvisor(BaseAdvisor):
         [제약]
         1. |물타기|는 반드시 |손절|보다 작아야 함.
         2. 불타기는 반드시 익절보다 작아야 함.
-        3. 실거래 수수료 및 슬리피지를 고려하여, 익절/손절 폭은 가급적 최소 2.0% 이상으로 넉넉하게 산정하세요.
+        3. 실거래 수수료 및 슬리피지를 고려하여, 익절/손절 폭은 가급적 최소 2.0% 이상으로 넉넘하게 산정하세요.
+        4. AI[추천]에는 반드시 **KOSPI, KOSDAQ 상장 주식 및 ETF만** 추천하세요. 선물(KPI200 등), ETN, 암호화폐(BTC 등)는 절대 추천 종목에 포함하지 마세요. 코인/지수 시세는 시황 판단 참고용일 뿐입니다.
         한국어 대답.
         """
         return self._call_api(prompt)
@@ -158,16 +168,24 @@ class BaseLLMAdvisor(BaseAdvisor):
         수석 투자 전략가로서 아래 종목들에 대해 [초압축] 입체 분석 리포트를 작성하세요.
         [시장 장세] {vibe}
         {"\n".join(enriched_recs)}
-        1. 종목당 반드시 2줄 이내로 요약. 1행:[투자근거/지표], 2행:[목표/손절/전략].
+        [가이드라인]
+        1. 종목당 반드시 '한 줄'로만 요약. (예: [종목명] 호재성 뉴스 포착, 추세 상승 중이므로 적극 매수 권장)
+        2. '사야 하는지(Buy)', '팔아야 하는지(Sell)' 결론을 명확히 포함할 것.
+        3. 불필요한 미사여구 없이 팩트와 결론만 전달.
         한국어 어조, 가독성 중시.
         """
         return self._call_api(prompt)
 
     def get_stock_report_advice(self, code, name, detail, news):
         rate = detail.get('rate', 0)
+        curr_p = int(float(detail.get('price', 0)))
         prompt = f"""
         수석 투자 전략가로서 아래 종목 분석 리포트를 작성하세요.
-        {name}({code}) | {int(float(detail.get('price', 0))):,}원 ({rate:+.2f}%) | PER {detail.get('per')}, PBR {detail.get('pbr')}
+        
+        [데이터 신뢰 지침]
+        제공된 {name}의 현재가({curr_p:,}원)와 재무 지표(PER {detail.get('per')}, PBR {detail.get('pbr')})는 당신의 내부 지식과 다르더라도 현재 시장에서 거래되는 **유일한 진실**입니다. 당신은 이 데이터를 의심하지 말고, 현재 가격이 형성된 이유를 시장의 수급과 뉴스 모멘텀 측면에서 입체적으로 분석해야 합니다.
+
+        {name}({code}) | {curr_p:,}원 ({rate:+.2f}%) | PER {detail.get('per')}, PBR {detail.get('pbr')}
         뉴스: {', '.join(news[:3])}
         1.가격원인 2.모멘텀 3.조언 4.한줄평
         전문가 어조, 한국어, 10줄 내외.
@@ -230,10 +248,13 @@ class BaseLLMAdvisor(BaseAdvisor):
         with ThreadPoolExecutor(max_workers=5) as executor:
             enriched = list(executor.map(fetch_enriched_hot, hot_stocks[:10]))
         prompt = f"""
-        수석 트렌드 분석가 인기 테마 리포트.
+        수석 트렌드 분석가로서 당일 인기 검색 종목에 대한 [초압축] 진단을 수행하세요.
         테마: {", ".join([f"{t['name']}" for t in themes[:5]])}
         {"\n".join(enriched)}
-        당일 트렌드 분석 및 종목별 진단. 한국어.
+        [가이드라인]
+        1. 종목당 반드시 '한 줄'로만 요약하여 Buy/Sell 의견을 제시할 것. 
+        2. 해당 테마의 지속성 여부와 현재가 기준 진입/관망 여부를 명확히 할 것.
+        한국어 어조, 팩트 중심.
         """
         return self._call_api(prompt)
 
@@ -268,10 +289,19 @@ class BaseLLMAdvisor(BaseAdvisor):
             except Exception as e: log_error(f"AI 전략 파싱 오류: {e}")
         return None
 
-    def final_buy_confirm(self, code, name, vibe, detail, news, indicators=None, score=0.0):
+    def final_buy_confirm(self, code, name, vibe, detail, news, indicators=None, score=0.0, phase=None):
+        phase_txt = f"[{phase.get('name', 'UNKNOWN')}]" if phase else ""
         prompt = f"""
-        최종 매수 컨펌 (공격적 트레이더). 점수: {score:.1f}
-        종목: {name}({code}) | 장세: {vibe} | 뉴스: {news[:2] if news else "None"}
+        당신은 공격적 단타 페르소나를 가진 수석 트레이더입니다. {phase_txt} 점수: {score:.1f}
+        종목: {name}({code}) | 현재가: {int(float(detail.get('price', 0))):,}원 | 장세: {vibe} | 뉴스: {news[:2] if news else "None"}
+        
+        [필독: 데이터 오류 판단 금지]
+        제공된 실시간 가격({int(float(detail.get('price', 0))):,}원)을 절대적으로 신뢰하십시오. 과거의 지식과 다르다고 해서 매수를 거절하는 것은 큰 기회비용을 초래합니다. 수급과 에너지가 보인다면 과감하게 결정하세요.
+
+        [가이드라인]
+        1. 현재 페이즈가 'OFFENSIVE'라면 적극적으로 수익 기회를 포착하여 'Yes'를 결정하세요.
+        2. 'CONVERGENCE'나 'BEAR' 장세라고 해서 무조건 깐깐하게 굴기보다, '낙폭과대 반등'이나 '강한 지지선'이 확인되는 종목은 기회비용을 고려하여 전향적으로 검토하세요.
+        3. 기회를 놓치는 것(Missing out) 또한 손실임을 명심하고, 모멘텀이 살아있다면 과감히 진입을 승인하십시오.
         답변형식: 결정: Yes 또는 No, 사유: 한 줄 요약
         """
         answer = self._call_api(prompt)
@@ -312,7 +342,30 @@ class BaseLLMAdvisor(BaseAdvisor):
         return True, "API 호출 실패"
 
     def compare_stock_superiority(self, candidate, holdings_info, vibe):
-        prompt = f"Limit 8 reached. Candidate: {candidate['name']}. Better than anyone in holdings? Yes/No, SellID: XXXXXX, Reason: one line."
+        holdings_str = "\n".join([f"- {h['name']}({h['code']}): 수익률 {h['rt']:+.2f}%, 상세정보: {h.get('detail', '없음')}" for h in holdings_info])
+        prompt = f"""
+        계좌 내 보유 종목 한도(8개)가 꽉 찼습니다. 신규 매수 후보 종목이 기존 보유 종목 중 하나보다 "압도적으로" 우수한지 판단하여 교체(스위칭) 여부를 결정하세요.
+        종목 교체는 수수료 및 거래 비용이 발생하므로 매우 신중하고 보수적으로 접근해야 합니다.
+        
+        [신규 매수 후보 종목]
+        - {candidate['name']}({candidate['code']}): AI점수 {candidate.get('score', 0):.1f}
+        - 상세정보: {candidate.get('detail', '없음')}
+        - 최근뉴스: {candidate.get('news', '없음')}
+        
+        [현재 보유 종목 리스트]
+        {holdings_str}
+        
+        [판단 기준]
+        1. 신규 후보 종목의 상승 잠재력이 기존 보유 종목 중 가장 부진한 종목보다 "명백히, 압도적으로" 높은 경우에만 교체하십시오.
+        2. 단순한 미세한 우위나 단순 호기심만으로는 교체하지 마십시오.
+        3. 기존 종목이 손실권이더라도 반등 여지가 남아있다면 유지하고, 모멘텀이 완전히 꺾인 경우에만 과감히 교체를 고려하십시오.
+        4. 기존 종목 중 확실한 교체 대상이 없다면 'No'를 선택하여 현재 포트폴리오를 확고히 유지하십시오.
+        
+        [응답형식]
+        결정: Yes/No
+        매도종목코드: XXXXXX (Yes일 경우 위 '현재 보유 종목 리스트' 중 매도할 1개의 종목코드. No일 경우 NONE)
+        사유: 교체 또는 포기 결정에 대한 한 줄 핵심 근거
+        """
         answer = self._call_api(prompt, timeout=40)
         if answer:
             decision_match = re.search(r"(?:교체여부|결정)[^\w]*\b(Yes|No|예|아니오)\b", answer, re.I)
@@ -335,14 +388,16 @@ class BaseLLMAdvisor(BaseAdvisor):
         ])
 
         prompt = f"""
-        당신은 수석 포트폴리오 매니저입니다. 현재 보유 종목들을 진단하여 [즉시 매도] 또는 [전략 갱신]을 결정하세요.
+        당신은 끈기 있고 노련한 수석 포트폴리오 매니저입니다. 보유 종목들을 진단하여 [즉시 매도] 또는 [전략 갱신]을 결정하세요.
         [장세] {vibe} | [지수] {json.dumps(market_data)}
         [보유종목]
 {holdings_txt}
 
         [가이드라인]
-        1. 시황이 Bear/Defensive이거나 종목에 중대한 악재가 있는 경우 과감히 'SELL'(즉시 매도)을 결정하세요.
-        2. 유지할 경우, 아래 프리셋 중 가장 적합한 전략과 최적의 TP/SL, 그리고 해당 전략의 유효 시간(lifetime, 분 단위)을 제안하세요.
+        1. 시황이 Bear/Defensive라고 해서 단순히 겁을 먹고 쉽게 'SELL'하지 마십시오. 
+        2. 종목의 개별 모멘텀이 살아있거나, 일시적 하락 후 반등 구간(Support)에 있다면 끈기 있게 'HOLD'를 유지하며 전략을 갱신하세요.
+        3. 'SELL'은 오직 추세가 완전히 꺾였거나, 심각한 펀더멘털 훼손이 확인될 때만 과감하게 집행합니다.
+        4. 유지할 경우, 아래 프리셋 중 가장 적합한 전략과 최적의 TP/SL(시장 상황 반영), 그리고 유효 시간을 제안하세요.
         [프리셋 전략 리스트]
 {preset_list}
 

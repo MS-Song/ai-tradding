@@ -597,7 +597,14 @@ class KISAPI:
                     item = api_data['result']['areas'][0]['datas'][0]
                     detail["name"] = item.get('nm', detail["name"])
                     detail["price"] = str(item.get('nv', "0"))
-                    detail["rate"] = float(item.get('cr', 0.0))
+                    
+                    # [개선] 네이버 API의 cr은 절대값일 수 있으므로 rf(상태) 코드로 부호 결정
+                    raw_rate = float(item.get('cr', 0.0))
+                    rf_code = str(item.get('rf', ''))
+                    if rf_code in ['4', '5']: # 4:하락, 5:하한가
+                        detail["rate"] = -abs(raw_rate)
+                    else:
+                        detail["rate"] = abs(raw_rate)
             
             # 2. 펀더멘털 및 상세 정보 (HTML 크롤링)
             url = f"https://finance.naver.com/item/main.naver?code={code}"
@@ -644,12 +651,27 @@ class KISAPI:
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             
             news_list = []
+            
+            # 1. 일반 뉴스 수집
             table = soup.find('table', {'class': 'type5'})
             if table:
                 titles = table.find_all('td', {'class': 'title'})
                 for t in titles[:3]:
-                    news_list.append(t.text.strip())
-            return news_list
+                    news_list.append(f"[뉴스] {t.text.strip()}")
+            
+            # 2. [개선] 전자공시(DART) 추가 수집 (뉴스 섹션 하단 또는 전용 페이지)
+            try:
+                notice_url = f"https://finance.naver.com/item/news_notice.naver?code={code}"
+                n_res = requests.get(notice_url, headers=self.headers, timeout=3)
+                n_soup = BeautifulSoup(n_res.content, 'html.parser', from_encoding='cp949')
+                notices = n_soup.select("table.type5 td.title")
+                for n in notices[:3]:
+                    title = n.text.strip()
+                    if title not in news_list:
+                        news_list.insert(0, f"🚩[공시] {title}") # 중요하므로 상단 배치
+            except: pass
+            
+            return news_list[:5]
         except: return []
 
     def get_naver_hot_stocks(self) -> List[dict]:

@@ -182,11 +182,22 @@ class DataManager:
                 for stock in h:
                     code = stock.get('pdno')
                     p_data = self.api.get_inquire_price(code)
+                    n_data = self.api.get_naver_stock_detail(code)
+                    
                     tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
+                    
+                    if n_data and n_data.get('name') != "Error" and n_data.get('price') != "0":
+                        day_rate = n_data.get('rate', 0.0)
+                        curr_p = float(n_data.get('price', 0))
+                        prev_close = curr_p / (1 + day_rate / 100)
+                        day_val = curr_p - prev_close
+                    else:
+                        day_val = p_data.get('vrss', 0) if p_data else 0
+                        day_rate = p_data.get('ctrt', 0) if p_data else 0
+                        
                     temp_stock_info[code] = {
                         "tp": tp, "sl": sl, "spike": spike,
-                        "day_val": p_data.get('vrss', 0) if p_data else 0,
-                        "day_rate": p_data.get('ctrt', 0) if p_data else 0
+                        "day_val": day_val, "day_rate": day_rate
                     }
                 
                 with self.data_lock:
@@ -318,10 +329,20 @@ class DataManager:
                     for stock in h:
                         code = stock.get('pdno')
                         p_data = self.api.get_inquire_price(code) # API 호출 (락 외부)
+                        n_data = self.api.get_naver_stock_detail(code) # 네이버 실시간 데이터 (캐시 활용)
+                        
                         tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
                         
-                        day_val = p_data.get('vrss', 0) if p_data else 0
-                        day_rate = p_data.get('ctrt', 0) if p_data else 0
+                        # [개선] 모의계좌의 부정확한 전일대비(vrss/ctrt) 데이터를 네이버 실시간 데이터로 교체
+                        if n_data and n_data.get('name') != "Error" and n_data.get('price') != "0":
+                            day_rate = n_data.get('rate', 0.0)
+                            curr_p = float(n_data.get('price', 0))
+                            # 전일 종가 역산하여 변동액(vrss) 계산 (KIS 모의계좌 stale 데이터 방지)
+                            prev_close = curr_p / (1 + day_rate / 100)
+                            day_val = curr_p - prev_close
+                        else:
+                            day_val = p_data.get('vrss', 0) if p_data else 0
+                            day_rate = p_data.get('ctrt', 0) if p_data else 0
                         
                         temp_stock_info[code] = {
                             "tp": tp, "sl": sl, "spike": spike,
@@ -420,139 +441,166 @@ class DataManager:
                                 if top_ai.get('is_inverse', False) and "defensive" not in vibe.lower() and "bear" not in vibe.lower():
                                     continue
 
-                            # 2. 보유 현황 및 투자 한도 체크
-                            holding_item = next((h for h in self.cached_holdings if h['pdno'] == top_ai['code']), None)
-                            curr_eval = float(holding_item.get('evlu_amt', 0)) if holding_item else 0
-                            
-                            a_cfg = self.strategy.ai_config
-                            trade_amt = a_cfg.get("amount_per_trade", 500000)
-                            max_inv = a_cfg.get("max_investment_per_stock", 2000000)
-                            
-                            # (현재 평가금 + 매수 예정액)이 한도를 초과하면 다음 순위 종목으로
-                            if curr_eval + (trade_amt * 0.95) > max_inv:
-                                continue
-                            
-                            # [수정] 재진입 제한(Cooldown) 체크 - 익절/손절/청산 후 2시간 이내 재진입 금지
-                            if self.strategy.is_reentry_restricted(top_ai['code']):
-                                continue
-                            
-                            # [추가] 매수 쿨타임 체크 (10분) - 동일 종목 연속 매수 방지
-                            last_buy_t = self.strategy.last_buy_times.get(top_ai['code'], 0)
-                            if time.time() - last_buy_t < 600:
-                                continue
-
-                            # [추가] 이미 거절된 종목은 로깅 없이 즉시 스킵
-                            if top_ai['code'] in self.strategy.rejected_stocks:
-                                continue
-
-                            # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
-                            if not is_ai_enabled_time() and not getattr(self.strategy, "debug_mode", False):
-                                # P4 종가 베팅 로직은 execution.py 내부에서 phase 체크를 하므로 
-                                # 여기서는 일반 자율 매수(P1, P2)만 차단함.
-                                # 단, 사용자가 요청한 사항은 '자동 실행' 전체 차단이므로 로그를 남김
-                                continue
-
-                            # 3. AI 최종 매수 컨펌 (최초 거절 시에만 로깅됨)
-                            is_confirmed, refuse_reason = self.strategy.confirm_buy_decision(top_ai['code'], top_ai['name'], score=top_ai.get('score', 0.0))
-                            if not is_confirmed:
-                                self.add_trading_log(f"⚠️ AI매수거절: {top_ai['name']} | 사유: {refuse_reason}")
-                                continue
-
-                            # [추가] 최대 종목 수(8종목) 제한 및 교체 로직
-                            replacement_memo = "AI 추천 기반 자율 매수"
-                            if len(self.cached_holdings) >= self.strategy.MAX_STOCK_COUNT:
-                                self.set_busy("종목 교체 분석", "DATA")
-                                should_replace, target_code, replace_reason = self.strategy.get_replacement_target(
-                                    top_ai['code'], top_ai['name'], top_ai.get('score', 0.0), self.cached_holdings
-                                )
-                                self.clear_busy("DATA")
+                                # 2. 보유 현황 및 투자 한도 체크
+                                holding_item = next((h for h in self.cached_holdings if h['pdno'] == top_ai['code']), None)
+                                curr_eval = float(holding_item.get('evlu_amt', 0)) if holding_item else 0
                                 
-                                if should_replace and target_code:
-                                    target_item = next((h for h in self.cached_holdings if h['pdno'] == target_code), None)
-                                    target_name = target_item['prdt_name'] if target_item else target_code
+                                a_cfg = self.strategy.ai_config
+                                trade_amt = a_cfg.get("amount_per_trade", 500000)
+                                max_inv = a_cfg.get("max_investment_per_stock", 2000000)
+                                
+                                # (현재 평가금 + 매수 예정액)이 한도를 초과하면 다음 순위 종목으로
+                                if curr_eval + (trade_amt * 0.95) > max_inv:
+                                    continue
+                                
+                                # [수정] 재진입 제한(Cooldown) 체크 - 익절/손절/청산 후 2시간 이내 재진입 금지
+                                if self.strategy.is_reentry_restricted(top_ai['code']):
+                                    continue
+                                
+                                # [추가] 매수 쿨타임 체크 (10분) - 동일 종목 연속 매수 방지
+                                last_buy_t = self.strategy.last_buy_times.get(top_ai['code'], 0)
+                                if time.time() - last_buy_t < 600:
+                                    continue
+
+                                # [추가] 이미 거절된 종목은 로깅 없이 즉시 스킵
+                                if top_ai['code'] in self.strategy.rejected_stocks:
+                                    continue
+
+                                # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
+                                if not is_ai_enabled_time() and not getattr(self.strategy, "debug_mode", False):
+                                    continue
+
+                                # 3. AI 최종 매수 컨펌 (최초 거절 시에만 로깅됨)
+                                is_confirmed, ai_reason = self.strategy.confirm_buy_decision(top_ai['code'], top_ai['name'], score=top_ai.get('score', 0.0))
+                                if not is_confirmed:
+                                    self.add_trading_log(f"⚠️ AI매수거절: {top_ai['name']} | 사유: {ai_reason}")
+                                    continue
+
+                                # [추가] 최대 종목 수(8종목) 제한 및 교체 로직
+                                replacement_memo = "AI 추천 기반 자율 매수"
+                                if len(self.cached_holdings) >= self.strategy.MAX_STOCK_COUNT:
+                                    self.set_busy("종목 교체 분석", "DATA")
+                                    should_replace, target_code, replace_reason = self.strategy.get_replacement_target(
+                                        top_ai['code'], top_ai['name'], top_ai.get('score', 0.0), self.cached_holdings
+                                    )
+                                    self.clear_busy("DATA")
                                     
-                                    # 1. 대상 종목 전량 매도
-                                    sell_qty = int(float(target_item['hldg_qty'])) if target_item else 0
-                                    if sell_qty > 0:
-                                        self.add_trading_log(f"🔄 종목 교체 결정: [{target_name}] 매도 후 [{top_ai['name']}] 매수")
-                                        self.add_trading_log(f"📝 교체 사유: {replace_reason}")
+                                    if should_replace and target_code:
+                                        target_item = next((h for h in self.cached_holdings if h['pdno'] == target_code), None)
+                                        if target_item:
+                                            target_name = target_item['prdt_name']
+                                            sell_qty = int(float(target_item['hldg_qty']))
+                                        else:
+                                            target_name = target_code
+                                            sell_qty = 0
                                         
-                                        # P성과 리포트 기록을 위한 수익금 계산
-                                        s_price = float(target_item.get('prpr', 0))
-                                        s_avg = float(target_item.get('pchs_avg_pric', 0))
-                                        s_profit = (s_price - s_avg) * sell_qty
-                                        
-                                        s_success, s_msg = self.api.order_market(target_code, sell_qty, False)
-                                        if s_success:
-                                            # 전량 교체 매도 기록 (P성과 리포트 연동)
-                                            m_id = self.strategy.last_buy_models.get(target_code, "")
-                                            trading_log.log_trade("교체매도", target_code, target_name, s_price, sell_qty, f"종목 교체: {top_ai['name']}로 변경", profit=s_profit, model_id=m_id)
-                                            self.strategy.record_sell(target_code) # 매도 시점 기록 (재진입 방지)
+                                        # 1. 대상 종목 전량 매도
+                                        if sell_qty > 0:
+                                            self.add_trading_log(f"🔄 종목 교체 결정: [{target_name}] 매도 후 [{top_ai['name']}] 매수")
+                                            self.add_trading_log(f"📝 교체 사유: {replace_reason}")
                                             
-                                            # AI 로그 리포트 기록 (A 로그 연동)
+                                            # P성과 리포트 기록을 위한 수익금 계산
+                                            s_price = float(target_item.get('prpr', 0))
+                                            s_avg = float(target_item.get('pchs_avg_pric', 0))
+                                            s_profit = (s_price - s_avg) * sell_qty
+                                            
+                                            s_success, s_msg = self.api.order_market(target_code, sell_qty, False)
+                                            if s_success:
+                                                # 전량 교체 매도 기록 (P성과 리포트 연동)
+                                                m_id = self.strategy.last_buy_models.get(target_code, "")
+                                                trading_log.log_trade("교체매도", target_code, target_name, s_price, sell_qty, f"종목 교체: {top_ai['name']}로 변경", profit=s_profit, model_id=m_id)
+                                                self.strategy.record_sell(target_code)
+                                                
+                                                # AI 로그 리포트 기록 (A 로그 연동)
+                                                log_entry = {
+                                                    "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                                    "out_code": target_code, "out_name": target_name,
+                                                    "in_code": top_ai['code'], "in_name": top_ai['name'],
+                                                    "reason": replace_reason
+                                                }
+                                                self.strategy.replacement_logs.insert(0, log_entry)
+                                                self.strategy.replacement_logs = self.strategy.replacement_logs[:10]
+                                                self.strategy.save_manual_thresholds()
+                                                
+                                                self.add_trading_log(f"✅ {target_name} {sell_qty}주 매도 완료 (교체 준비)")
+                                                time.sleep(1)
+                                                self.update_all_data(is_virtual, force=True)
+                                                replacement_memo = f"종목 교체 매수 ({target_name} 대체)"
+                                            else:
+                                                self.add_log(f"❌ 교체 매도 실패: {s_msg}")
+                                                continue
+                                        else:
+                                            # AI가 미보유 종목을 지목한 경우 (환각 방어)
+                                            self.add_trading_log(f"⚠️ 교체오류: 미보유종목({target_code}) 지목으로 교체 취소")
                                             log_entry = {
-                                                "time": datetime.now().strftime('%H:%M:%S'),
-                                                "out_code": target_code,
-                                                "out_name": target_name,
-                                                "in_code": top_ai['code'],
-                                                "in_name": top_ai['name'],
-                                                "reason": replace_reason
+                                                "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                                "out_code": "-", "out_name": "유지(Hold)",
+                                                "in_code": top_ai['code'], "in_name": top_ai['name'],
+                                                "reason": f"미보유 종목({target_code}) 지목 오류로 인한 취소"
                                             }
                                             self.strategy.replacement_logs.insert(0, log_entry)
-                                            self.strategy.replacement_logs = self.strategy.replacement_logs[:10] # 최근 10건 유지
-                                            self.strategy.save_manual_thresholds() # 영속 저장
-                                            
-                                            self.add_trading_log(f"✅ {target_name} {sell_qty}주 매도 완료 (교체 준비)")
-                                            # 매도 후 잔고 갱신을 위해 잠시 대기 및 데이터 업데이트
-                                            time.sleep(1)
-                                            self.update_all_data(is_virtual, force=True)
-                                            
-                                            # 교체 매입 메모 설정을 위해 변수 세팅
-                                            replacement_memo = f"종목 교체 매수 ({target_name} 대체)"
-                                        else:
-                                            self.add_log(f"❌ 교체 매도 실패: {s_msg}")
+                                            self.strategy.replacement_logs = self.strategy.replacement_logs[:10]
                                             continue
-                                else:
-                                    # 교체 대상이 없거나 거절된 경우
-                                    # self.add_log(f"ℹ️ 보유 한도 초과(8종목) 및 교체 부적합: {top_ai['name']} 스킵")
-                                    continue
-
-                             # 4. 매매 실행
-                            p = self.api.get_inquire_price(top_ai['code'])
-                            if p and p.get('price'):
-                                curr_p = p['price']
-                                
-                                # [Safety] AI 자율 매수 전 가용 현금 체크
-                                available_cash = self.cached_asset.get('cash', 0)
-                                if available_cash < trade_amt * 0.5: # 설정액의 절반도 없으면 스킵
-                                    self.add_log(f"⚠️ 현금 부족으로 AI 매수 대기: {int(available_cash):,}원")
-                                    continue
-
-                                # [Phase 1] ATR 기반 지능형 포지션 사이징 적용
-                                qty = self.strategy.risk_mgr.calculate_position_size(
-                                    top_ai['code'], 
-                                    self.cached_asset['total_asset'], 
-                                    curr_p,
-                                    default_amt=min(trade_amt, int(available_cash))
-                                )
-                                
-                                if qty > 0:
-                                    success, msg = self.api.order_market(top_ai['code'], qty, True)
-                                    if success:
-                                        m_id = self.strategy.ai_advisor.last_used_model_id if hasattr(self.strategy.ai_advisor, 'last_used_model_id') else ""
-                                        trading_log.log_trade("AI자율매수", top_ai['code'], top_ai['name'], p['price'], qty, replacement_memo, model_id=m_id)
-                                        self.add_trading_log(f"✨ AI자율매수: {top_ai['name']} {qty}주 선점")
-                                        # [중요] 매수 시각 기록하여 쿨타임 발동
-                                        self.strategy.record_buy(top_ai['code'], p['price'])
-                                        # 자동 매수 성공 → 프리셋 전략 자동 할당
-                                        preset_result = self.strategy.auto_assign_preset(top_ai['code'], top_ai['name'])
-                                        if preset_result:
-                                            self.add_trading_log(f"📋 전략 자동적용: [{preset_result['preset_name']}] TP:{preset_result['tp']:+.1f}% SL:{preset_result['sl']:.1f}%")
-                                        self.update_all_data(is_virtual, force=True)
-                                        break # 한 루프에 한 종목씩 안전하게 처리
                                     else:
-                                        if "잔고가 부족" in msg: self.strategy.auto_ai_trade = False
-                                        self.add_log(f"AI매수 실패: {msg}")
+                                        log_entry = {
+                                            "time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                                            "out_code": "-", "out_name": "유지(Hold)",
+                                            "in_code": top_ai['code'], "in_name": top_ai['name'],
+                                            "reason": replace_reason if replace_reason else "기존 포트폴리오 유지 결정"
+                                        }
+                                        self.strategy.replacement_logs.insert(0, log_entry)
+                                        self.strategy.replacement_logs = self.strategy.replacement_logs[:10]
+                                        continue
+
+                                # 4. 매매 실행
+                                p = self.api.get_inquire_price(top_ai['code'])
+                                if p and p.get('price'):
+                                    curr_p = p['price']
+                                    
+                                    # [Safety] 1회 한도가 주가보다 낮더라도 최소 1주는 살 수 있게 예상 금액 산출
+                                    estimated_cost = max(trade_amt, curr_p)
+                                    
+                                    # [Safety] AI 자율 매수 전 가용 현금 체크
+                                    available_cash = self.cached_asset.get('cash', 0)
+                                    # 현금이 주가(1주)보다 적고, 일반 매수 기준액(trade_amt * 0.5)보다도 적으면 스킵
+                                    if available_cash < curr_p and available_cash < trade_amt * 0.5:
+                                        self.add_log(f"⚠️ 현금 부족으로 AI 매수 대기: {int(available_cash):,}원")
+                                        continue
+
+                                    # [Phase 1] ATR 기반 지능형 포지션 사이징 적용
+                                    qty = self.strategy.risk_mgr.calculate_position_size(
+                                        top_ai['code'], 
+                                        self.cached_asset['total_asset'], 
+                                        curr_p,
+                                        default_amt=min(trade_amt, int(available_cash))
+                                    )
+                                    
+                                    # [수정] 1회 매수 한도(trade_amt)가 주가보다 작아 산출 수량이 0이어도,
+                                    # 가용 현금이 주가 이상이라면 최소 1주를 보장하여 구매
+                                    if qty == 0 and available_cash >= curr_p:
+                                        if curr_eval + curr_p <= max_inv:
+                                            qty = 1
+                                        else:
+                                            self.add_log(f"⚠️ {top_ai['name']} 1주 매수 시 최대 종목 한도({max_inv:,}원) 초과로 스킵")
+                                    
+                                    if qty > 0:
+                                        success, msg = self.api.order_market(top_ai['code'], qty, True)
+                                        if success:
+                                            m_id = self.strategy.ai_advisor.last_used_model_id if hasattr(self.strategy.ai_advisor, 'last_used_model_id') else ""
+                                            # [추가] 실제 매수가 성공했을 때만 매수 승인 사유를 기록
+                                            trading_log.log_buy_reason(top_ai['code'], top_ai['name'], ai_reason, model_id=m_id)
+                                            trading_log.log_trade("AI자율매수", top_ai['code'], top_ai['name'], p['price'], qty, replacement_memo, model_id=m_id)
+                                            self.add_trading_log(f"✨ AI자율매수: {top_ai['name']} {qty}주 선점")
+                                            self.strategy.record_buy(top_ai['code'], p['price'])
+                                            # 자동 매수 성공 → 프리셋 전략 자동 할당
+                                            preset_result = self.strategy.auto_assign_preset(top_ai['code'], top_ai['name'])
+                                            if preset_result:
+                                                self.add_trading_log(f"📋 전략 자동적용: [{preset_result['preset_name']}] TP:{preset_result['tp']:+.1f}% SL:{preset_result['sl']:.1f}%")
+                                            self.update_all_data(is_virtual, force=True)
+                                            break
+                                        else:
+                                            if "잔고가 부족" in msg: self.strategy.auto_ai_trade = False
+                                            self.add_log(f"AI매수 실패: {msg}")
                                         # 매수 실패 시 다음 순위 종목 시도 가능하도록 함 (필요시 continue)
 
                 # 5. [Phase 3] 주요 종목 차트 업데이트 (UI 블로킹 방지)

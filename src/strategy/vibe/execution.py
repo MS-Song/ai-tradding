@@ -197,7 +197,8 @@ class ExecutionMixin:
             if candles: indicators = self.indicator_eng.get_all_indicators(candles)
         except: pass
 
-        is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news, indicators=indicators, score=score)
+        phase = self.get_market_phase()
+        is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news, indicators=indicators, score=score, phase=phase)
         m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else ""
         
         if not is_confirmed:
@@ -209,7 +210,7 @@ class ExecutionMixin:
             return False, reason
         
         if m_id: self.last_buy_models[code] = m_id
-        return True, "승인됨"
+        return True, reason
 
     def get_replacement_target(self, candidate_code: str, candidate_name: str, score: float, holdings: List[dict]) -> Tuple[bool, Optional[str], str]:
         if not holdings: return False, None, "보유 종목 없음"
@@ -256,6 +257,16 @@ class ExecutionMixin:
             reason = opinion.get("reason", "AI 분석 결과")
             
             if action == "SELL":
+                # [추가] 구매 후 최소 관망 시간(1시간) 체크 - 수수료 낭비 방지
+                # 단, 글로벌 패닉(is_panic) 또는 방어모드(Defensive)인 경우 리스크 관리 차원에서 즉시 매도 허용
+                last_buy_t = self.last_buy_times.get(code, 0)
+                holding_sec = time.time() - last_buy_t
+                is_emergency = self.analyzer.is_panic or self.current_market_vibe.upper() == "DEFENSIVE"
+                
+                if last_buy_t > 0 and holding_sec < 3600 and not is_emergency:
+                    results.append(f"🛡️ 매도 보호: {name} (구매 후 {int(holding_sec/60)}분 경과 - 1시간 미만)")
+                    continue
+
                 # [매매 시도 기록] 실제 주문 전 AI의 결정을 먼저 로그에 남김
                 trading_log.log_config(f"🤖 AI 자율 매도 결정: [{code}]{name} | 사유: {reason}")
                 

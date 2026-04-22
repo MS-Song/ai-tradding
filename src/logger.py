@@ -53,7 +53,7 @@ logger = setup_logger()
 class TradingLogManager:
     def __init__(self, log_file="trading_logs.json"):
         self.log_file = log_file
-        self.data = {"trades": [], "configs": [], "rejections": []}
+        self.data = {"trades": [], "configs": [], "rejections": [], "buy_reasons": []}
         self.lock = threading.Lock()
         self._load()
 
@@ -64,8 +64,9 @@ class TradingLogManager:
                     with open(self.log_file, "r", encoding="utf-8") as f:
                         self.data = json.load(f)
                     if "rejections" not in self.data: self.data["rejections"] = []
+                    if "buy_reasons" not in self.data: self.data["buy_reasons"] = []
                 except:
-                    self.data = {"trades": [], "configs": [], "rejections": []}
+                    self.data = {"trades": [], "configs": [], "rejections": [], "buy_reasons": []}
 
     def _save(self):
         """원자적 쓰기: tmp파일 기록 후 os.replace()로 교체 → 부분 쓰기 방지.
@@ -138,6 +139,23 @@ class TradingLogManager:
         self._save()
         logger.info(f"[REJECT] {name}({code}) | 사유: {reason} | 모델: {model_id}")
 
+    def log_buy_reason(self, code, name, reason, model_id=""):
+        """AI 매수 승인 사유를 기록 (BUY_REASON)"""
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = {
+            "time": now,
+            "code": code,
+            "name": name,
+            "reason": reason,
+            "model_id": model_id
+        }
+        with self.lock:
+            self.data["buy_reasons"].insert(0, log_entry)
+            if len(self.data["buy_reasons"]) > 100:
+                self.data["buy_reasons"] = self.data["buy_reasons"][:100]
+        self._save()
+        logger.info(f"[BUY_REASON] {name}({code}) | 사유: {reason} | 모델: {model_id}")
+
     def cleanup(self, days_to_keep=2):
         """영업일 기준 n일 로그만 남기고 삭제"""
         from src.utils import get_business_days_ago
@@ -148,6 +166,7 @@ class TradingLogManager:
             self.data["trades"] = [t for t in self.data.get("trades", []) if t["time"] >= threshold_date]
             self.data["configs"] = [c for c in self.data.get("configs", []) if c["time"] >= threshold_date]
             self.data["rejections"] = [r for r in self.data.get("rejections", []) if r["time"] >= threshold_date]
+            self.data["buy_reasons"] = [b for b in self.data.get("buy_reasons", []) if b["time"] >= threshold_date]
             
             if len(self.data["trades"]) != original_trade_count:
                 # 내부에서 락이 걸린 상태이므로 _save 호출 시 주의 (이미 복사하므로 안전)
@@ -185,47 +204,70 @@ class TradingLogManager:
                         amounts["ALGO"] += amt
         return amounts
 
-    def get_top_profitable_stocks(self, limit=20):
-        """누적 수익금이 0원 초과인 상위 종목 집계 ([Phase 4])"""
+    def get_top_profitable_stocks(self, limit=10):
+        """누적 수익금이 0원 초과인 상위 종목 집계 (모델별 상세 포함)"""
         stock_stats = {}
         with self.lock:
             for t in self.data.get("trades", []):
                 code = t.get("code")
                 if not code: continue
                 if code not in stock_stats:
-                    stock_stats[code] = {"name": t.get("name", "Unknown"), "total_profit": 0.0, "count": 0, "model": ""}
+                    stock_stats[code] = {
+                        "name": t.get("name", "Unknown"), 
+                        "total_profit": 0.0, 
+                        "count": 0, 
+                        "models": {} # {model_name: {"profit": 0.0, "count": 0}}
+                    }
+                
+                t_type = t.get("type", "")
+                m_id = t.get("model_id", "")
+                m_name = self._normalize_model_name(m_id, t_type)
+                
+                if m_name not in stock_stats[code]["models"]:
+                    stock_stats[code]["models"][m_name] = {"profit": 0.0, "count": 0}
                 
                 stock_stats[code]["count"] += 1
-                t_type = t.get("type", "")
+                stock_stats[code]["models"][m_name]["count"] += 1
+                
                 if any(x in t_type for x in ["익절", "손절", "청산", "확정", "매도", "종료"]):
                     profit = t.get("profit", 0.0)
                     stock_stats[code]["total_profit"] += profit
-                    m_id = t.get("model_id", "")
-                    # 모델명이 없더라도 타입을 통해 추론 시도
-                    stock_stats[code]["model"] = self._normalize_model_name(m_id, t_type)
+                    stock_stats[code]["models"][m_name]["profit"] += profit
         
         # 수익금 순 정렬 및 0원 초과 필터링
         sorted_stats = sorted(stock_stats.items(), key=lambda x: x[1]["total_profit"], reverse=True)
         profitable = [s for s in sorted_stats if s[1]["total_profit"] > 0]
         return profitable[:limit]
 
-    def get_top_loss_stocks(self, limit=20):
-        """누적 손실금이 발생한 상위 종목 집계 (Hall of Shame)"""
+    def get_top_loss_stocks(self, limit=10):
+        """누적 손실금이 발생한 상위 종목 집계 (모델별 상세 포함)"""
         stock_stats = {}
         with self.lock:
             for t in self.data.get("trades", []):
                 code = t.get("code")
                 if not code: continue
                 if code not in stock_stats:
-                    stock_stats[code] = {"name": t.get("name", "Unknown"), "total_profit": 0.0, "count": 0, "model": ""}
+                    stock_stats[code] = {
+                        "name": t.get("name", "Unknown"), 
+                        "total_profit": 0.0, 
+                        "count": 0, 
+                        "models": {} # {model_name: {"profit": 0.0, "count": 0}}
+                    }
+                
+                t_type = t.get("type", "")
+                m_id = t.get("model_id", "")
+                m_name = self._normalize_model_name(m_id, t_type)
+                
+                if m_name not in stock_stats[code]["models"]:
+                    stock_stats[code]["models"][m_name] = {"profit": 0.0, "count": 0}
                 
                 stock_stats[code]["count"] += 1
-                t_type = t.get("type", "")
+                stock_stats[code]["models"][m_name]["count"] += 1
+                
                 if any(x in t_type for x in ["익절", "손절", "청산", "확정", "매도", "종료"]):
                     profit = t.get("profit", 0.0)
                     stock_stats[code]["total_profit"] += profit
-                    m_id = t.get("model_id", "")
-                    stock_stats[code]["model"] = self._normalize_model_name(m_id, t_type)
+                    stock_stats[code]["models"][m_name]["profit"] += profit
         
         # 손실금 순(수익금 오름차순) 정렬 및 음수 필터링
         sorted_stats = sorted(stock_stats.items(), key=lambda x: x[1]["total_profit"], reverse=False)
@@ -238,12 +280,12 @@ class TradingLogManager:
             # 과거 로그 호환: 타입을 보고 수동/TL/SP 추론
             t_low = t_type.lower()
             if any(x in t_low for x in ["수동", "manual"]): return "수동"
-            if any(x in t_low for x in ["자동", "p3", "p4", "청산", "확정", "익절", "손절"]): return "TL/SP"
-            return "익명"
+            if any(x in t_low for x in ["자동", "p3", "p4", "청산", "확정", "익절", "손절"]): return "TP/SL"
+            return "TP/SL"
             
         m_id_low = m_id.lower()
         if m_id_low in ["manual", "수동", "수동매도", "수동매수"]: return "수동"
-        if m_id_low in ["tl/sp", "auto", "logic"]: return "TL/SP"
+        if m_id_low in ["tl/sp", "auto", "logic", "tp/sl"]: return "TP/SL"
         
         if "gemini-3.1-pro" in m_id_low: return "G3.1P"
         if "gemini-3.1-flash-lite" in m_id_low: return "G3.1FL"
