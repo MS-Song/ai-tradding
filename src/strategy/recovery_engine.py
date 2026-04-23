@@ -6,14 +6,19 @@ class RecoveryEngine:
         self.config = config
         self.last_avg_down_prices: Dict[str, float] = {}
 
-    def get_recommendation(self, item: dict, is_panic: bool, current_sl: float) -> Optional[dict]:
+    def get_recommendation(self, item: dict, is_panic: bool, current_sl: float, vibe: str = "Neutral") -> Optional[dict]:
         if is_panic: return None
+        v = vibe.upper()
+        if v == "DEFENSIVE": return None # 방어모드에선 물타기 금지
+
         code = item.get("pdno")
         curr_price, curr_avg = float(item.get("prpr", 0)), float(item.get("pchs_avg_pric", 0))
         curr_rt = float(item.get("evlu_pfls_rt", 0.0))
         
         config_trig = self.config.get("min_loss_to_buy", -3.0)
+        # [수정] 하락장에선 물타기 간격을 넓혀 보수적으로 대응
         min_safety_gap = 1.0
+        if v == "BEAR": min_safety_gap = 2.5 
         
         final_trig = config_trig
         if config_trig <= current_sl:

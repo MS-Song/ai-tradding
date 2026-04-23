@@ -14,9 +14,32 @@ pip install pyinstaller xhtml2pdf markdown2 reportlab pillow
 
 # 3. Run PyInstaller
 echo "[*] Packaging KIS-Vibe-Trader for Linux..."
-pyinstaller --onefile --clean \
+pyinstaller --onefile --clean --strip \
     --name KIS-Vibe-Trader-Linux \
-    --add-data "src:src" \
+    --exclude-module tkinter \
+    --exclude-module tcl \
+    --exclude-module tk \
+    --exclude-module numpy \
+    --exclude-module pandas \
+    --exclude-module matplotlib \
+    --exclude-module xhtml2pdf \
+    --exclude-module reportlab \
+    --exclude-module PIL \
+    --exclude-module pillow \
+    --exclude-module PyQt5 \
+    --exclude-module PyQt6 \
+    --exclude-module PySide2 \
+    --exclude-module PySide6 \
+    --exclude-module scipy \
+    --exclude-module sqlalchemy \
+    --exclude-module notebook \
+    --exclude-module ipykernel \
+    --exclude-module docutils \
+    --hidden-import requests \
+    --hidden-import yaml \
+    --hidden-import python-dotenv \
+    --hidden-import bs4 \
+    --hidden-import lxml \
     main.py
 
 # 4. Generate PDF Manual

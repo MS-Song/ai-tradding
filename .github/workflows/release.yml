@@ -29,6 +29,12 @@ jobs:
       - name: Build Windows EXE
         run: scripts/build/windows/build.bat
         
+      - name: Check Artifact Size
+        run: |
+          ls -R target/
+          du -sh target/
+        shell: bash
+        
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -62,6 +68,11 @@ jobs:
         run: |
           chmod +x scripts/build/linux/build.sh
           ./scripts/build/linux/build.sh
+          
+      - name: Check Artifact Size
+        run: |
+          ls -R target/
+          du -sh target/
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

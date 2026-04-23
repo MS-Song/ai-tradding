@@ -189,7 +189,7 @@ class ExecutionMixin:
             tp, sl, spike = self.get_dynamic_thresholds(code, market_trend)
             
             # 1. 물타기 체크
-            rec_bear = self.recovery_eng.get_recommendation(item, self.global_panic, sl)
+            rec_bear = self.recovery_eng.get_recommendation(item, self.global_panic, sl, vibe=market_trend)
             if rec_bear:
                 rec_bear['reason'] = f"손절선({sl}%) 근접 하락 대응"
                 recs.append(rec_bear)

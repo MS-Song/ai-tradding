@@ -1,4 +1,5 @@
 import math
+from typing import Tuple
 from src.logger import logger, log_error
 
 class RiskManager:
@@ -42,6 +43,23 @@ class RiskManager:
              logger.info(f"✅ [RISK] 서킷 브레이커 해제: 현재 손실 {pnl_rate:.2f}%")
              
         return self.is_halted
+
+    def check_cash_safety(self, asset_info: dict, vibe: str) -> Tuple[bool, str]:
+        """장세에 따른 최소 현금 보유 비율을 체크합니다."""
+        total = float(asset_info.get("total_asset", 0))
+        cash = float(asset_info.get("cash", 0))
+        if total <= 0: return False, ""
+        
+        ratio = (cash / total) * 100
+        v = vibe.upper()
+        
+        # 하락장/방어모드에서 신규 매수를 위한 최소 현금 비중 체크
+        if v == "DEFENSIVE" and ratio < 80:
+            return True, f"방어모드 현금 확보 필요 ({ratio:.1f}% < 80%)"
+        if v == "BEAR" and ratio < 30:
+            return True, f"하락장 현금 비중 낮음 ({ratio:.1f}% < 30%)"
+            
+        return False, ""
 
     def calculate_position_size(self, code: str, total_asset: float, current_price: float, default_amt: int = 500000) -> int:
         """ ATR 기반의 지능형 포지션 사이징 (수량 산출)

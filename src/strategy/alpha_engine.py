@@ -12,6 +12,12 @@ class VibeAlphaEngine:
         """인기/급증 테마 및 수급 분석을 통해 실시간 추천 종목/ETF 리스트 생성 (비동기 처리)"""
         from src.theme_engine import get_theme_for_stock
 
+        # [추가] 장세에 따른 동적 최소 점수 (지키는 투자)
+        v = str(kr_vibe).upper()
+        dynamic_min_score = min_score
+        if v == "BEAR": dynamic_min_score = max(min_score, 70.0)      # 하락장: 더 엄격하게
+        elif v == "DEFENSIVE": dynamic_min_score = max(min_score, 85.0) # 방어모드: 초우량주만
+
         combined = hot_raw + vol_raw
         candidates = []
         seen = set()
@@ -64,7 +70,7 @@ class VibeAlphaEngine:
                 if progress_cb:
                     progress_cb(current, total, f"분석 중: {item['name']}")
 
-            if item_score >= min_score:
+            if item_score >= dynamic_min_score:
                 res = {**item, "score": item_score, "theme": my_theme['name'], "is_gem": False, "reason": f"{my_theme['name']} 테마 수급 및 지표 우수"}
                 if not is_etf:
                     with lock: stocks_pool.append(res)

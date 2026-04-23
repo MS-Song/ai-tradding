@@ -54,6 +54,7 @@ class DataManager:
     def set_busy(self, msg, worker="GLOBAL"):
         with self.data_lock:
             self._worker_statuses[worker] = msg
+            self.last_times[worker.lower()] = time.time() # [추가] 갱신 시각 기록
 
     def clear_busy(self, worker="GLOBAL"):
         with self.data_lock:
@@ -374,9 +375,16 @@ class DataManager:
                         time.sleep(5)
                         continue
                     
-                    if self.strategy.bear_config.get("auto_mode", False) and self.cached_recommendations:
+                    if (self.strategy.bear_config.get("auto_mode", False) or self.strategy.bull_config.get("auto_mode", False)) and self.cached_recommendations:
+                        # [추가] 현금 안전 비중 체크 (지키는 투자 - 물타기/불타기 공용)
+                        is_cash_low, cash_msg = self.strategy.risk_mgr.check_cash_safety(a, vibe)
+                        
                         # --- 물타기/불타기 자동 매매 실행 (bear/bull auto_mode 독립 제어) ---
                         for rec in self.cached_recommendations:
+                            if is_cash_low:
+                                self.add_log(f"🛡️ 추가매수 제한: {cash_msg}")
+                                break # 비중 부족 시 루프 탈출
+                            
                             rec_type = rec.get('type')
                             is_auto_enabled = False
                             if rec_type == "물타기" and self.strategy.bear_config.get("auto_mode", False):
@@ -436,6 +444,12 @@ class DataManager:
                         # Phase 4의 '종가 베팅' 전용 로직만 허용하기 위함
                         phase = self.strategy.get_market_phase()
                         if phase['id'] in ['P1', 'P2']:
+                            # [추가] 현금 안전 비중 체크 (지키는 투자)
+                            is_cash_low, cash_msg = self.strategy.risk_mgr.check_cash_safety(a, vibe)
+                            if is_cash_low:
+                                self.add_log(f"🛡️ 매수 제한: {cash_msg}")
+                                continue
+
                             for top_ai in self.strategy.ai_recommendations:
                                 # 1. 인버스 필터 (평시 장세에서 인버스 스킵)
                                 if top_ai.get('is_inverse', False) and "defensive" not in vibe.lower() and "bear" not in vibe.lower():
@@ -478,7 +492,7 @@ class DataManager:
 
                                 # [추가] 최대 종목 수(8종목) 제한 및 교체 로직
                                 replacement_memo = "AI 추천 기반 자율 매수"
-                                if len(self.cached_holdings) >= self.strategy.MAX_STOCK_COUNT:
+                                if len(self.cached_holdings) >= self.strategy.max_stock_count:
                                     self.set_busy("종목 교체 분석", "DATA")
                                     should_replace, target_code, replace_reason = self.strategy.get_replacement_target(
                                         top_ai['code'], top_ai['name'], top_ai.get('score', 0.0), self.cached_holdings

@@ -20,10 +20,28 @@ REM 3. Run PyInstaller
 echo [*] Packaging KIS-Vibe-Trader into a single EXE...
 %PYINSTALLER_EXE% --onefile --clean ^
     --name KIS-Vibe-Trader ^
-    --add-data "src;src" ^
+    --exclude-module tkinter ^
+    --exclude-module tcl ^
+    --exclude-module tk ^
+    --exclude-module numpy ^
+    --exclude-module pandas ^
+    --exclude-module matplotlib ^
+    --exclude-module xhtml2pdf ^
+    --exclude-module reportlab ^
+    --exclude-module PIL ^
+    --exclude-module pillow ^
+    --exclude-module PyQt5 ^
+    --exclude-module PyQt6 ^
+    --exclude-module PySide2 ^
+    --exclude-module PySide6 ^
+    --exclude-module scipy ^
+    --exclude-module sqlalchemy ^
+    --exclude-module notebook ^
+    --exclude-module ipykernel ^
+    --exclude-module docutils ^
     --hidden-import requests ^
     --hidden-import yaml ^
-    --hidden-import dotenv ^
+    --hidden-import python-dotenv ^
     --hidden-import bs4 ^
     --hidden-import lxml ^
     main.py

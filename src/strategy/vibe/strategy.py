@@ -20,7 +20,14 @@ from src.strategy.vibe.analysis import AnalysisMixin
 from src.strategy.vibe.execution import ExecutionMixin
 
 class VibeStrategy(AnalysisMixin, ExecutionMixin):
-    MAX_STOCK_COUNT = 8
+    def get_max_stock_count(self) -> int:
+        """현재 장세(Vibe)에 따른 최대 보유 종목 수 반환 (지키는 투자)"""
+        v = self.current_market_vibe.upper()
+        if v == "BULL": return 8
+        if v == "NEUTRAL": return 6
+        if v == "BEAR": return 3      # 하락장: 3종목으로 압축
+        if v == "DEFENSIVE": return 1  # 방어모드: 1종목 또는 현금화
+        return 6
     def __init__(self, api, config):
         self.api = api
         self.base_config = config.get("vibe_strategy", {})
@@ -213,6 +220,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
 
     @property
     def current_market_vibe(self): return self.analyzer.kr_vibe
+    @property
+    def max_stock_count(self): return self.get_max_stock_count()
     @property
     def global_panic(self): return self.analyzer.is_panic
     @property

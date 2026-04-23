@@ -704,7 +704,7 @@ def draw_trading_logs(strategy, dm, tw, th):
                         memo += ".."
                         
                     line = f"{t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(name_code_txt, 22)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {memo}"
-                    buf.write(line + "\n")
+                    buf.write(truncate_log_line(line, tw - 2) + "\n")
                     
             buf.write("\n" + "=" * tw + "\n\n")
             buf.write("\033[1;96m [시스템 설정 및 전략 변경 (CONFIG)]\033[0m\n")
@@ -719,7 +719,7 @@ def draw_trading_logs(strategy, dm, tw, th):
                     if get_visual_width(content) > avail_w:
                         while get_visual_width(content) > avail_w - 2: content = content[:-1]
                         content += ".."
-                    buf.write(f"  [{c.get('time', '-')}] {content}\n")
+                    buf.write(f"  [{c.get('time', '-')}] {truncate_log_line(content, tw - 25)}\n")
                     
         elif current_tab == 2:
             buf.write("\033[1;92m [시스템 실시간 모니터링 (MONITORING)]\033[0m\n")
@@ -820,16 +820,12 @@ def draw_trading_logs(strategy, dm, tw, th):
                         max_lines = available_h - 2
                         
                         for line in lines[:max_lines]:
-                            # 줄바꿈 제거 후 폭 맞춤
                             line_str = line.strip()
                             if not line_str: continue
                             
-                            avail_w = tw - 4
-                            if get_visual_width(line_str) > avail_w:
-                                while get_visual_width(line_str) > avail_w - 3:
-                                    line_str = line_str[:-1]
-                                line_str += "..."
-                                
+                            # ANSI 보존하며 너비 제한 (흔들림 방지)
+                            line_str = truncate_log_line(line_str, tw - 4)
+                            
                             # ERROR 문자열 하이라이트 (만약 있다면)
                             if "ERROR" in line_str:
                                 line_str = line_str.replace("ERROR", "\033[91mERROR\033[0m")
