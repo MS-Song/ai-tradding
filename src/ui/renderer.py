@@ -7,6 +7,43 @@ from datetime import datetime
 from src.utils import is_market_open, is_us_market_open, get_visual_width, align_kr, ANSI_ESCAPE, get_market_name, get_key_immediate
 from src.theme_engine import get_cached_themes
 
+def truncate_log_line(text: str, max_width: int, suffix: str = '…') -> str:
+    """ANSI 이스케이프 코드를 보존하면서 시각 너비(한글 2칸) 기준으로 텍스트를 잘라냅니다.
+    max_width를 초과하는 경우 suffix(기본 '…')를 붙입니다."""
+    import unicodedata
+    plain = ANSI_ESCAPE.sub('', text)
+    if get_visual_width(plain) <= max_width:
+        return text  # 잘라낼 필요 없음
+
+    suffix_w = get_visual_width(suffix)
+    target_w = max_width - suffix_w
+
+    # ANSI 토큰 단위로 순회하며 시각 너비를 누적
+    result = []
+    cur_w = 0
+    i = 0
+    while i < len(text):
+        m = ANSI_ESCAPE.match(text, i)
+        if m:
+            # ANSI 시퀀스는 너비 0 — 그대로 보존
+            result.append(m.group())
+            i = m.end()
+        else:
+            ch = text[i]
+            if ord(ch) < 128:
+                cw = 1
+            elif unicodedata.east_asian_width(ch) in ['W', 'F', 'A']:
+                cw = 2
+            else:
+                cw = 1
+            if cur_w + cw > target_w:
+                break
+            result.append(ch)
+            cur_w += cw
+            i += 1
+
+    return ''.join(result) + '\033[0m' + suffix
+
 def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     if dm.is_full_screen_active: return
     with dm.ui_lock:
@@ -26,7 +63,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     is_v = getattr(strategy.api.auth, 'is_virtual', True)
     debug_tag = " [디버그]" if getattr(strategy, "debug_mode", False) else ""
     mode_tag = f" [모의]{debug_tag}" if is_v else f" [실전]{debug_tag}"
-    version_text = f"[AI TRADING SYSTEM ver 1.2.4]{mode_tag}"
+    version_text = f"[AI TRADING SYSTEM ver 1.2.5]{mode_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg
@@ -366,7 +403,12 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     
     rem = th - buf.getvalue().count('\n')
     
-    if rem > 0: buf.write(f"\033[K {dm.last_log_msg if dm.last_log_msg and (time.time()-dm.last_log_time<60) else ''}\n"); rem -= 1
+    # 로그 최대 출력 너비 = 터미널 너비 - 앞 공백 1칸 - 여유 1칸
+    _log_max_w = max(20, tw - 2)
+    if rem > 0:
+        _raw_last = dm.last_log_msg if dm.last_log_msg and (time.time()-dm.last_log_time<60) else ''
+        _last_line = truncate_log_line(_raw_last, _log_max_w) if _raw_last else ''
+        buf.write(f"\033[K {_last_line}\n"); rem -= 1
     if rem > 0:
         logs = list(reversed(dm.trading_logs))
         if len(logs) > rem:
@@ -374,12 +416,12 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             display_count = rem - 1
             skip = len(logs) - display_count
             for i in range(display_count):
-                buf.write(f"\033[K {logs[i]}\n")
+                buf.write(f"\033[K {truncate_log_line(logs[i], _log_max_w)}\n")
             buf.write(f"\033[K \033[90m... 💬 {skip}건의 로그 생략됨 ...\033[0m\n")
             rem = 0
         else:
             for tl in logs:
-                buf.write(f"\033[K {tl}\n")
+                buf.write(f"\033[K {truncate_log_line(tl, _log_max_w)}\n")
                 rem -= 1
     while rem > 0: buf.write("\033[K\n"); rem -= 1
     lines = buf.getvalue().split('\n')
@@ -606,51 +648,213 @@ def draw_manual_page(tw, th):
 
 def draw_trading_logs(strategy, dm, tw, th):
     import io
-    from src.logger import trading_log
-    buf = io.StringIO(); buf.write("\033[H\033[2J")
-    buf.write("\033[44;37m" + align_kr(" [TRADING HISTORY & SYSTEM LOGS] ", tw, 'center') + "\033[0m\n\n")
-    
-    # [수정] 가용 높이 계산 (여유분 조정)
-    available_h = max(5, th - 10)
-    trade_h = int(available_h * 0.65)
-    config_h = int(available_h * 0.25)
-    
-    buf.write("\033[1;93m [최근 거래 내역 (TRADE)]\033[0m\n")
-    # [Task 4] 로그 데이터 접근 시 스레드 락 적용 및 복사본 사용 (안정성 확보)
+    import os
     import copy
-    with trading_log.lock:
-        trades = copy.deepcopy(trading_log.data.get("trades", []))
-    if not trades:
-        buf.write("  최근 거래 내역이 없습니다.\n")
-    else:
-        header = f"{align_kr('시간', 20)} | {align_kr('구분', 10)} | {align_kr('종목명(코드)', 22)} | {align_kr('체결가', 10)} | {align_kr('수량', 6)} | {align_kr('수익금', 12)} | 메모"
-        buf.write("\033[1m" + header + "\033[0m\n" + "-" * tw + "\n")
+    import threading
+    import time
+    from src.logger import trading_log
+    
+    current_tab = 1
+    total_tabs = 3
+    
+    while True:
+        buf = io.StringIO(); buf.write("\033[H\033[2J")
+        buf.write("\033[44;37m" + align_kr(" [SYSTEM LOGS & MONITORING DASHBOARD] ", tw, 'center') + "\033[0m\n")
         
-        # 최신 내역(0번 인덱스부터)을 순서대로 출력 (최신이 상단)
-        for t in trades[:trade_h]:
-            t_type = t.get('type', 'Unknown')
-            t_color = "\033[91m" if "매수" in t_type else "\033[94m" if "매도" in t_type or "익절" in t_type or "손절" in t_type else ""
-            p_val = t.get('profit', 0)
-            p_color = "\033[91m" if p_val > 0 else "\033[94m" if p_val < 0 else ""
-            p_str = f"{p_color}{int(p_val):+,}원\033[0m" if p_val != 0 else "-"
-            name_val = t.get('name', '-')
-            code_val = t.get('code', '')
-            name_code_txt = f"[{code_val}] {name_val}" if code_val else name_val
-            line = f"{t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(name_code_txt, 22)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {t.get('memo', '')}"
-            buf.write(line[:tw] + "\n")
+        # 탭 메뉴 바
+        t1 = "\033[7m" if current_tab == 1 else ""
+        t2 = "\033[7m" if current_tab == 2 else ""
+        t3 = "\033[7m" if current_tab == 3 else ""
+        
+        menu = f" {t1} 1.시스템로그(거래/설정) \033[0m | {t2} 2.모니터링(워커/상태) \033[0m | {t3} 3.에러로그(error.log) \033[0m "
+        buf.write(align_kr(menu, tw, 'center') + "\n")
+        buf.write("=" * tw + "\n\n")
+
+        available_h = max(5, th - 8)
+
+        if current_tab == 1:
+            # 고정 라인(약 15줄)을 제외한 나머지 영역을 trade와 config가 7:3 비율로 나눠가짐
+            log_area_h = max(4, th - 15)
+            trade_h = int(log_area_h * 0.7)
+            config_h = max(1, log_area_h - trade_h)
             
-    buf.write("\n" + "=" * tw + "\n\n")
-    buf.write("\033[1;96m [시스템 설정 및 전략 변경 (CONFIG)]\033[0m\n")
-    with trading_log.lock:
-        configs = copy.deepcopy(trading_log.data.get("configs", []))
-    if not configs:
-        buf.write("  변경 이력이 없습니다.\n")
-    else:
-        # 최신 설정 변경 로그 순서대로 출력
-        for c in configs[:config_h]:
-            buf.write(f"  [{c.get('time', '-')}] {c.get('content', '')[:tw-25]}\n")
+            buf.write("\033[1;93m [최근 거래 내역 (TRADE)]\033[0m\n")
+            with trading_log.lock:
+                trades = copy.deepcopy(trading_log.data.get("trades", []))
+            if not trades:
+                buf.write("  최근 거래 내역이 없습니다.\n")
+            else:
+                header = f"{align_kr('시간', 20)} | {align_kr('구분', 10)} | {align_kr('종목명(코드)', 22)} | {align_kr('체결가', 10)} | {align_kr('수량', 6)} | {align_kr('수익금', 12)} | 메모"
+                buf.write("\033[1m" + header + "\033[0m\n" + "-" * tw + "\n")
+                
+                for t in trades[:trade_h]:
+                    t_type = t.get('type', 'Unknown')
+                    t_color = "\033[91m" if "매수" in t_type else "\033[94m" if "매도" in t_type or "익절" in t_type or "손절" in t_type else ""
+                    p_val = t.get('profit', 0)
+                    p_color = "\033[91m" if p_val > 0 else "\033[94m" if p_val < 0 else ""
+                    p_str = f"{p_color}{int(p_val):+,}원\033[0m" if p_val != 0 else "-"
+                    name_val = t.get('name', '-')
+                    code_val = t.get('code', '')
+                    name_code_txt = f"[{code_val}] {name_val}" if code_val else name_val
+                    
+                    memo = t.get('memo', '')
+                    avail_w = max(10, tw - 90)
+                    if get_visual_width(memo) > avail_w:
+                        while get_visual_width(memo) > avail_w - 2: memo = memo[:-1]
+                        memo += ".."
+                        
+                    line = f"{t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(name_code_txt, 22)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {memo}"
+                    buf.write(line + "\n")
+                    
+            buf.write("\n" + "=" * tw + "\n\n")
+            buf.write("\033[1;96m [시스템 설정 및 전략 변경 (CONFIG)]\033[0m\n")
+            with trading_log.lock:
+                configs = copy.deepcopy(trading_log.data.get("configs", []))
+            if not configs:
+                buf.write("  변경 이력이 없습니다.\n")
+            else:
+                for c in configs[:config_h]:
+                    content = c.get('content', '')
+                    avail_w = max(10, tw - 25)
+                    if get_visual_width(content) > avail_w:
+                        while get_visual_width(content) > avail_w - 2: content = content[:-1]
+                        content += ".."
+                    buf.write(f"  [{c.get('time', '-')}] {content}\n")
+                    
+        elif current_tab == 2:
+            buf.write("\033[1;92m [시스템 실시간 모니터링 (MONITORING)]\033[0m\n")
+            buf.write("-" * tw + "\n")
             
-    buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
-    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
-    while not get_key_immediate(): time.sleep(0.1)
-    buf.close()
+            curr_time = time.time()
+            from datetime import datetime
+            
+            def get_time_info(ts):
+                if not ts: return "미갱신 (-)"
+                dt = datetime.fromtimestamp(ts)
+                diff = int(curr_time - ts)
+                if diff < 60:
+                    ago = f"{diff}초 전"
+                else:
+                    ago = f"{diff//60}분 {diff%60}초 전"
+                return f"{dt.strftime('%H:%M:%S')} ({ago})"
+                
+            with dm.data_lock:
+                last_times = dict(dm.last_times)
+                worker_status = dict(dm._worker_statuses)
+            
+            buf.write(" \033[1m[주요 워커 상태 및 갱신 주기]\033[0m\n")
+            
+            # 워커 이름 맵 (사용자 친화적 표시용)
+            worker_desc = {
+                "INDEX": "시황/지수 분석",
+                "DATA": "잔고/매매 동기화",
+                "RANKING": "인기 종목 탐색",
+                "GLOBAL": "수동 지시 처리"
+            }
+            
+            # 모든 알려진 워커와 현재 활성화된 워커 키 수집
+            all_workers = set(worker_desc.keys())
+            all_workers.update([k.upper() for k in last_times.keys()])
+            all_workers.update(worker_status.keys())
+            
+            header = f"  {align_kr('워커명(Task)', 18)} | {align_kr('최근 갱신 시간 (경과)', 25)} | 현재 작업 상태"
+            buf.write("\033[1m" + header + "\033[0m\n")
+            buf.write("  " + "-" * (tw - 4) + "\n")
+            
+            # 우선순위 정렬 (기본 4개 먼저, 나머지는 알파벳 순)
+            sort_order = {"INDEX": 1, "DATA": 2, "RANKING": 3, "GLOBAL": 4}
+            sorted_workers = sorted(list(all_workers), key=lambda x: (sort_order.get(x, 99), x))
+            
+            for w in sorted_workers:
+                ts = last_times.get(w.lower(), 0)
+                if not ts and w == 'GLOBAL': 
+                    ts_raw = "-"
+                else:
+                    ts_raw = get_time_info(ts)
+                
+                ts_aligned = align_kr(ts_raw, 25, 'center')
+                # 괄호 안의 시간 부분만 시안색으로 하이라이트
+                if "(" in ts_aligned and ")" in ts_aligned:
+                    ts_aligned = ts_aligned.replace("(", "(\033[96m").replace(")", "\033[0m)")
+                elif ts_raw == "미갱신 (-)":
+                    ts_aligned = f"\033[90m{ts_aligned}\033[0m"
+                
+                desc = worker_desc.get(w, "기타 백그라운드 작업")
+                name_col = f"[{w}]"
+                name_col_kr = align_kr(name_col, 18)
+                
+                status = worker_status.get(w, '대기 중 (IDLE)')
+                if status == '대기 중 (IDLE)':
+                    status = f"\033[90m{status}\033[0m"
+                else:
+                    status = f"\033[93m{status}\033[0m"
+                
+                buf.write(f"  \033[1;94m{name_col_kr}\033[0m | {ts_aligned} | {status}\n")
+            
+            buf.write("\n \033[1m[AI 전략 엔진 상태]\033[0m\n")
+            is_ready = "\033[92mReady\033[0m" if strategy.is_ready else "\033[91mNot Ready\033[0m"
+            buf.write(f"  - 연결 상태: {is_ready}\n")
+            cur_act = getattr(strategy, 'current_action', '')
+            act_msg = f"\033[93m{cur_act}\033[0m" if cur_act else "\033[90m대기 중\033[0m"
+            buf.write(f"  - 진행 작업: {act_msg}\n\n")
+            
+            buf.write(" \033[1m[시스템 건전성]\033[0m\n")
+            active_threads = threading.active_count()
+            buf.write(f"  - 활성 스레드: \033[92m{active_threads}개\033[0m (정상 동작 중)\n")
+
+        elif current_tab == 3:
+            buf.write("\033[1;91m [최근 에러 로그 (ERROR LOG)]\033[0m\n")
+            buf.write("-" * tw + "\n")
+            
+            error_file = "error.log"
+            try:
+                if os.path.exists(error_file):
+                    with open(error_file, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    
+                    if not lines:
+                        buf.write("  기록된 에러가 없습니다.\n")
+                    else:
+                        # 최신순 (역순) 정렬 후 최대 출력 라인 제한
+                        lines.reverse()
+                        max_lines = available_h - 2
+                        
+                        for line in lines[:max_lines]:
+                            # 줄바꿈 제거 후 폭 맞춤
+                            line_str = line.strip()
+                            if not line_str: continue
+                            
+                            avail_w = tw - 4
+                            if get_visual_width(line_str) > avail_w:
+                                while get_visual_width(line_str) > avail_w - 3:
+                                    line_str = line_str[:-1]
+                                line_str += "..."
+                                
+                            # ERROR 문자열 하이라이트 (만약 있다면)
+                            if "ERROR" in line_str:
+                                line_str = line_str.replace("ERROR", "\033[91mERROR\033[0m")
+                                
+                            buf.write(f"  {line_str}\n")
+                else:
+                    buf.write("  error.log 파일이 존재하지 않습니다.\n")
+            except Exception as e:
+                buf.write(f"  에러 로그를 읽는 중 문제가 발생했습니다: {e}\n")
+
+        buf.write("\n" + "-" * tw + "\n")
+        buf.write(align_kr(" [1, 2, 3]: 탭 전환 | Q, ESC, SPACE: 메인으로 복귀 ", tw, 'center') + "\n")
+        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+        
+        # 실시간 자동 갱신을 위해 1초(0.01 * 100) 대기하며 입력 체크
+        inner_cycle = 0
+        while inner_cycle < 100:
+            k = get_key_immediate()
+            if k:
+                kl = k.lower()
+                if kl == '1': current_tab = 1; break
+                elif kl == '2': current_tab = 2; break
+                elif kl == '3': current_tab = 3; break
+                elif kl in ['q', 'esc', ' ', '\r']:
+                    buf.close()
+                    return
+            time.sleep(0.01)
+            inner_cycle += 1

@@ -134,7 +134,12 @@ class ExecutionMixin:
 
                             detail = self.api.get_naver_stock_detail(code)
                             news = self.api.get_naver_stock_news(code)
-                            should_sell, reason = self.ai_advisor.closing_sell_confirm(code, item.get('prdt_name'), self.current_market_vibe, rt, detail, news)
+                            p_strat = self.preset_strategies.get(code)
+                            if p_strat:
+                                tp, sl = p_strat.get('tp', 0.0), p_strat.get('sl', 0.0)
+                            else:
+                                tp, sl, _ = self.get_dynamic_thresholds(code, self.current_market_vibe)
+                            should_sell, reason = self.ai_advisor.closing_sell_confirm(code, item.get('prdt_name'), self.current_market_vibe, rt, detail, news, tp=tp, sl=sl)
                             self._p3_global_processed[p4_ai_key] = True
                             if should_sell:
                                 if self.api.order_market(code, sell_qty, False)[0]:
@@ -248,9 +253,16 @@ class ExecutionMixin:
             code = h['pdno']
             detail = self.api.get_naver_stock_detail(code)
             news = self.api.get_naver_stock_news(code)
+            p_strat = self.preset_strategies.get(code)
+            if p_strat:
+                tp, sl = p_strat.get('tp', 0.0), p_strat.get('sl', 0.0)
+            else:
+                tp, sl, _ = self.get_dynamic_thresholds(code, self.current_market_vibe)
+
             holdings_data.append({
                 "code": code, "name": h['prdt_name'],
                 "rt": float(h.get('evlu_pfls_rt', 0)),
+                "tp": tp, "sl": sl,
                 "per": detail.get('per'), "pbr": detail.get('pbr'),
                 "news": ", ".join(news[:2])
             })

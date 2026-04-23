@@ -203,7 +203,7 @@ class BaseLLMAdvisor(BaseAdvisor):
             with lock:
                 current += 1
                 if progress_cb: progress_cb(current, total)
-            return f"- {h['prdt_name']}({h['pdno']}): 수익률 {float(h.get('evlu_pfls_rt', 0)):+.2f}% | 현재가 {int(float(h.get('prpr', 0))):,}원 | 뉴스 {', '.join(news[:2])}"
+            return f"- {h['prdt_name']}({h['pdno']}): 수익률 {float(h.get('evlu_pfls_rt', 0)):+.2f}% (목표 {h.get('tp', 0.0):+.1f}%, 손절 {h.get('sl', 0.0):.1f}%) | 현재가 {int(float(h.get('prpr', 0))):,}원 | 뉴스 {', '.join(news[:2])}"
         with ThreadPoolExecutor(max_workers=5) as executor:
             enriched_holdings = list(executor.map(fetch_enriched_holding, holdings))
         prompt = f"""
@@ -211,6 +211,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         장세: {vibe} | 지수: {json.dumps(market_data)}
         {"\n".join(enriched_holdings)}
         1.진단 2.대응(Hold/Sell/Add) 3.리스크 4.한줄평. 한국어.
+        ※ 각 종목의 현재 수익률이 설정된 '목표'나 '손절'에 얼마나 근접했는지 반드시 참고하여 대응을 결정하세요.
         """
         return self._call_api(prompt)
 
@@ -329,8 +330,9 @@ class BaseLLMAdvisor(BaseAdvisor):
                 if v in answer.upper(): return v.capitalize()
         return None
 
-    def closing_sell_confirm(self, code, name, vibe, rt, detail, news):
-        prompt = f"Close in 10m. {name}({code}) Profit: {rt:+.2f}%. Sell or Hold? Reason: one line."
+    def closing_sell_confirm(self, code, name, vibe, rt, detail, news, tp=None, sl=None):
+        target_info = f" (목표 {tp:+.1f}%, 손절 {sl:.1f}%)" if tp is not None else ""
+        prompt = f"Close in 10m. {name}({code}) Profit: {rt:+.2f}%{target_info}. Sell or Hold? Reason: one line."
         answer = self._call_api(prompt, timeout=30)
         if answer:
             decision_match = re.search(r"결정[^\w]*\b(Sell|Hold|매도|보유)\b", answer, re.I)
@@ -358,8 +360,9 @@ class BaseLLMAdvisor(BaseAdvisor):
         [판단 기준]
         1. 신규 후보 종목의 상승 잠재력이 기존 보유 종목 중 가장 부진한 종목보다 "명백히, 압도적으로" 높은 경우에만 교체하십시오.
         2. 단순한 미세한 우위나 단순 호기심만으로는 교체하지 마십시오.
-        3. 기존 종목이 손실권이더라도 반등 여지가 남아있다면 유지하고, 모멘텀이 완전히 꺾인 경우에만 과감히 교체를 고려하십시오.
-        4. 기존 종목 중 확실한 교체 대상이 없다면 'No'를 선택하여 현재 포트폴리오를 확고히 유지하십시오.
+        3. 기존 종목이 단순히 현재 마이너스(-) 수익률이라는 이유만으로 '가장 부진하다'고 단정지어 매도(손절)하지 마십시오. 
+        4. 수수료 및 슬리피지를 감안할 때, 신규 종목의 당일 폭발력이 기존 종목의 반등 가능성을 압도해야만 과감히 교체를 고려하십시오.
+        5. 기존 종목 중 확실한 교체 대상이 없다면 'No'를 선택하여 현재 포트폴리오를 확고히 유지하십시오.
         
         [응답형식]
         결정: Yes/No
@@ -383,7 +386,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         
         preset_list = "\n".join([f"  {sid}: {s['name']}" for sid, s in PRESET_STRATEGIES.items() if sid != "00"])
         holdings_txt = "\n".join([
-            f"- {h['name']}({h['code']}): 수익률 {h['rt']:+.2f}% | PER:{h.get('per')} | 뉴스:{h.get('news', 'None')}"
+            f"- {h['name']}({h['code']}): 수익률 {h['rt']:+.2f}% (목표 {h.get('tp', 0.0):+.1f}%, 손절 {h.get('sl', 0.0):.1f}%) | PER:{h.get('per')} | 뉴스:{h.get('news', 'None')}"
             for h in holdings_data
         ])
 
@@ -398,6 +401,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         2. 종목의 개별 모멘텀이 살아있거나, 일시적 하락 후 반등 구간(Support)에 있다면 끈기 있게 'HOLD'를 유지하며 전략을 갱신하세요.
         3. 'SELL'은 오직 추세가 완전히 꺾였거나, 심각한 펀더멘털 훼손이 확인될 때만 과감하게 집행합니다.
         4. 유지할 경우, 아래 프리셋 중 가장 적합한 전략과 최적의 TP/SL(시장 상황 반영), 그리고 유효 시간을 제안하세요.
+        5. 각 종목에 현재 적용중인 '목표' 및 '손절' 수치를 참고하여, 목표에 도달하기 직전이거나 손절선을 위협받는 경우 이를 반영하여 선제적 매도 또는 홀딩 여부를 결정하십시오.
         [프리셋 전략 리스트]
 {preset_list}
 

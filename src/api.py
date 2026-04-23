@@ -168,9 +168,9 @@ class KISAPI:
             d0_cash = self._safe_float(raw_summary.get("dnca_tot_amt"))            # D+0 예수금
             d2_cash = self._safe_float(raw_summary.get("prvs_rcdl_excc_amt"))      # D+2 예상예수금
             
-            # 가용 현금(cash)은 실제 주문 가능 금액인 D+0와 정산 후 금액인 D+2 중 더 낮은 값을 택하여 
-            # 마이너스 계좌가 되는 것을 원천 방지함.
-            cash = min(d0_cash, d2_cash) if d0_cash > 0 and d2_cash > 0 else (d2_cash if d2_cash != 0 else d0_cash)
+            # 가용 현금(cash)은 주식 매도 대금을 즉시 매수 대금으로 활용할 수 있도록 D+2 정산예수금을 기준으로 합니다.
+            # D+2 예수금이 마이너스인 경우(미수 발생) 추가 매수를 방지하기 위해 0으로 처리합니다.
+            cash = d2_cash if d2_cash > 0 else 0
             
             pnl = self._safe_float(raw_summary.get("evlu_pfls_smtl_amt"))
             total_asset = self._safe_float(raw_summary.get("tot_evlu_amt"))

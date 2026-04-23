@@ -77,11 +77,21 @@ class TradingLogManager:
             
         def _do(shared_data):
             import uuid
+            import time
             tmp = f"{self.log_file}.{uuid.uuid4().hex[:8]}.tmp"
             try:
                 with open(tmp, "w", encoding="utf-8") as f:
                     json.dump(shared_data, f, indent=4, ensure_ascii=False)
-                os.replace(tmp, self.log_file)
+                
+                # Retry os.replace a few times for Windows lock issues
+                for i in range(5):
+                    try:
+                        os.replace(tmp, self.log_file)
+                        break
+                    except OSError as oe:
+                        if i == 4:
+                            raise
+                        time.sleep(0.1)
             except Exception as e:
                 try: os.remove(tmp)
                 except: pass

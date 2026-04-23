@@ -21,6 +21,10 @@ class RiskManager:
 
     def check_circuit_breaker(self, asset_info: dict) -> bool:
         """일일 수익률을 체크하여 서킷 브레이커 작동 여부를 판단합니다."""
+        # API 조회 실패 등으로 데이터가 없을 경우 이전 상태 유지
+        if "daily_pnl_rate" not in asset_info:
+            return self.is_halted
+
         # DataManager에서 계산된 daily_pnl_rate 사용 (전일 대비 자산 변동)
         pnl_rate = float(asset_info.get("daily_pnl_rate", 0))
         

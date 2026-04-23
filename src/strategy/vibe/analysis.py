@@ -82,6 +82,14 @@ class AnalysisMixin:
                 if candles: candidate_indicators[r['code']] = self.indicator_eng.get_all_indicators(candles)
             except: pass
 
+        for h in holdings:
+            code = h['pdno']
+            p_strat = self.preset_strategies.get(code)
+            if p_strat:
+                h['tp'], h['sl'] = p_strat.get('tp', 0.0), p_strat.get('sl', 0.0)
+            else:
+                h['tp'], h['sl'], _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
+
         with ThreadPoolExecutor(max_workers=3) as executor:
             future_briefing = executor.submit(self.ai_advisor.get_advice, self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg, self.ai_recommendations, indicators=candidate_indicators)
             future_detailed = executor.submit(self.ai_advisor.get_detailed_report_advice, self.ai_recommendations, self.analyzer.kr_vibe, progress_cb=progress_cb)
@@ -101,6 +109,14 @@ class AnalysisMixin:
             self.ai_holdings_opinion = "보유 중인 종목이 없습니다."
             self.ai_holdings_update_time = time.time()
             return
+
+        for h in holdings:
+            code = h['pdno']
+            p_strat = self.preset_strategies.get(code)
+            if p_strat:
+                h['tp'], h['sl'] = p_strat.get('tp', 0.0), p_strat.get('sl', 0.0)
+            else:
+                h['tp'], h['sl'], _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
 
         res = self.ai_advisor.get_holdings_report_advice(holdings, self.analyzer.kr_vibe, self.analyzer.current_data, progress_cb=progress_cb)
         if res:
@@ -145,24 +161,10 @@ class AnalysisMixin:
                 new_amt = self.recovery_eng.config.get("average_down_amount", 500000)
                 log_error(f"AI 금액 파싱 실패, 기존값 {new_amt:,}원 유지")
 
-            # 역산 시점의 Vibe 및 Phase 보정치 합산 추출
-            phase_cfg = self.get_market_phase()
-            tp_mod, sl_mod = self.exit_mgr.get_vibe_modifiers(self.analyzer.kr_vibe)
-            
-            # Phase 보정치 합산 (ExitManager.get_thresholds 로직과 동일하게)
-            if phase_cfg:
-                tp_mod += phase_cfg.get('tp_delta', 0)
-                if not (self.analyzer.kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg['id'] == "P1"):
-                    sl_mod += phase_cfg.get('sl_delta', 0)
-
-            # AI 제안 최종 목표값에서 보정치를 차감하여 베이스 수치 역산
-            calculated_base_tp = target_tp - tp_mod
-            calculated_base_sl = target_sl - sl_mod
-            
-            # 베이스 수치 하한값 완화: 최종 TP/SL은 이미 target_tp/sl(2.5%/-2.5%)에서 검증됨
-            # 베이스 자체는 보정치에 따라 0에 가까워질 수 있으므로 하한을 0.1/-0.1로 낮춤
-            self.exit_mgr.base_tp = max(0.1, calculated_base_tp)
-            self.exit_mgr.base_sl = min(-0.1, calculated_base_sl)
+            # AI가 제안한 수치를 시스템의 '기본 안전값(Base)'으로 직접 설정합니다.
+            # (이전처럼 Vibe를 역산해서 Base를 0.1% 등 비정상적으로 낮추는 로직 폐기)
+            self.exit_mgr.base_tp = target_tp
+            self.exit_mgr.base_sl = target_sl
             
             # 물타기/불타기는 역산 없이 절대치로 설정 (엔진 내부에서 TP와 충돌 방지 로직 작동)
             self.recovery_eng.config.update({

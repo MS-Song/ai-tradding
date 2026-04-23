@@ -272,7 +272,7 @@ def draw_ai_logs_report(strategy, dm, tw, th):
             else:
                 buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('모델', 8)} | 거절 사유" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
-                max_items = max(5, th - 10)
+                max_items = max(3, th - 13)
                 for item in today_rejections[:max_items]:
                     t_str = item['time'].split(' ')[-1]
                     m_id = item.get('model_id', '')
@@ -294,20 +294,20 @@ def draw_ai_logs_report(strategy, dm, tw, th):
             if not today_replacements:
                 buf.write("  오늘 기록된 종목 교체 내역이 없습니다.\n")
             else:
-                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('OUT(매도)', 15)} | {align_kr('IN(매수)', 15)} | 교체 사유" + "\033[0m\n")
+                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('OUT(매도)', 22)} | {align_kr('IN(매수)', 22)} | 교체 사유" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
-                max_items = max(5, th - 10)
+                max_items = max(3, th - 13)
                 for item in today_replacements[:max_items]:
                     t_str = item['time'].split(' ')[-1]
-                    out_info = f"[{item.get('out_code','?')}] {item.get('out_name','?')[:8]}"
-                    in_info = f"[{item.get('in_code','?')}] {item.get('in_name','?')[:8]}"
+                    out_info = f"[{item.get('out_code','?')}] {item.get('out_name','?')[:12]}"
+                    in_info = f"[{item.get('in_code','?')}] {item.get('in_name','?')[:12]}"
                     reason = item['reason'].replace('\n', ' ')
-                    # 가용 너비 계산 (10 + 15 + 15 + 9 = 49)
-                    avail_w = max(20, tw - 52)
+                    # 가용 너비 계산 (10 + 22 + 22 + 9 = 63)
+                    avail_w = max(20, tw - 66)
                     if get_visual_width(reason) > avail_w:
                         while get_visual_width(reason) > avail_w - 2: reason = reason[:-1]
                         reason += ".."
-                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(out_info, 15)} | {align_kr(in_info, 15)} | {reason}\n")
+                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(out_info, 22)} | {align_kr(in_info, 22)} | {reason}\n")
 
         elif current_tab == 3:
             buf.write("\033[1;93m" + " [AI 당일 매수 승인 및 진입 근거]" + "\033[0m\n")
@@ -321,7 +321,7 @@ def draw_ai_logs_report(strategy, dm, tw, th):
             else:
                 buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('모델', 8)} | 매수 승인 사유" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
-                max_items = max(5, th - 10)
+                max_items = max(3, th - 13)
                 for item in today_reasons[:max_items]:
                     t_str = item['time'].split(' ')[-1]
                     m_id = item.get('model_id', '')
@@ -356,7 +356,7 @@ def draw_ai_logs_report(strategy, dm, tw, th):
                 
                 p_list.sort(key=lambda x: x['buy_time'] if x['buy_time'] else '0000', reverse=True)
                 
-                max_items = max(5, th - 10)
+                max_items = max(3, th - 13)
                 for item in p_list[:max_items]:
                     code = item["code"]
                     p = item["p"]
@@ -416,7 +416,7 @@ def draw_performance_report(strategy, dm, tw, th):
             else:
                 buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 12)} | {align_kr('TOTAL (회수)', 18)} | {align_kr('모델별 (회수)', 25)}" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
-                max_items = max(10, th - 12)
+                max_items = max(3, th - 14)
                 item_count = 0
                 for i, (code, s) in enumerate(top_stocks, 1):
                     if item_count >= max_items: break
@@ -454,7 +454,7 @@ def draw_performance_report(strategy, dm, tw, th):
             else:
                 buf.write("\033[1m" + f" {align_kr('순위', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 12)} | {align_kr('TOTAL (회수)', 18)} | {align_kr('모델별 (회수)', 25)}" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
-                max_items = max(10, th - 12)
+                max_items = max(3, th - 14)
                 item_count = 0
                 for i, (code, s) in enumerate(loss_stocks, 1):
                     if item_count >= max_items: break

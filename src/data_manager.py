@@ -520,11 +520,18 @@ class DataManager:
                                                 }
                                                 self.strategy.replacement_logs.insert(0, log_entry)
                                                 self.strategy.replacement_logs = self.strategy.replacement_logs[:10]
-                                                self.strategy.save_manual_thresholds()
+                                                self.strategy._save_all_states()
                                                 
                                                 self.add_trading_log(f"✅ {target_name} {sell_qty}주 매도 완료 (교체 준비)")
-                                                time.sleep(1)
-                                                self.update_all_data(is_virtual, force=True)
+                                                
+                                                # [Fix] 매도 후 잔고(가용현금)가 업데이트 될 때까지 최대 5초 대기
+                                                prev_cash = self.cached_asset.get('cash', 0)
+                                                for _ in range(5):
+                                                    time.sleep(1)
+                                                    self.update_all_data(is_virtual, force=True)
+                                                    if self.cached_asset.get('cash', 0) > prev_cash + 1000:
+                                                        break
+                                                        
                                                 replacement_memo = f"종목 교체 매수 ({target_name} 대체)"
                                             else:
                                                 self.add_log(f"❌ 교체 매도 실패: {s_msg}")
@@ -565,6 +572,8 @@ class DataManager:
                                     # 현금이 주가(1주)보다 적고, 일반 매수 기준액(trade_amt * 0.5)보다도 적으면 스킵
                                     if available_cash < curr_p and available_cash < trade_amt * 0.5:
                                         self.add_log(f"⚠️ 현금 부족으로 AI 매수 대기: {int(available_cash):,}원")
+                                        if "교체" in replacement_memo:
+                                            self.add_trading_log(f"⚠️ 교체매수 지연({top_ai['name']}): 가용현금({int(available_cash):,}원) 부족")
                                         continue
 
                                     # [Phase 1] ATR 기반 지능형 포지션 사이징 적용
@@ -582,6 +591,8 @@ class DataManager:
                                             qty = 1
                                         else:
                                             self.add_log(f"⚠️ {top_ai['name']} 1주 매수 시 최대 종목 한도({max_inv:,}원) 초과로 스킵")
+                                            if "교체" in replacement_memo:
+                                                self.add_trading_log(f"⚠️ 교체매수 취소({top_ai['name']}): 종목 한도 초과")
                                     
                                     if qty > 0:
                                         success, msg = self.api.order_market(top_ai['code'], qty, True)
@@ -601,7 +612,12 @@ class DataManager:
                                         else:
                                             if "잔고가 부족" in msg: self.strategy.auto_ai_trade = False
                                             self.add_log(f"AI매수 실패: {msg}")
-                                        # 매수 실패 시 다음 순위 종목 시도 가능하도록 함 (필요시 continue)
+                                            if "교체" in replacement_memo:
+                                                self.add_trading_log(f"❌ 교체매수 실패({top_ai['name']}): {msg}")
+                                    elif qty == 0 and not (available_cash >= curr_p and curr_eval + curr_p > max_inv):
+                                        self.add_log(f"⚠️ {top_ai['name']} 수량 0 산출로 스킵")
+                                        if "교체" in replacement_memo:
+                                            self.add_trading_log(f"⚠️ 교체매수 취소({top_ai['name']}): 수량 산출 부족 (주가 대비 잔고 부족)")
 
                 # 5. [Phase 3] 주요 종목 차트 업데이트 (UI 블로킹 방지)
                 self._update_featured_chart()

@@ -107,8 +107,9 @@ class VibeAlphaEngine:
 
     def _calculate_ai_score(self, stock: dict, theme: dict, is_gem: bool, kr_vibe: str = "Neutral", market_data: dict = None, detail: dict = None, is_hot: bool = False) -> float:
         """종목별 입체 점수 산정 (테마 + 등락률 + 실시간 수급 모멘텀 + 펀더멘털 + 장세 기반 보정)"""
-        score = 40.0 # 기본 베이스 점수
-        rate = abs(float(stock.get('rate', 0)))
+        score = 50.0 # 기본 베이스 점수 (핫 가점 축소에 따른 전체 점수 하락 보정)
+        raw_rate = float(stock.get('rate', 0))
+        rate = abs(raw_rate)
         
         # 1. 장세 기반 동적 가중치 설정
         v = str(kr_vibe).upper()
@@ -128,14 +129,19 @@ class VibeAlphaEngine:
             div_weight = 8.0
         
         # 2. 등락률/테마 점수 (모멘텀)
-        # 0%에 가까울수록 선취매 매력도 상승
-        score += (5.0 - min(5.0, rate)) * mo_weight
+        if v == "BULL" and raw_rate > 0:
+            # 상승장에서는 오르는 종목(최대 +8%)에 모멘텀 가점 부여 (추격 매수 일부 허용)
+            score += min(8.0, raw_rate) * mo_weight
+        else:
+            # 하락/보합장에서는 0%에 가까울수록 선취매 매력도 상승
+            score += (5.0 - min(5.0, rate)) * mo_weight
+        
         # 테마 내 밀집도 반영
         score += min(15, theme['count'] * (mo_weight / 2.0))
         
-        # 검색 상위 (핫 리스트) 종목 특별 가점 (저평가 가치주 위주 편향 방지 및 모멘텀 편입)
+        # 검색 상위 (핫 리스트) 종목 특별 가점 대폭 축소 (저평가 가치주 위주 편향 방지 및 모멘텀 편입, 기존 15.0 -> 5.0)
         if is_hot:
-            score += 15.0 * mo_weight
+            score += 5.0 * mo_weight
         
         # 3. 펀더멘털 지표 보정 및 상대 가치 평가 (업종 PER 비교)
         if not detail:
