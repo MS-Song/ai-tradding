@@ -560,8 +560,18 @@ def perform_interaction(key, api, strategy, dm, cycle):
     # 화면 전환 커맨드 (리포트/로그 등 즉시 전환)
     if mode in ['m', 'l', 'b', 'd', 'h', 'a', 'p']:
         def run_display_task():
+            # 사용자 친화적 상태 메시지 맵핑
+            status_map = {
+                'm': "사용자 매뉴얼 조회 중",
+                'l': "시스템 로그 조회 중",
+                'b': "보유 종목 진단 중",
+                'd': "추천 종목 상세 조회 중",
+                'h': "인기 테마 리포트 조회 중",
+                'a': "AI 결정 로그 조회 중",
+                'p': "성과 대시보드 조회 중"
+            }
             dm.is_full_screen_active = True
-            dm.set_busy(f"{mode} 처리")
+            dm.set_busy(status_map.get(mode, f"{mode} 처리"))
             try:
                 restore_terminal_settings()
                 size = os.get_terminal_size(); tw_r, th_r = size.columns, size.lines

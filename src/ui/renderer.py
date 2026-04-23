@@ -672,7 +672,9 @@ def draw_trading_logs(strategy, dm, tw, th):
 
         available_h = max(5, th - 8)
 
+        # [추가] 현재 탭에 따라 GLOBAL 워커 상태를 더 상세하게 표시
         if current_tab == 1:
+            dm.set_busy("시스템 로그 조회 중", "GLOBAL")
             # 고정 라인(약 15줄)을 제외한 나머지 영역을 trade와 config가 7:3 비율로 나눠가짐
             log_area_h = max(4, th - 15)
             trade_h = int(log_area_h * 0.7)
@@ -722,6 +724,7 @@ def draw_trading_logs(strategy, dm, tw, th):
                     buf.write(f"  [{c.get('time', '-')}] {truncate_log_line(content, tw - 25)}\n")
                     
         elif current_tab == 2:
+            dm.set_busy("실시간 모니터링 중", "GLOBAL")
             buf.write("\033[1;92m [시스템 실시간 모니터링 (MONITORING)]\033[0m\n")
             buf.write("-" * tw + "\n")
             
@@ -784,12 +787,17 @@ def draw_trading_logs(strategy, dm, tw, th):
                 name_col_kr = align_kr(name_col, 18)
                 
                 status = worker_status.get(w, '대기 중 (IDLE)')
-                if status == '대기 중 (IDLE)':
-                    status = f"\033[90m{status}\033[0m"
-                else:
-                    status = f"\033[93m{status}\033[0m"
+                # GLOBAL 워커가 단순히 UI를 "조회 중"인 경우는 사용자에게 노이즈이므로 대기 중으로 표시
+                display_status = status
+                if w == 'GLOBAL' and "조회 중" in status:
+                    display_status = '대기 중 (IDLE)'
                 
-                buf.write(f"  \033[1;94m{name_col_kr}\033[0m | {ts_aligned} | {status}\n")
+                if display_status == '대기 중 (IDLE)':
+                    status_fmt = f"\033[90m{display_status}\033[0m"
+                else:
+                    status_fmt = f"\033[93m{display_status}\033[0m"
+                
+                buf.write(f"  \033[1;94m{name_col_kr}\033[0m | {ts_aligned} | {status_fmt}\n")
             
             buf.write("\n \033[1m[AI 전략 엔진 상태]\033[0m\n")
             is_ready = "\033[92mReady\033[0m" if strategy.is_ready else "\033[91mNot Ready\033[0m"
@@ -803,6 +811,7 @@ def draw_trading_logs(strategy, dm, tw, th):
             buf.write(f"  - 활성 스레드: \033[92m{active_threads}개\033[0m (정상 동작 중)\n")
 
         elif current_tab == 3:
+            dm.set_busy("에러 로그 분석 중", "GLOBAL")
             buf.write("\033[1;91m [최근 에러 로그 (ERROR LOG)]\033[0m\n")
             buf.write("-" * tw + "\n")
             

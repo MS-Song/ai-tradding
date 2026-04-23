@@ -1,6 +1,0 @@
-    def apply_ai_strategy_to_all(self, data_manager):
-        """보유한 모든 종목에 AI 최적 전략 자동 할당"""
-        portfolio = data_manager.get_portfolio()
-        for code in portfolio:
-            strategy = self.ai_engine.suggest_strategy(code)
-            data_manager.update_preset_strategy(code, strategy)

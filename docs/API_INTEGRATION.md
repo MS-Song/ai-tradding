@@ -61,3 +61,15 @@
 ### 구현 방식
 *   **엔드포인트**: `generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent`.
 *   **인증**: `.env` 파일의 `GOOGLE_API_KEY`를 사용합니다.
+
+## 5. Groq API
+안정적인 분석 및 Fail-over를 위한 초고속 LLM 인터페이스입니다.
+
+### 제공 기능
+*   **Gemini Fail-over**: Gemini API 장애 시 백업 모델로 즉각 전환하여 분석 리포트를 생성합니다.
+*   **실시간 종목 분석**: Groq의 빠른 추론 속도를 활용하여 수동 분석 요청(`7`번 키) 시 즉각적인 피드백을 제공합니다.
+
+### 구현 방식
+*   **활용 모델**: `llama-3.1-70b-versatile`, `llama-3.1-8b-instant`.
+*   **엔드포인트**: `api.groq.com/openai/v1/chat/completions`.
+*   **인증**: `.env` 파일의 `GROQ_API_KEY`를 사용합니다.
