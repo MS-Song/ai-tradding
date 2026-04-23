@@ -4,6 +4,7 @@
 __pycache__/
 *.pyc
 .vscode/
+.idea/
 target/
 .token_cache.json
 .trading_state.json
@@ -11,6 +12,7 @@ trading_state.json
 trading.log
 trading_logs.json
 error.log
+ai_usage.json
 activate_venv.sh
 run.sh
 .worktrees/
