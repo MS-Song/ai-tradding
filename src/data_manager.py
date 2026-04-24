@@ -34,6 +34,9 @@ class DataManager:
         self.is_kr_market_active = False
         self.last_size = (0, 0)
         
+        # --- 업데이트 정보 ---
+        self.update_info = {"has_update": False, "latest_version": "", "download_url": "", "is_downloading": False, "progress": 0}
+        
         # --- 입력 상태 관리 (Task 4) ---
         self.is_input_active = False
         self.input_prompt = ""
@@ -774,9 +777,37 @@ class DataManager:
             # 30분 대기
             time.sleep(1800)
 
+    def updater_worker(self):
+        """업데이트 체크 워커 (1시간 주기)"""
+        current_ver = ""
+        try:
+            with open("VERSION", "r") as f:
+                current_ver = f.read().strip()
+        except: return
+
+        while self.is_running:
+            try:
+                from src.updater import check_for_updates
+                res = check_for_updates(current_ver)
+                if res.get("has_update"):
+                    with self.data_lock:
+                        self.update_info.update({
+                            "has_update": True,
+                            "latest_version": res["latest_version"],
+                            "download_url": res["download_url"]
+                        })
+                    self.add_log(f"🚀 새로운 버전 v{res['latest_version']}이(가) 출시되었습니다! (U 키를 눌러 업데이트)")
+            except Exception as e:
+                try: log_error(f"Updater Worker Error: {e}")
+                except: pass
+            
+            # 1시간 대기 (장중에는 1시간마다 체크)
+            time.sleep(3600)
+
     def start_workers(self, is_virtual):
         threading.Thread(target=self.index_update_worker, daemon=True).start()
         threading.Thread(target=self.data_update_worker, args=(is_virtual,), daemon=True).start()
         threading.Thread(target=self.theme_update_worker, daemon=True).start()
         threading.Thread(target=self.log_cleanup_worker, daemon=True).start()
         threading.Thread(target=self.retrospective_worker, daemon=True).start()
+        threading.Thread(target=self.updater_worker, daemon=True).start()

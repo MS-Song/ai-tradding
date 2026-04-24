@@ -63,7 +63,8 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     is_v = getattr(strategy.api.auth, 'is_virtual', True)
     debug_tag = " [디버그]" if getattr(strategy, "debug_mode", False) else ""
     mode_tag = f" [모의]{debug_tag}" if is_v else f" [실전]{debug_tag}"
-    version_text = f"[AI TRADING SYSTEM ver 1.2.8]{mode_tag}"
+    update_tag = f" \033[1;93m[NEW v{dm.update_info['latest_version']}]\033[0;44m" if dm.update_info.get("has_update") else ""
+    version_text = f"[AI TRADING SYSTEM ver 1.2.9]{mode_tag}{update_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg
@@ -173,7 +174,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         ai_msg_formatted = f" \033[92m{ai_msg}\033[0m" if "일치" in ai_msg else (f" \033[93m{ai_msg}\033[0m" if ai_msg else "")
         status_line = f" VIBE: {v_c}{dm.cached_vibe}\033[0m{panic_txt} {vibe_desc}{phase_txt}{ai_msg_formatted}"
         buf.write(align_kr(status_line, tw) + "\n")
-        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 P:성과 B:보유 D:추천 H:인기 A:AI로그 L:로그 | M:매뉴얼 | S:셋업 | Q:종료", tw) + "\033[0m\n")
+        # 업데이트 알림이 있는 경우 커맨드 바에 U:업데이트 추가
+        cmd_update = " | U:업데이트" if dm.update_info.get("has_update") else ""
+        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 P:성과 B:보유 D:추천 H:인기 A:AI로그 L:로그 | M:매뉴얼 | S:셋업 | Q:종료{cmd_update}", tw) + "\033[0m\n")
         
         # [Task 4] 입력 모드 또는 AI 브리핑 영역 (커맨드 바로 아래 고정 위치)
         if dm.is_input_active:
@@ -492,6 +495,7 @@ def draw_manual_page(tw, th):
             w("-" * tw)
             w(" \033[93m시스템\033[0m    | \033[1mM\033[0m  | 사용자 매뉴얼 (현재 화면)    | 탭 전환으로 모든 기능 설명 확인")
             w("           | \033[1mS\033[0m  | 환경 설정 (셋업)            | API키, 자동매매, 디버그모드 등 전체 설정")
+            w("           | \033[1mU\033[0m  | 자동 업데이트               | GitHub 최신 릴리스 감지 및 자동 재기동")
             w("           | \033[1mQ\033[0m  | 프로그램 종료               | 즉시 안전 종료")
         
         elif current_tab == 2:

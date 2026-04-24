@@ -672,7 +672,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
         mode = (key[-1] if 'alt+' in key else key).lower()
         if mode in key_map: mode = key_map[mode]
         
-        if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p']: return
+        if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p', 'u']: return
         
         try:
             size = os.get_terminal_size()
@@ -786,6 +786,46 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             else: dm.show_status(f"❌ 매도 실패: {msg}", True)
                         finally: dm.clear_busy()
                     threading.Thread(target=task_sell, daemon=True).start()
+
+        elif mode == 'u':
+            if not dm.update_info.get("has_update"):
+                dm.show_status("✨ 현재 최신 버전을 사용 중입니다.")
+                return
+            
+            res = get_input(dm, f"> v{dm.update_info['latest_version']} 업데이트를 진행할까요? (y/n): ", tw)
+            if res and res.lower() == 'y':
+                def task_update():
+                    dm.set_busy("업데이트 다운로드 중", "GLOBAL")
+                    try:
+                        from src.updater import download_update, apply_update_and_restart
+                        import platform
+                        
+                        is_windows = platform.system() == "Windows"
+                        new_bin = "KIS-Vibe-Trader_new.exe" if is_windows else "KIS-Vibe-Trader-Linux_new"
+                        
+                        def prog_cb(d, t):
+                            dm.set_busy(f"다운로드 중 ({d/t*100:.1f}%)", "GLOBAL")
+                        
+                        url = dm.update_info["download_url"]
+                        if not url:
+                            dm.show_status("❌ 다운로드 URL을 찾을 수 없습니다.", True)
+                            return
+
+                        success = download_update(url, new_bin, progress_cb=prog_cb)
+                        if success:
+                            dm.show_status("✅ 다운로드 완료! 2초 후 재기동합니다...")
+                            time.sleep(2)
+                            apply_update_and_restart(new_bin)
+                        else:
+                            dm.show_status("❌ 업데이트 다운로드 실패", True)
+                    except Exception as e:
+                        from src.logger import log_error
+                        log_error(f"Update Process Error: {e}")
+                        dm.show_status(f"❌ 업데이트 오류: {e}", True)
+                    finally:
+                        dm.clear_busy("GLOBAL")
+                
+                threading.Thread(target=task_update, daemon=True).start()
 
         elif mode == '2':
             res = get_input(dm, "> 매수 [코드 수량 가격] 입력: ", tw)
