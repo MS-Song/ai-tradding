@@ -278,9 +278,13 @@ class RetrospectiveEngine:
             return None
 
         try:
-            return self.ai_advisor.analyze_trade_retrospective(
+            res = self.ai_advisor.analyze_trade_retrospective(
                 date_str, vibe, profits, losses, is_update=is_update
             )
+            if res:
+                # TUI 가독성을 위해 마크다운 볼드체(**) 제거
+                res = res.replace("**", "")
+            return res
         except Exception as e:
             log_error(f"AI 복기 분석 요청 실패: {e}")
             return None

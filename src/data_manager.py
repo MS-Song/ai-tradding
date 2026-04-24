@@ -62,6 +62,16 @@ class DataManager:
         
         # 개별 갱신 시각 관리
         self.last_times = {"index": 0, "asset": 0, "ranking": 0}
+        self.ma_20_cache = {} # 종목별 최근 20분봉 이동평균선 캐시
+        
+        # --- 텔레그램 알림 추적 ---
+        with trading_log.lock:
+            trades = trading_log.data.get("trades", [])
+            # 시작 시점의 최신 거래 시각을 기록하여 과거 알림 재전송 방지
+            self.last_notified_trade_time = trades[0]['time'] if trades else ""
+        
+        # [추가] 시스템 시작 알림
+        self.notifier.notify_alert("시스템 시작", "🚀 KIS-Vibe-Trader 트레이딩 엔진이 가동되었습니다.")
 
     def set_busy(self, msg, worker="GLOBAL"):
         with self.data_lock:
@@ -156,6 +166,29 @@ class DataManager:
             a['daily_pnl_amt'] = 0.0
 
 
+    def notify_latest_trades(self):
+        """아직 알림을 보내지 않은 최신 거래 내역을 탐색하여 텔레그램으로 전송합니다."""
+        with trading_log.lock:
+            trades = trading_log.data.get("trades", [])
+            if not trades: return
+            
+            new_trades = []
+            for t in trades:
+                # 이미 보낸 시점보다 이후인 것만 수집
+                if self.last_notified_trade_time and t['time'] <= self.last_notified_trade_time:
+                    break
+                new_trades.append(t)
+            
+            if new_trades:
+                # 오래된 거래부터 순차 전송
+                for t in reversed(new_trades):
+                    self.notifier.notify_trade(
+                        t['type'], t['code'], t['name'], t['price'], t['qty'], 
+                        t.get('memo', ''), t.get('profit', 0), t.get('model_id', '')
+                    )
+                # 마지막 알림 시각 갱신
+                self.last_notified_trade_time = trades[0]['time']
+
     def add_log(self, msg):
         self.last_log_msg = f"\033[96m[LOG] {msg}\033[0m"
         self.last_log_time = time.time()
@@ -166,15 +199,12 @@ class DataManager:
         if len(self.trading_logs) > 10:
             self.trading_logs.pop(0)
         log_trade(msg)
-        
-        # [추가] 텔레그램 실시간 알림 (최신 1건 추출하여 전송)
-        with trading_log.lock:
-            if trading_log.data["trades"]:
-                t = trading_log.data["trades"][0]
-                self.notifier.notify_trade(
-                    t['type'], t['code'], t['name'], t['price'], t['qty'], 
-                    t.get('memo', ''), t.get('profit', 0), t.get('model_id', '')
-                )
+
+    def shutdown(self, reason="사용자 종료"):
+        """시스템 종료를 수행하고 알림을 보냅니다."""
+        self.notifier.notify_alert("시스템 종료", f"🛑 트레이딩 엔진이 종료되었습니다. (사유: {reason})")
+        self.is_running = False
+        time.sleep(1) # 알림 전송 대기
 
     def update_all_data(self, is_virtual, force=False):
         self.set_busy("전체 데이터 동기화")
@@ -229,9 +259,22 @@ class DataManager:
                         day_val = p_data.get('vrss', 0) if p_data else 0
                         day_rate = p_data.get('ctrt', 0) if p_data else 0
                         
+                    # [추가] 분봉 20MA 수집
+                    ma_20 = 0.0
+                    try:
+                        m_candles = self.api.get_minute_chart_price(code)
+                        if m_candles:
+                            closes = [float(c.get('stck_clpr', 0)) for c in m_candles]
+                            ma_vals = self.strategy.indicator_eng.calculate_sma(closes, [20])
+                            ma_20 = ma_vals.get("sma_20", 0.0)
+                            with self.data_lock:
+                                self.ma_20_cache[code] = ma_20
+                    except: pass
+
                     temp_stock_info[code] = {
                         "tp": tp, "sl": sl, "spike": spike,
-                        "day_val": day_val, "day_rate": day_rate
+                        "day_val": day_val, "day_rate": day_rate,
+                        "ma_20": ma_20
                     }
                 
                 with self.data_lock:
@@ -419,6 +462,9 @@ class DataManager:
                     auto_res = self.strategy.run_cycle(market_trend=vibe.lower(), skip_trade=False)
                     if auto_res:
                         for r in auto_res: self.add_trading_log(f"🤖 자동: {r}")
+                    
+                    # [추가] 신규 거래 알림 체크
+                    self.notify_latest_trades()
                     
                     # 서킷 브레이커 작동 중이면 추가 매수 로직 스킵
                     if self.strategy.risk_mgr.is_halted:
@@ -848,11 +894,15 @@ class DataManager:
                 res = check_for_updates(current_ver)
                 if res.get("has_update"):
                     with self.data_lock:
+                        is_already_notified = self.update_info.get("has_update")
                         self.update_info.update({
                             "has_update": True,
                             "latest_version": res["latest_version"],
                             "download_url": res["download_url"]
                         })
+                    
+                    if not is_already_notified:
+                        self.notifier.notify_alert("신규 업데이트 발견", f"🆕 신규 버전 `v{res['latest_version']}`이 릴리스되었습니다.\n단축키 `U`를 눌러 업데이트를 진행하세요.")
                     self.add_log(f"🚀 새로운 버전 v{res['latest_version']}이(가) 출시되었습니다! (U 키를 눌러 업데이트)")
                 
                 with self.data_lock:

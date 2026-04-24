@@ -65,7 +65,8 @@ def draw_recommendation_report(strategy, dm, tw, th):
             return draw_recommendation_report(strategy, dm, tw, th) # 재귀 호출로 캐시된 데이터 표시
     
     if strategy.rec_report_cache:
-        for line in strategy.rec_report_cache.split('\n'):
+        cleaned_report = clean_ai_text(strategy.rec_report_cache)
+        for line in cleaned_report.split('\n'):
             if line.strip(): buf.write(f"  > {line.strip()}\n")
     else: buf.write("  ⚠️ 분석된 데이터가 없습니다. 먼저 '8:시황' 분석을 수행하세요.\n")
     
@@ -126,7 +127,8 @@ def draw_holdings_detail(strategy, dm, tw, th):
             buf.write(f"\n  \033[93m🔄 포트폴리오를 입체 분석 중입니다... ({dm.global_busy_msg or '대기중'})\033[0m\n")
         elif strategy.ai_holdings_opinion:
             max_lines = max(3, th - buf.getvalue().count('\n') - 5)
-            lines = [l.strip() for l in strategy.ai_holdings_opinion.split('\n') if l.strip()]
+            cleaned_opinion = clean_ai_text(strategy.ai_holdings_opinion)
+            lines = [l.strip() for l in cleaned_opinion.split('\n') if l.strip()]
             for line in lines[:max_lines]: buf.write(f"  {line}\n")
         else:
             buf.write("\n  ⚠️ 아직 진단 데이터가 없습니다. 'R' 키를 눌러 AI 분석을 시작하세요.\n")
@@ -197,7 +199,8 @@ def draw_hot_stocks_detail(strategy, dm, tw, th):
     
     sys.stdout.write("\033[1;95m" + " [AI 트렌드 분석가의 인기 테마 진단 (초압축)]" + "\033[0m\n")
     if strategy.hot_report_cache:
-        for line in strategy.hot_report_cache.split('\n'):
+        cleaned_hot = clean_ai_text(strategy.hot_report_cache)
+        for line in cleaned_hot.split('\n'):
             if line.strip(): sys.stdout.write(f"  {line.strip()}\n")
     else: sys.stdout.write("  ⚠️ 리포트를 생성할 수 없습니다.\n")
     sys.stdout.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n"); sys.stdout.flush()
@@ -233,7 +236,8 @@ def draw_stock_analysis(strategy, dm, code, tw, th):
     report = strategy.ai_advisor.get_stock_report_advice(code, name, detail, news)
     if report:
         sys.stdout.write("\033[1;92m [Gemini AI 심층 분석 의견]\033[0m\n")
-        for line in report.split('\n'):
+        cleaned_report = clean_ai_text(report)
+        for line in cleaned_report.split('\n'):
             if line.strip(): sys.stdout.write(f"  {line.strip()}\n")
     else: sys.stdout.write("  ⚠️ 리포트를 생성할 수 없습니다. API 키 또는 네트워크 상태를 확인하세요.\n")
     sys.stdout.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n"); sys.stdout.flush()
@@ -524,15 +528,37 @@ def draw_performance_report(strategy, dm, tw, th):
             buf.write("-" * tw + "\n")
 
             # ③ [좌우 배치] 매수/매도 테이블
-            col_w = [18, 10, 10, 11, 8, 8]; half_w = tw // 2
+            other_w = 53 # 가격(8)|현재(8)|평균(8)|손익(10)|방법(8)|평가(6) = 48 + 5 separators
+            half_w = tw // 2
+            name_w = max(12, half_w - other_w - 2)
+            
+            def smart_align(text, width):
+                if get_visual_width(text) <= width:
+                    return align_kr(text, width)
+                t = str(text)
+                while get_visual_width(t + "..") > width and len(t) > 0:
+                    t = t[:-1]
+                return align_kr(t + "..", width)
+
             def format_trade_row(info, is_buy):
-                code = info['code']; name = info['name'][:8]
+                code = info['code']; name = info['name']
                 price = info['avg_price']; cur = get_current_price(code)
+                ma_20 = dm.ma_20_cache.get(code, 0)
                 pnl = info['total_pnl'] if not is_buy else (cur - price) * info['total_qty']
+                
                 p_color = "\033[91m" if pnl > 0 else "\033[94m" if pnl < 0 else ""
                 v_color = "\033[91m" if (cur >= price if is_buy else cur <= price) else "\033[94m"
-                verdict = ("✅잘샀다" if cur >= price else "❌못샀다") if is_buy else ("✅잘팔았다" if cur <= price else "❌일찍팔")
-                row = f"{align_kr(f'[{code}]{name}', 18)}|{align_kr(f'{int(price):,}', 10, 'right')}|{align_kr(f'{int(cur):,}', 10, 'right')}|{p_color}{align_kr(f'{int(pnl):,}', 11, 'right')}\033[0m|{align_kr(info['type'][:4], 8)}|{v_color}{align_kr(verdict, 8)}\033[0m"
+                verdict = ("✅성공" if cur >= price else "❌실패") if is_buy else ("✅성공" if cur <= price else "❌일찍")
+                
+                ma_str = f"{int(ma_20):,}" if ma_20 > 0 else "-"
+                
+                row = (f"{smart_align(f'[{code}]{name}', name_w)}|"
+                       f"{align_kr(f'{int(price):,}', 8, 'right')}|"
+                       f"{align_kr(f'{int(cur):,}', 8, 'right')}|"
+                       f"{align_kr(ma_str, 8, 'right')}|"
+                       f"{p_color}{align_kr(f'{int(pnl):,}', 10, 'right')}\033[0m|"
+                       f"{align_kr(info['type'][:4], 8)}|"
+                       f"{v_color}{align_kr(verdict, 6)}\033[0m")
                 return row
 
             # 데이터 요약
@@ -565,8 +591,8 @@ def draw_performance_report(strategy, dm, tw, th):
             h_buy = f"\033[1;42;1;37m{align_kr(f' [📈 매수 성과: {buy_wins}/{len(buy_list)} ({buy_rate:.0f}%)] ', half_w-1, 'center')}\033[0m"
             h_sell = f"\033[1;41;1;37m{align_kr(f' [📉 매도 성과: {sell_wins}/{len(sell_list)} ({sell_rate:.0f}%)] ', tw-half_w-1, 'center')}\033[0m"
             buf.write(f"{h_buy} {h_sell}\n")
-            t_head = f"{align_kr('종목(코드)명', 18)}|{align_kr('매수금액', 10)}|{align_kr('현재가', 10)}|{align_kr('평가손익', 11)}|{align_kr('방법', 8)}|{align_kr('평가', 8)}"
-            t_head_s = f"{align_kr('종목(코드)명', 18)}|{align_kr('매도금액', 10)}|{align_kr('현재가', 10)}|{align_kr('실현손익', 11)}|{align_kr('방법', 8)}|{align_kr('평가', 8)}"
+            t_head = f"{smart_align('종목(코드)명', name_w)}|{align_kr('매수가', 8)}|{align_kr('현재가', 8)}|{align_kr('평균선', 8)}|{align_kr('평가손익', 10)}|{align_kr('방법', 8)}|{align_kr('평가', 6)}"
+            t_head_s = f"{smart_align('종목(코드)명', name_w)}|{align_kr('매도가', 8)}|{align_kr('현재가', 8)}|{align_kr('평균선', 8)}|{align_kr('실현손익', 10)}|{align_kr('방법', 8)}|{align_kr('평가', 6)}"
             buf.write(f"\033[1m{align_kr(t_head, half_w-1)} \033[1m{align_kr(t_head_s, tw-half_w-1)}\033[0m\n")
             buf.write("-" * (half_w-1) + " " + "-" * (tw-half_w-1) + "\n")
             for i in range(max(1, max_rows)):
@@ -614,7 +640,8 @@ def draw_performance_report(strategy, dm, tw, th):
                             buf.write(f"  \033[91m🔴 {s.get('name', '?')}\033[0m \033[94m{int(s.get('total_profit', 0)):+,}\033[0m원" + (f" (종가:{int(s['closing_price']):,}원)" if s.get("closing_price") else "") + "\n"); l_cnt += 1
                         ai_text = report.get("ai_analysis", "")
                         if ai_text:
-                            for line in ai_text.split('\n'):
+                            cleaned_ai = clean_ai_text(ai_text)
+                            for line in cleaned_ai.split('\n'):
                                 if l_cnt >= max_l: break
                                 s_line = line.strip()
                                 if s_line:
@@ -814,6 +841,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                         success = download_update(url, new_bin, progress_cb=prog_cb)
                         if success:
                             dm.show_status("✅ 다운로드 완료! 2초 후 재기동합니다...")
+                            dm.notifier.notify_alert("업데이트 적용", f"🛠️ v{dm.update_info['latest_version']} 업데이트를 적용하고 재기동합니다.")
                             time.sleep(2)
                             apply_update_and_restart(new_bin)
                         else:

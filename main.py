@@ -57,7 +57,7 @@ def main():
                 k = get_key_immediate()
                 # [수정] q / Q / ㅂ / ㅃ 모든 종료 키 즉시 반응
                 if k and k.lower() in ['q', 'ㅂ', 'ㅃ']:
-                    dm.is_running = False
+                    dm.shutdown("사용자 종료") # [추가] 텔레그램 종료 알림 발송
                     try: tw = os.get_terminal_size().columns
                     except: tw = 110
                     # TUI 정지 및 화면 청소 후 종료 알림

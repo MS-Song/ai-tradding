@@ -271,3 +271,14 @@ def get_market_name(stock_code):
     if len(stock_code) >= 1 and any(c.isalpha() for c in stock_code):
         return "USA"
     return "STK"
+
+def clean_ai_text(text: str) -> str:
+    """TUI 가독성을 위해 AI 응답에서 마크다운 요소(볼드체 등)를 제거합니다."""
+    if not text:
+        return ""
+    # 마크다운 볼드체 (**, __) 제거
+    text = text.replace("**", "").replace("__", "")
+    # 불필요한 마크다운 코드 블록 제거 (혹시나 포함된 경우)
+    text = re.sub(r'```[a-zA-Z]*\n?', '', text)
+    text = text.replace('```', '')
+    return text.strip()
