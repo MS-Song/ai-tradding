@@ -38,6 +38,11 @@ class ExecutionMixin:
                         self._save_all_states()
                         break  # 기보유 종목으로 베팅 확정하고 종료
                     else:
+                        # [CRITICAL] 당일 등락률 하드 필터 (-1.5% ~ +8.0% 범위만 진입 허용)
+                        _p4_rate = float(top_rec.get('rate', 0))
+                        if _p4_rate > 8.0 or _p4_rate < -1.5:
+                            logger.warning(f"P4 종가 베팅 등락률 초과: {name} ({_p4_rate:+.1f}%) -> 다음 순위 탐색")
+                            continue
                         price = float(top_rec.get('price', 0))
                         qty = math.floor(self.ai_config["amount_per_trade"] / price) if price > 0 else 0
                         # 가용 현금이 주가 이상이라면 최소 1주 매수 보장

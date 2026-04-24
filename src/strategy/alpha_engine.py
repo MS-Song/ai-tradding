@@ -134,8 +134,15 @@ class VibeAlphaEngine:
             val_weight = 2.5
             div_weight = 8.0
         
-        # 2. 등락률/테마 점수 (모멘텀)
-        if v == "BULL" and raw_rate > 0:
+        # 2. 등락률 기반 진입 필터 및 모멘텀 점수
+        # [CRITICAL] 당일 등락률 -1.5% ~ +8.0% 범위 밖의 종목은 대폭 감점 (GEMINI.md 진입 조건)
+        if raw_rate > 8.0:
+            # +8% 초과 상승 종목: 이미 과열 상태이므로 추격 매수 차단
+            score -= 50.0  # 사실상 추천 제외
+        elif raw_rate < -1.5:
+            # -1.5% 미만 급락 종목: 낙폭이 커서 리스크 과다
+            score -= 30.0
+        elif v == "BULL" and raw_rate > 0:
             # 상승장에서는 오르는 종목(최대 +8%)에 모멘텀 가점 부여 (추격 매수 일부 허용)
             score += min(8.0, raw_rate) * mo_weight
         else:

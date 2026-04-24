@@ -424,8 +424,6 @@ def draw_performance_report(strategy, dm, tw, th):
                     color = "\033[91m"
                     total_val = f"{int(s['total_profit']):+,} ({s['count']}회)"
                     buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:12], 12)} | {color}{align_kr(total_val, 18, 'right')}\033[0m | ")
-                    
-                    # 모델별 상세
                     m_items = list(s['models'].items())
                     if m_items:
                         first_m, first_s = m_items[0]
@@ -433,17 +431,14 @@ def draw_performance_report(strategy, dm, tw, th):
                         m_color = "\033[91m" if first_s['profit'] > 0 else "\033[94m" if first_s['profit'] < 0 else "\033[90m"
                         buf.write(f"{m_color}{align_kr(m_val, 25, 'left')}\033[0m\n")
                         item_count += 1
-                        
                         for m_name, m_stat in m_items[1:]:
                             if item_count >= max_items: break
                             m_val = f"{m_name} {int(m_stat['profit']):+,} ({m_stat['count']}회)"
                             m_color = "\033[91m" if m_stat['profit'] > 0 else "\033[94m" if m_stat['profit'] < 0 else "\033[90m"
                             buf.write(f" {' '*4} | {' '*8} | {' '*12} | {' '*18} | {m_color}{align_kr(m_val, 25, 'left')}\033[0m\n")
                             item_count += 1
-                    else:
-                        buf.write("\n")
-                    buf.write("-" * tw + "\n")
-                    item_count += 1
+                    else: buf.write("\n")
+                    buf.write("-" * tw + "\n"); item_count += 1
 
         elif current_tab == 2:
             # 2. 손실금 TOP 10
@@ -462,8 +457,6 @@ def draw_performance_report(strategy, dm, tw, th):
                     color = "\033[94m"
                     total_val = f"{int(s['total_profit']):+,} ({s['count']}회)"
                     buf.write(f" {align_kr(str(i), 4)} | {align_kr(code, 8)} | {align_kr(s['name'][:12], 12)} | {color}{align_kr(total_val, 18, 'right')}\033[0m | ")
-                    
-                    # 모델별 상세
                     m_items = list(s['models'].items())
                     if m_items:
                         first_m, first_s = m_items[0]
@@ -471,303 +464,165 @@ def draw_performance_report(strategy, dm, tw, th):
                         m_color = "\033[91m" if first_s['profit'] > 0 else "\033[94m" if first_s['profit'] < 0 else "\033[90m"
                         buf.write(f"{m_color}{align_kr(m_val, 25, 'left')}\033[0m\n")
                         item_count += 1
-                        
                         for m_name, m_stat in m_items[1:]:
                             if item_count >= max_items: break
                             m_val = f"{m_name} {int(m_stat['profit']):+,} ({m_stat['count']}회)"
                             m_color = "\033[91m" if m_stat['profit'] > 0 else "\033[94m" if m_stat['profit'] < 0 else "\033[90m"
                             buf.write(f" {' '*4} | {' '*8} | {' '*12} | {' '*18} | {m_color}{align_kr(m_val, 25, 'left')}\033[0m\n")
                             item_count += 1
-                    else:
-                        buf.write("\n")
-                    buf.write("-" * tw + "\n")
-                    item_count += 1
+                    else: buf.write("\n")
+                    buf.write("-" * tw + "\n"); item_count += 1
 
         elif current_tab == 3:
-            # 3. 금일 투자 성과
+            # 3. 금일 투자 성과 (개편된 좌우 테이블 레이아웃)
             from datetime import datetime as dt_cls
             today = dt_cls.now().strftime('%Y-%m-%d')
             
-            buf.write("\033[1;96m" + " [금일 투자 성과 브리핑]" + "\033[0m\n")
-            buf.write("-" * tw + "\n")
-            
-            # --- 금일 거래 내역 수집 ---
-            buy_trades = []   # 금일 매수 종목
-            sell_trades = []  # 금일 매도 종목
-            sell_types = ["익절", "손절", "청산", "확정", "매도", "종료"]
-            
+            # --- 데이터 수집 ---
+            buy_trades = []; sell_trades = []; sell_types = ["익절", "손절", "청산", "확정", "매도", "종료"]
             with trading_log.lock:
                 for t in trading_log.data.get("trades", []):
-                    if not t["time"].startswith(today):
-                        continue
+                    if not t["time"].startswith(today): continue
                     t_type = t.get("type", "")
-                    if "매수" in t_type:
-                        buy_trades.append(t)
-                    elif any(x in t_type for x in sell_types):
-                        sell_trades.append(t)
+                    if "매수" in t_type: buy_trades.append(t)
+                    elif any(x in t_type for x in sell_types): sell_trades.append(t)
             
-            # --- 현재가 조회 (캐싱된 보유 종목 정보 + Naver 조회) ---
             def get_current_price(code):
-                """캐시된 보유 종목 정보에서 현재가를 먼저 찾고, 없으면 Naver API 조회"""
-                # 1. 보유 종목 캐시에서 현재가 조회
                 for h in dm.cached_holdings:
-                    if h.get("pdno") == code:
-                        return int(float(h.get("prpr", 0)))
-                # 2. Naver 상세에서 조회 (이미 캐싱됨)
+                    if h.get("pdno") == code: return int(float(h.get("prpr", 0)))
                 try:
                     detail = strategy.api.get_naver_stock_detail(code)
                     return int(float(detail.get("price", 0)))
-                except:
-                    return 0
+                except: return 0
 
-            # --- 시장 지수 데이터 ---
-            kospi_data = dm.cached_market_data.get("KOSPI", {})
-            kosdaq_data = dm.cached_market_data.get("KOSDAQ", {})
-            kospi_rate = kospi_data.get("rate", 0) if kospi_data else 0
-            kosdaq_rate = kosdaq_data.get("rate", 0) if kosdaq_data else 0
-            
-            # --- 금일 실현 손익 ---
+            kospi_rate = dm.cached_market_data.get("KOSPI", {}).get("rate", 0)
+            kosdaq_rate = dm.cached_market_data.get("KOSDAQ", {}).get("rate", 0)
             realized_profit = trading_log.get_daily_profit()
             asset = dm.cached_asset
-            daily_pnl_rate = asset.get('daily_pnl_rate', 0.0)
-            daily_pnl_amt = asset.get('daily_pnl_amt', 0.0)
-            
-            max_lines = max(5, th - 12)
-            line_count = 0
-            
+            daily_pnl_rate = asset.get('daily_pnl_rate', 0.0); daily_pnl_amt = asset.get('daily_pnl_amt', 0.0)
+
             # ① 브리핑 헤더
             r_color = "\033[91m" if realized_profit > 0 else "\033[94m" if realized_profit < 0 else "\033[93m"
             d_color = "\033[91m" if daily_pnl_rate > 0 else "\033[94m" if daily_pnl_rate < 0 else "\033[93m"
             k_color = "\033[91m" if kospi_rate >= 0 else "\033[94m"
-            
-            buf.write(f" 📋 {today} | "
-                      f"실현손익: {r_color}{realized_profit:+,}원\033[0m | "
-                      f"평가손익: {d_color}{int(daily_pnl_amt):+,}원({daily_pnl_rate:+.2f}%)\033[0m | "
-                      f"KOSPI: {k_color}{kospi_rate:+.2f}%\033[0m | "
-                      f"KOSDAQ: {k_color}{kosdaq_rate:+.2f}%\033[0m\n")
+            kd_color = "\033[91m" if kosdaq_rate >= 0 else "\033[94m"
+            buf.write("\033[1;96m" + " [금일 투자 성과 브리핑]" + "\033[0m\n")
+            buf.write(f" 📋 {today} | 실현: {r_color}{realized_profit:+,}원\033[0m | 평가: {d_color}{int(daily_pnl_amt):+,}원({daily_pnl_rate:+.2f}%)\033[0m | KOSPI: {k_color}{kospi_rate:+.2f}%\033[0m | KOSDAQ: {kd_color}{kosdaq_rate:+.2f}%\033[0m\n")
             buf.write("-" * tw + "\n")
-            line_count += 2
-            
-            # ② 매수 종목 (매입가/현재가 비교)
-            buf.write("\033[1;92m [📈 금일 매수 종목]\033[0m\n")
-            line_count += 1
-            if not buy_trades:
-                buf.write("  금일 매수 내역이 없습니다.\n")
-                line_count += 1
-            else:
-                # 종목별 합산 (같은 종목 여러 번 매수 시)
-                buy_summary = {}
-                for t in buy_trades:
-                    code = t.get("code", "")
-                    if code not in buy_summary:
-                        buy_summary[code] = {"name": t.get("name", "?"), "avg_price": 0, "total_amt": 0, "total_qty": 0, "type": t.get("type", ""), "model": t.get("model_id", "")}
-                    price = float(t.get("price", 0))
-                    qty = int(t.get("qty", 0))
-                    buy_summary[code]["total_amt"] += price * qty
-                    buy_summary[code]["total_qty"] += qty
-                
-                for code, info in buy_summary.items():
-                    if line_count >= max_lines - 8: break
-                    avg_price = int(info["total_amt"] / info["total_qty"]) if info["total_qty"] > 0 else 0
-                    cur_price = get_current_price(code)
-                    
-                    if cur_price > 0 and avg_price > 0:
-                        diff = cur_price - avg_price
-                        diff_rate = (diff / avg_price) * 100
-                        # 현재가가 매입가보다 높으면 빨강(잘 샀다), 낮으면 파랑(못 샀다)
-                        color = "\033[91m" if diff >= 0 else "\033[94m"
-                        verdict = "✅잘샀다" if diff >= 0 else "❌못샀다"
-                        buf.write(f"  {align_kr(info['name'][:10], 12)} [{code}] "
-                                  f"매입:{avg_price:>8,} → 현재:{color}{cur_price:>8,}\033[0m "
-                                  f"({color}{diff:+,} / {diff_rate:+.2f}%\033[0m) "
-                                  f"{info['total_qty']}주 | {info['type'][:6]} {verdict}\n")
-                    else:
-                        buf.write(f"  {align_kr(info['name'][:10], 12)} [{code}] 매입:{avg_price:>8,} | {info['total_qty']}주 | {info['type'][:6]}\n")
-                    line_count += 1
-            
-            buf.write("-" * tw + "\n")
-            line_count += 1
-            
-            # ③ 매도 종목 (매도가/현재가 비교)
-            buf.write("\033[1;91m [📉 금일 매도 종목]\033[0m\n")
-            line_count += 1
-            if not sell_trades:
-                buf.write("  금일 매도 내역이 없습니다.\n")
-                line_count += 1
-            else:
-                sell_summary = {}
-                for t in sell_trades:
-                    code = t.get("code", "")
-                    if code not in sell_summary:
-                        sell_summary[code] = {"name": t.get("name", "?"), "total_amt": 0, "total_qty": 0, "total_profit": 0, "type": t.get("type", ""), "model": t.get("model_id", "")}
-                    price = float(t.get("price", 0))
-                    qty = int(t.get("qty", 0))
-                    sell_summary[code]["total_amt"] += price * qty
-                    sell_summary[code]["total_qty"] += qty
-                    sell_summary[code]["total_profit"] += float(t.get("profit", 0))
-                
-                for code, info in sell_summary.items():
-                    if line_count >= max_lines - 6: break
-                    avg_sell = int(info["total_amt"] / info["total_qty"]) if info["total_qty"] > 0 else 0
-                    cur_price = get_current_price(code)
-                    profit = int(info["total_profit"])
-                    p_color = "\033[91m" if profit > 0 else "\033[94m" if profit < 0 else ""
-                    
-                    if cur_price > 0 and avg_sell > 0:
-                        diff = cur_price - avg_sell
-                        # 현재가가 매도가보다 높으면 파랑(일찍 팔았다), 낮으면 빨강(잘 팔았다)
-                        color = "\033[94m" if diff > 0 else "\033[91m" if diff < 0 else ""
-                        verdict = "✅잘팔았다" if diff <= 0 else "❌일찍팔았다"
-                        buf.write(f"  {align_kr(info['name'][:10], 12)} [{code}] "
-                                  f"매도:{avg_sell:>8,} → 현재:{color}{cur_price:>8,}\033[0m "
-                                  f"({color}{diff:+,}\033[0m) "
-                                  f"수익:{p_color}{profit:+,}원\033[0m | {info['type'][:6]} {verdict}\n")
-                    else:
-                        buf.write(f"  {align_kr(info['name'][:10], 12)} [{code}] 매도:{avg_sell:>8,} | 수익:{p_color}{profit:+,}원\033[0m | {info['type'][:6]}\n")
-                    line_count += 1
-            
-            buf.write("-" * tw + "\n")
-            line_count += 1
-            
-            # ④ 시장 대비 성과 진단
-            buf.write("\033[1;93m [📊 시장 대비 투자 성과 진단]\033[0m\n")
-            line_count += 1
-            
-            # KOSPI vs 내 수익률 비교
-            my_rate = daily_pnl_rate
-            market_rate = kospi_rate  # KOSPI 기준
-            alpha = my_rate - market_rate
-            
+
+            # ② [순서 변경] 투자 성과 진단 (2번째 배치)
+            my_rate = daily_pnl_rate; market_rate = kospi_rate; alpha = my_rate - market_rate
             if my_rate > 0 and market_rate > 0:
-                if alpha >= 0:
-                    verdict_msg = f"\033[91m✅ 상승장에서 시장 대비 +{alpha:.2f}%p 초과 수익! 잘하고 있습니다.\033[0m"
-                    if realized_profit < 0:
-                        verdict_msg = f"\033[93m🛡️ 자산은 상승 중이나 당일 실현 손실({realized_profit:,}원) 발생. 매도 타점 점검 필요.\033[0m"
-                else:
-                    verdict_msg = f"\033[93m⚠️ 상승장이지만 시장 대비 {alpha:.2f}%p 부족. 종목 선정 점검 필요.\033[0m"
+                verdict_msg = f"\033[91m✅ 상승장 초과 수익! Alpha: +{alpha:.2f}%p\033[0m" if alpha >= 0 else f"\033[93m⚠️ 시장 대비 소폭 지체. Alpha: {alpha:.2f}%p\033[0m"
             elif my_rate > 0 and market_rate <= 0:
-                verdict_msg = f"\033[91m🏆 하락장에서 수익! 탁월한 종목 선정. Alpha: {alpha:+.2f}%p\033[0m"
-                if realized_profit < 0:
-                    verdict_msg = f"\033[93m🛡️ 하락장에서 시장 대비 선방 중(Alpha: {alpha:+.2f}%p). 단, 실현 손실 주의.\033[0m"
+                verdict_msg = f"\033[91m🏆 하락장 수익! 탁월한 선정. Alpha: {alpha:+.2f}%p\033[0m"
             elif my_rate <= 0 and market_rate > 0:
-                verdict_msg = f"\033[94m🚨 시장은 상승 중인데 손실 발생! 전략 재점검이 시급합니다. Alpha: {alpha:+.2f}%p\033[0m"
-            elif my_rate <= 0 and market_rate <= 0:
-                if alpha >= 0:
-                    verdict_msg = f"\033[93m🛡️ 하락장에서 방어 성공. 시장 대비 {alpha:+.2f}%p 선방.\033[0m"
-                    if realized_profit < 0 and abs(realized_profit) > 50000:
-                        verdict_msg = f"\033[94m❌ 시장 대비 선방 중이나 실현 손실({realized_profit:,}원)이 큽니다. 리스크 관리 강화.\033[0m"
-                else:
-                    verdict_msg = f"\033[94m❌ 하락장에서 시장보다 더 큰 하락. 리스크 관리 강화 필요.\033[0m"
+                verdict_msg = f"\033[94m🚨 시장 소외! 전략 재점검 필요. Alpha: {alpha:+.2f}%p\033[0m"
             else:
-                verdict_msg = "\033[90mℹ️ 데이터 수집 중...\033[0m"
-            
-            buf.write(f"  내 수익률: {d_color}{my_rate:+.2f}%\033[0m vs KOSPI: {k_color}{market_rate:+.2f}%\033[0m → Alpha: {alpha:+.2f}%p\n")
-            buf.write(f"  {verdict_msg}\n")
-            line_count += 2
-            
-            # ⑤ 전략 제언
-            if alpha < -1.0:
-                buf.write("  💡 \033[93m제언: 손절 기준 타이트닝, 종목 교체 빈도 축소, 현금 비중 확대 검토\033[0m\n")
-                line_count += 1
-            elif alpha > 2.0:
-                buf.write("  💡 \033[92m제언: 현재 전략이 효과적. 불타기로 수익 극대화 기회를 노려보세요.\033[0m\n")
-                line_count += 1
-            
+                verdict_msg = f"\033[93m🛡️ 하락장 방어 성공. Alpha: {alpha:+.2f}%p\033[0m" if alpha >= 0 else f"\033[94m❌ 리스크 관리 강화 필요. Alpha: {alpha:+.2f}%p\033[0m"
+            buf.write(f" \033[1;93m[📊 투자 성과 진단]\033[0m 내 수익률({d_color}{my_rate:+.2f}%\033[0m) vs KOSPI({k_color}{market_rate:+.2f}%\033[0m) → {verdict_msg}\n")
             buf.write("-" * tw + "\n")
-            line_count += 1
+
+            # ③ [좌우 배치] 매수/매도 테이블
+            col_w = [18, 10, 10, 11, 8, 8]; half_w = tw // 2
+            def format_trade_row(info, is_buy):
+                code = info['code']; name = info['name'][:8]
+                price = info['avg_price']; cur = get_current_price(code)
+                pnl = info['total_pnl'] if not is_buy else (cur - price) * info['total_qty']
+                p_color = "\033[91m" if pnl > 0 else "\033[94m" if pnl < 0 else ""
+                v_color = "\033[91m" if (cur >= price if is_buy else cur <= price) else "\033[94m"
+                verdict = ("✅잘샀다" if cur >= price else "❌못샀다") if is_buy else ("✅잘팔았다" if cur <= price else "❌일찍팔")
+                row = f"{align_kr(f'[{code}]{name}', 18)}|{align_kr(f'{int(price):,}', 10, 'right')}|{align_kr(f'{int(cur):,}', 10, 'right')}|{p_color}{align_kr(f'{int(pnl):,}', 11, 'right')}\033[0m|{align_kr(info['type'][:4], 8)}|{v_color}{align_kr(verdict, 8)}\033[0m"
+                return row
+
+            # 데이터 요약
+            buy_summary = {}
+            for t in buy_trades:
+                c = t['code']; q = int(t['qty']); p = float(t['price'])
+                if c not in buy_summary: buy_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "type": t['type']}
+                buy_summary[c]["total_amt"] += p * q; buy_summary[c]["total_qty"] += q; buy_summary[c]["avg_price"] = buy_summary[c]["total_amt"] / buy_summary[c]["total_qty"]
+            sell_summary = {}
+            for t in sell_trades:
+                c = t['code']; q = int(t['qty']); p = float(t['price']); pr = float(t.get('profit', 0))
+                if c not in sell_summary: sell_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "total_pnl": 0, "type": t['type']}
+                sell_summary[c]["total_amt"] += p * q; sell_summary[c]["total_qty"] += q; sell_summary[c]["total_pnl"] += pr; sell_summary[c]["avg_price"] = sell_summary[c]["total_amt"] / sell_summary[c]["total_qty"]
             
-            # ⑥ 모델별 수익률 (하단 축약)
+            buy_list = list(buy_summary.values()); sell_list = list(sell_summary.values()); max_rows = max(len(buy_list), len(sell_list))
+            
+            # 성과 계산
+            buy_wins = 0
+            for b in buy_list:
+                cur = get_current_price(b['code'])
+                if cur >= b['avg_price']: buy_wins += 1
+            buy_rate = (buy_wins / len(buy_list) * 100) if buy_list else 0
+            
+            sell_wins = 0
+            for s in sell_list:
+                cur = get_current_price(s['code'])
+                if cur <= s['avg_price']: sell_wins += 1
+            sell_rate = (sell_wins / len(sell_list) * 100) if sell_list else 0
+
+            h_buy = f"\033[1;42;1;37m{align_kr(f' [📈 매수 성과: {buy_wins}/{len(buy_list)} ({buy_rate:.0f}%)] ', half_w-1, 'center')}\033[0m"
+            h_sell = f"\033[1;41;1;37m{align_kr(f' [📉 매도 성과: {sell_wins}/{len(sell_list)} ({sell_rate:.0f}%)] ', tw-half_w-1, 'center')}\033[0m"
+            buf.write(f"{h_buy} {h_sell}\n")
+            t_head = f"{align_kr('종목(코드)명', 18)}|{align_kr('매수금액', 10)}|{align_kr('현재가', 10)}|{align_kr('평가손익', 11)}|{align_kr('방법', 8)}|{align_kr('평가', 8)}"
+            t_head_s = f"{align_kr('종목(코드)명', 18)}|{align_kr('매도금액', 10)}|{align_kr('현재가', 10)}|{align_kr('실현손익', 11)}|{align_kr('방법', 8)}|{align_kr('평가', 8)}"
+            buf.write(f"\033[1m{align_kr(t_head, half_w-1)} \033[1m{align_kr(t_head_s, tw-half_w-1)}\033[0m\n")
+            buf.write("-" * (half_w-1) + " " + "-" * (tw-half_w-1) + "\n")
+            for i in range(max(1, max_rows)):
+                b_row = format_trade_row(buy_list[i], True) if i < len(buy_list) else " " * (half_w - 1)
+                s_row = format_trade_row(sell_list[i], False) if i < len(sell_list) else ""
+                buf.write(f"{align_kr(b_row, half_w-1)} {s_row}\n")
+            buf.write("-" * tw + "\n")
+            
+            # ④ 모델별 누적 성과 (축약)
             model_stats = trading_log.get_model_performance()
-            buf.write("\033[1;95m [🤖 모델별 누적 수익률]\033[0m\n")
-            line_count += 1
-            if not model_stats:
-                buf.write("  모델별 성과 데이터가 없습니다.\n")
-                line_count += 1
-            else:
-                buf.write("\033[1m" + f" {align_kr('모델', 10)} | {align_kr('매수', 6)} | {align_kr('매도', 6)} | {align_kr('승률', 8)} | {align_kr('누적수익금', 16)}" + "\033[0m\n")
-                line_count += 1
+            if model_stats:
+                buf.write("\033[1;95m [🤖 모델별 누적 성과]\033[0m ")
+                m_line = ""
                 for m, s in model_stats.items():
-                    if line_count >= max_lines: break
-                    win_rate = (s['wins'] / s['total_trades'] * 100) if s['total_trades'] > 0 else 0
-                    w_color = "\033[91m" if win_rate >= 50 else "\033[94m"
                     p_color = "\033[91m" if s['total_profit'] > 0 else "\033[94m"
-                    tp = int(s['total_profit'])
-                    buf.write(f" {align_kr(m, 10)} | {align_kr(str(s['buy_count']), 6, 'right')} | {align_kr(str(s['total_trades']), 6, 'right')} | {w_color}{align_kr(f'{win_rate:.1f}%', 8, 'right')}\033[0m | {p_color}{align_kr(f'{tp:+,}원', 16, 'right')}\033[0m\n")
-                    line_count += 1
+                    m_line += f"{m}: {p_color}{int(s['total_profit']):+,}원\033[0m | "
+                buf.write(m_line.rstrip(" | ") + "\n")
 
         elif current_tab == 4:
             # 4. 투자 적중 (매매 복기 누적 분석)
             retro = getattr(strategy, 'retrospective', None)
             buf.write("\033[1;95m" + " [투자 적중 분석 (매매 복기 누적 리포트)]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
-            
-            if not retro:
-                buf.write("  ⚠️ 투자 적중 엔진이 초기화되지 않았습니다.\n")
+            if not retro: buf.write("  ⚠️ 투자 적중 엔진이 초기화되지 않았습니다.\n")
             else:
-                # 누적 통계 헤더
                 stats = retro.get_cumulative_stats()
                 if stats["total_days"] > 0:
-                    net_color = "\033[91m" if stats["net_profit"] > 0 else "\033[94m"
-                    wr_color = "\033[91m" if stats["win_rate"] >= 50 else "\033[94m"
-                    buf.write(f" \033[1m[누적 {stats['total_days']}일]\033[0m "
-                              f"승률: {wr_color}{stats['win_rate']:.1f}%\033[0m | "
-                              f"수익종목: \033[91m{int(stats['total_profit']):+,}\033[0m | "
-                              f"손실종목: \033[94m{int(stats['total_loss']):+,}\033[0m | "
-                              f"순이익: {net_color}{int(stats['net_profit']):+,}\033[0m\n")
+                    net_color = "\033[91m" if stats["net_profit"] > 0 else "\033[94m"; wr_color = "\033[91m" if stats["win_rate"] >= 50 else "\033[94m"
+                    buf.write(f" \033[1m[누적 {stats['total_days']}일]\033[0m 승률: {wr_color}{stats['win_rate']:.1f}%\033[0m | 수익종목: \033[91m{int(stats['total_profit']):+,}\033[0m | 손실종목: \033[94m{int(stats['total_loss']):+,}\033[0m | 순이익: {net_color}{int(stats['net_profit']):+,}\033[0m\n")
                     buf.write("-" * tw + "\n")
-                
-                # 최근 리포트 표시 (최대 3일치)
                 reports = retro.get_reports(limit=3)
                 if not reports:
-                    buf.write("\n  📭 아직 생성된 복기 리포트가 없습니다.\n")
-                    buf.write("  ℹ️  매일 오후 4시(16:00)에 자동 생성되며, 장 마감 후 30분마다 업데이트됩니다.\n")
+                    buf.write("\n  📭 아직 생성된 복기 리포트가 없습니다.\n  ℹ️ 매일 오후 4시(16:00)에 자동 생성되며, 장 마감 후 30분마다 업데이트됩니다.\n")
                 else:
-                    max_lines = max(5, th - 16)
-                    line_count = 0
+                    max_l = max(5, th - 16); l_cnt = 0
                     for date_str, report in reports:
-                        if line_count >= max_lines: break
-                        
-                        gen_time = report.get("generated_at", "?").split(' ')[-1]
-                        upd_count = report.get("update_count", 1)
-                        vibe_tag = report.get("market_vibe", "N/A")
-                        buf.write(f"\n \033[1;93m📊 [{date_str}]\033[0m 생성: {gen_time} | 갱신: {upd_count}회 | 장세: {vibe_tag}\n")
-                        line_count += 1
-                        
-                        # 수익 종목 요약
+                        if l_cnt >= max_l: break
+                        gen_t = report.get("generated_at", "?").split(' ')[-1]; vibe = report.get("market_vibe", "N/A")
+                        buf.write(f"\n \033[1;93m📊 [{date_str}]\033[0m 생성: {gen_t} | 갱신: {report.get('update_count', 1)}회 | 장세: {vibe}\n"); l_cnt += 1
                         for s in report.get("top_profits", []):
-                            if line_count >= max_lines: break
-                            buf.write(f"  \033[92m🟢 {s.get('name', '?')}\033[0m \033[91m{int(s.get('total_profit', 0)):+,}\033[0m원")
-                            if s.get("closing_price"):
-                                buf.write(f" (종가:{int(s['closing_price']):,}원)")
-                            buf.write("\n")
-                            line_count += 1
-                        
-                        # 손실 종목 요약
+                            if l_cnt >= max_l: break
+                            buf.write(f"  \033[92m🟢 {s.get('name', '?')}\033[0m \033[91m{int(s.get('total_profit', 0)):+,}\033[0m원" + (f" (종가:{int(s['closing_price']):,}원)" if s.get("closing_price") else "") + "\n"); l_cnt += 1
                         for s in report.get("top_losses", []):
-                            if line_count >= max_lines: break
-                            buf.write(f"  \033[91m🔴 {s.get('name', '?')}\033[0m \033[94m{int(s.get('total_profit', 0)):+,}\033[0m원")
-                            if s.get("closing_price"):
-                                buf.write(f" (종가:{int(s['closing_price']):,}원)")
-                            buf.write("\n")
-                            line_count += 1
-                        
-                        # AI 분석 의견 (축약)
+                            if l_cnt >= max_l: break
+                            buf.write(f"  \033[91m🔴 {s.get('name', '?')}\033[0m \033[94m{int(s.get('total_profit', 0)):+,}\033[0m원" + (f" (종가:{int(s['closing_price']):,}원)" if s.get("closing_price") else "") + "\n"); l_cnt += 1
                         ai_text = report.get("ai_analysis", "")
                         if ai_text:
                             for line in ai_text.split('\n'):
-                                if line_count >= max_lines: break
-                                stripped = line.strip()
-                                if stripped:
-                                    # 너비 제한
-                                    if get_visual_width(stripped) > tw - 4:
-                                        while get_visual_width(stripped) > tw - 6:
-                                            stripped = stripped[:-1]
-                                        stripped += ".."
-                                    buf.write(f"  {stripped}\n")
-                                    line_count += 1
-                        
-                        buf.write("-" * tw + "\n")
-                        line_count += 1
+                                if l_cnt >= max_l: break
+                                s_line = line.strip()
+                                if s_line:
+                                    if get_visual_width(s_line) > tw - 4:
+                                        while get_visual_width(s_line) > tw - 6: s_line = s_line[:-1]
+                                        s_line += ".."
+                                    buf.write(f"  {s_line}\n"); l_cnt += 1
+                        buf.write("-" * tw + "\n"); l_cnt += 1
 
         buf.write("\n" + "-" * tw + "\n")
         buf.write(align_kr(" [1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
@@ -799,138 +654,115 @@ def get_input(dm, prompt, tw):
     return res
 
 def perform_interaction(key, api, strategy, dm, cycle):
-    import os
-    import sys
-    import time
-    from src.ui.renderer import draw_tui, draw_manual_page
-    from src.utils import get_key_immediate
-    from src.config_init import ensure_env, get_config
-    from src.auth import KISAuth
-    from dotenv import load_dotenv
-    
-    flush_input()
-    key_map = {'ㅂ': 'q', 'ㅃ': 'q', 'ㅅ': 's', 'ㄴ': 's', 'ㅈ': 's', 'ㅁ': 'a', 'ㅣ': 'l', 'ㅠ': 'b', 'ㅇ': 'd', 'ㅎ': 'h', 'ㅔ': 'p', 'ㅖ': 'p'}
-    mode = (key[-1] if 'alt+' in key else key).lower()
-    if mode in key_map: mode = key_map[mode]
-    
-    if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p']: return
-    
-    # [수정] tw, th를 미리 계산하여 사용 가능하게 함
     try:
-        size = os.get_terminal_size()
-        tw, th = size.columns, size.lines
-    except:
-        tw, th = 80, 24
+        import os
+        import sys
+        import time
+        import threading
+        from src.ui.renderer import draw_tui, draw_manual_page
+        from src.utils import get_key_immediate, restore_terminal_settings, exit_alt_screen, enter_alt_screen, set_terminal_raw, flush_input, get_market_name
+        from src.config_init import ensure_env, get_config
+        from src.auth import KISAuth
+        from src.theme_engine import get_cached_themes
+        from src.strategy import PRESET_STRATEGIES
+        from dotenv import load_dotenv
+        
+        flush_input()
+        key_map = {'ㅂ': 'q', 'ㅃ': 'q', 'ㅅ': 's', 'ㄴ': 's', 'ㅈ': 's', 'ㅁ': 'a', 'ㅣ': 'l', 'ㅠ': 'b', 'ㅇ': 'd', 'ㅎ': 'h', 'ㅔ': 'p', 'ㅖ': 'p'}
+        mode = (key[-1] if 'alt+' in key else key).lower()
+        if mode in key_map: mode = key_map[mode]
+        
+        if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p']: return
+        
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except:
+            tw, th = 80, 24
 
-    # [수정] 보유 종목 리스트를 미리 정의하여 모든 모드에서 참조 가능하게 함
-    f_h = dm.cached_holdings if dm.ranking_filter == "ALL" else [h for h in dm.cached_holdings if get_market_name(h.get('pdno','')) == dm.ranking_filter]
-
-    # 즉시 종료
-    if mode == 'q':
-        restore_terminal_settings(); exit_alt_screen()
-        print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다."); os._exit(0)
+        f_h = dm.cached_holdings if dm.ranking_filter == "ALL" else [h for h in dm.cached_holdings if get_market_name(h.get('pdno','')) == dm.ranking_filter]
+        
+        if mode == 'q':
+            restore_terminal_settings(); exit_alt_screen()
+            print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다."); os._exit(0)
+        
+        if mode in ['m', 'l', 'b', 'd', 'h', 'a', 'p']:
+            def run_display_task():
+                status_map = {
+                    'm': "사용자 매뉴얼 조회 중", 'l': "시스템 로그 조회 중", 'b': "보유 종목 진단 중", 'd': "추천 종목 상세 조회 중",
+                    'h': "인기 테마 리포트 조회 중", 'a': "AI 결정 로그 조회 중", 'p': "성과 대시보드 조회 중"
+                }
+                dm.is_full_screen_active = True
+                dm.set_busy(status_map.get(mode, f"{mode} 처리"))
+                try:
+                    restore_terminal_settings()
+                    size = os.get_terminal_size(); tw_r, th_r = size.columns, size.lines
+                    if mode == 'm': draw_manual_page(tw_r, th_r)
+                    elif mode == 'l':
+                        from src.ui.renderer import draw_trading_logs
+                        draw_trading_logs(strategy, dm, tw_r, th_r)
+                    elif mode == 'b': draw_holdings_detail(strategy, dm, tw_r, th_r)
+                    elif mode == 'd': draw_recommendation_report(strategy, dm, tw_r, th_r)
+                    elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw_r, th_r)
+                    elif mode == 'a': draw_ai_logs_report(strategy, dm, tw_r, th_r)
+                    elif mode == 'p': draw_performance_report(strategy, dm, tw_r, th_r)
+                    enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
+                finally: 
+                    dm.clear_busy()
+                    dm.is_full_screen_active = False
+            threading.Thread(target=run_display_task, daemon=True).start()
+            return
     
-    # 화면 전환 커맨드 (리포트/로그 등 즉시 전환)
-    if mode in ['m', 'l', 'b', 'd', 'h', 'a', 'p']:
-        def run_display_task():
-            # 사용자 친화적 상태 메시지 맵핑
-            status_map = {
-                'm': "사용자 매뉴얼 조회 중",
-                'l': "시스템 로그 조회 중",
-                'b': "보유 종목 진단 중",
-                'd': "추천 종목 상세 조회 중",
-                'h': "인기 테마 리포트 조회 중",
-                'a': "AI 결정 로그 조회 중",
-                'p': "성과 대시보드 조회 중"
-            }
+        if mode == '7':
+            res = get_input(dm, "> 분석할 종목 번호 또는 코드(6자리) 입력: ", tw)
+            if res:
+                res = res.strip()
+                target_code = ""
+                if res.isdigit() and len(res) <= 3:
+                    idx = int(res)
+                    if 0 < idx <= len(f_h): target_code = f_h[idx-1]['pdno']
+                elif len(res) == 6: target_code = res
+                if target_code:
+                    def run_analysis_task(t_code):
+                        dm.is_full_screen_active = True
+                        dm.set_busy("종목 분석 중")
+                        try:
+                            restore_terminal_settings()
+                            size = os.get_terminal_size(); tw_a, th_a = size.columns, size.lines
+                            draw_stock_analysis(strategy, dm, t_code, tw_a, th_a)
+                            enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
+                        finally:
+                            dm.clear_busy()
+                            dm.is_full_screen_active = False
+                    threading.Thread(target=run_analysis_task, args=(target_code,), daemon=True).start()
+            return
+    
+        if mode == 's':
+            dm.show_status("⚙️ 환경 설정 모드로 전환합니다...")
+            draw_tui(strategy, dm, cycle)
             dm.is_full_screen_active = True
-            dm.set_busy(status_map.get(mode, f"{mode} 처리"))
             try:
-                restore_terminal_settings()
-                size = os.get_terminal_size(); tw_r, th_r = size.columns, size.lines
-                if mode == 'm': draw_manual_page(tw_r, th_r)
-                elif mode == 'l':
-                    from src.ui.renderer import draw_trading_logs
-                    draw_trading_logs(strategy, dm, tw_r, th_r)
-                elif mode == 'b': draw_holdings_detail(strategy, dm, tw_r, th_r)
-                elif mode == 'd': draw_recommendation_report(strategy, dm, tw_r, th_r)
-                elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw_r, th_r)
-                elif mode == 'a': draw_ai_logs_report(strategy, dm, tw_r, th_r)
-                elif mode == 'p':
-                    draw_performance_report(strategy, dm, tw_r, th_r)
-                enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
-            finally: 
+                time.sleep(0.5)
+                restore_terminal_settings(); exit_alt_screen()
+                os.system('cls' if os.name == 'nt' else 'clear')
+                print("\n" + "="*60 + "\n ⚙️  KIS-Vibe-Trader 환경 설정 모드\n" + "="*60); flush_input()
+                ensure_env(force=True); load_dotenv(override=True); config = get_config()
+                new_auth = KISAuth(); api.auth = new_auth; api.domain = new_auth.domain; api.clear_cache(); strategy.api = api
+                strategy.reload_config(config)
+                enter_alt_screen(); set_terminal_raw(); dm.strategy.last_size = (0, 0)
+                dm.set_busy("데이터 동기화 중...")
+                is_v = getattr(api.auth, 'is_virtual', True)
+                dm.update_all_data(is_v, force=True)
+                dm.show_status("✅ 모든 데이터 동기화 완료")
                 dm.clear_busy()
                 dm.is_full_screen_active = False
-        threading.Thread(target=run_display_task, daemon=True).start()
-        return
-
-    # [수정] 7번(종목분석)은 입력을 먼저 받고 전체 화면으로 전환
-    if mode == '7':
-        res = get_input(dm, "> 분석할 종목 번호 또는 코드(6자리) 입력: ", tw)
-        if res:
-            res = res.strip()
-            target_code = ""
-            if res.isdigit() and len(res) <= 3: # 번호(인덱스)
-                idx = int(res)
-                if 0 < idx <= len(f_h): target_code = f_h[idx-1]['pdno']
-            elif len(res) == 6: # 종목코드
-                target_code = res
-            
-            if target_code:
-                def run_analysis_task(t_code):
-                    dm.is_full_screen_active = True
-                    dm.set_busy("종목 분석 중")
-                    try:
-                        restore_terminal_settings()
-                        size = os.get_terminal_size(); tw_a, th_a = size.columns, size.lines
-                        draw_stock_analysis(strategy, dm, t_code, tw_a, th_a)
-                        enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
-                    finally:
-                        dm.clear_busy()
-                        dm.is_full_screen_active = False
-                threading.Thread(target=run_analysis_task, args=(target_code,), daemon=True).start()
-        return
-
-    # 환경 설정
-    if mode == 's':
-        dm.show_status("⚙️ 환경 설정 모드로 전환합니다...")
-        draw_tui(strategy, dm, cycle) # 마지막 상태 반영
-        dm.is_full_screen_active = True
-        try:
-            time.sleep(0.5)
-            restore_terminal_settings(); exit_alt_screen()
-            os.system('cls' if os.name == 'nt' else 'clear')
-            print("\n" + "="*60 + "\n ⚙️  KIS-Vibe-Trader 환경 설정 모드\n" + "="*60); flush_input()
-            ensure_env(force=True); load_dotenv(override=True); config = get_config()
-            new_auth = KISAuth(); api.auth = new_auth; api.domain = new_auth.domain; api.clear_cache(); strategy.api = api
-            strategy.reload_config(config)
-            enter_alt_screen(); set_terminal_raw(); dm.strategy.last_size = (0, 0)
-            
-            # [개선] 통합 데이터 업데이트 호출 (자산, 지수, 종목 상세 TP/SL 등)
-            dm.set_busy("데이터 동기화 중...")
-            is_v = getattr(api.auth, 'is_virtual', True)
-            dm.update_all_data(is_v, force=True)
-                        
-            dm.show_status("✅ 모든 데이터 동기화 완료")
-            dm.clear_busy()
-            dm.is_full_screen_active = False # [수정] 렌더링 차단 해제 후 그리기
-            strategy.is_ready = True         # [수정] 데이터 워커 활성화
-            dm.add_log("🔄 시스템 설정 반영 및 데이터 동기화가 완료되었습니다.")
-            draw_tui(strategy, dm, cycle)
-        finally:
-            dm.is_full_screen_active = False
-        return
-
-    # 나머지 커맨드 처리 (입력 수집 -> 큐에 작업 삽입)
-    try:
-        tw = os.get_terminal_size().columns
-    except:
-        tw = 110
-
-    f_h = dm.cached_holdings if dm.ranking_filter == "ALL" else [h for h in dm.cached_holdings if get_market_name(h.get('pdno','')) == dm.ranking_filter]
+                strategy.is_ready = True
+                dm.add_log("🔄 시스템 설정 반영 및 데이터 동기화가 완료되었습니다.")
+                draw_tui(strategy, dm, cycle)
+            finally:
+                dm.is_full_screen_active = False
+            return
     
-    try:
         if mode == '1':
             res = get_input(dm, "> 매도 [번호 수량 가격] 입력: ", tw)
             if res:
@@ -949,10 +781,11 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                 curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
                                 profit = (curr_p - float(h.get('pchs_avg_pric', 0))) * qty
                                 trading_log.log_trade("수동매도", code, name, curr_p, qty, f"수동 매도 ({p_disp})", profit=profit, model_id="수동")
-                                dm.show_status(f"✅ 매도 성공: {name}"); dm.update_all_data(True, force=True)
+                                dm.add_trading_log(f"✅ [{name}] {qty}주 매도 완료 ({p_disp})")
+                                dm.show_status(f"✅ 매도 성공: {name}"); dm.update_all_data(dm.api.auth.is_virtual, force=True)
                             else: dm.show_status(f"❌ 매도 실패: {msg}", True)
                         finally: dm.clear_busy()
-                    command_queue.put((task_sell, (), {}))
+                    threading.Thread(target=task_sell, daemon=True).start()
 
         elif mode == '2':
             res = get_input(dm, "> 매수 [코드 수량 가격] 입력: ", tw)
@@ -971,12 +804,18 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             if success:
                                 curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
                                 trading_log.log_trade("수동매수", code, name, curr_p, qty, f"수동 매수 ({p_disp})", model_id="수동")
+                                dm.add_trading_log(f"✅ [{name}] {qty}주 매수 완료 ({p_disp})")
                                 dm.show_status(f"✅ 매수 성공: {name}")
-                                if is_new: strategy.auto_assign_preset(code, name)
-                                dm.update_all_data(True, force=True)
+                                if is_new:
+                                    try:
+                                        strategy.auto_assign_preset(code, name)
+                                    except Exception as ai_e:
+                                        from src.logger import log_error
+                                        log_error(f"AI 전략 할당 실패: {ai_e}")
+                                dm.update_all_data(dm.api.auth.is_virtual, force=True)
                             else: dm.show_status(f"❌ 매수 실패: {msg}", True)
                         finally: dm.clear_busy()
-                    command_queue.put((task_buy, (), {}))
+                    threading.Thread(target=task_buy, daemon=True).start()
 
         elif mode == '3':
             res = get_input(dm, "> 수정 [번호 TP SL] 또는 [TP SL]: ", tw)
@@ -1005,7 +844,6 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 dm.set_busy("AI분석")
                 try:
                     def prog_cb(c, t, m="AI분석"): 
-                        # "분석 중: 종목명" 같이 긴 메시지가 오면 "AI추천" 정도로 축약
                         if "분석 중:" in m: m = "AI추천"
                         dm.set_busy(f"{m}({c}/{t})")
                     def item_cb(i): 
@@ -1014,7 +852,6 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                 strategy.ai_recommendations.append(i)
                                 strategy.ai_recommendations.sort(key=lambda x: x['score'], reverse=True)
                     with dm.data_lock: strategy.ai_recommendations = []
-                    # [추가] 수동 시황 분석 시 Vibe부터 최신화 (force_ai=True로 시간 제한 우회)
                     strategy.determine_market_trend(force_ai=True)
                     strategy.update_ai_recommendations(get_cached_themes(), dm.cached_hot_raw, dm.cached_vol_raw, progress_cb=prog_cb, on_item_found=item_cb)
                     advice = strategy.get_ai_advice(progress_cb=lambda c, t: prog_cb(c, t, "심층분석"))
@@ -1024,7 +861,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             if strategy.ai_config.get("auto_apply"): dm.show_status("🚀 전략 자동 반영됨")
                     else: dm.show_status(f"❌ AI 분석 실패", True)
                 finally:
-                    strategy.is_ready = True # [추가] 수동 분석 시에도 시스템 준비 상태로 전환
+                    strategy.is_ready = True
                     dm.clear_busy()
             command_queue.put((task_ai, (), {}))
 
@@ -1061,12 +898,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     def task_bulk():
                         dm.set_busy("AI 통합 전략 진단")
                         try:
-                            # [최적화] 개별 분석 대신 배치 분석(1회 호출) 요청
-                            # 수동 실행이므로 즉시 매도는 차단(skip_trade=True)하고 권고만 받음
                             batch_results = strategy.perform_portfolio_batch_review(skip_trade=True)
-                            
-                            for res in batch_results:
-                                dm.add_trading_log(f"📋 {res}")
                             
                             dm.show_status("✅ 일괄 전략 진단 완료")
                         finally: dm.clear_busy()
@@ -1096,7 +928,13 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                         dm.show_status(f"🔄 표준 복귀")
                                     else:
                                         detail = api.get_naver_stock_detail(code); news = api.get_naver_stock_news(code)
-                                        res = strategy.ai_advisor.simulate_preset_strategy(code, name, strategy.current_market_vibe, detail, news)
+                                        try:
+                                            res = strategy.ai_advisor.simulate_preset_strategy(code, name, strategy.current_market_vibe, detail, news)
+                                        except Exception as ai_e:
+                                            from src.logger import log_error
+                                            log_error(f"AI 전략 시뮬레이션 실패: {ai_e}")
+                                            res = None
+                                        
                                         tp = res['tp'] if res else PRESET_STRATEGIES[antis_id]['default_tp']
                                         sl = res['sl'] if res else PRESET_STRATEGIES[antis_id]['default_sl']
                                         strategy.assign_preset(code, antis_id, tp, sl, res['reason'] if res else '', name=name)

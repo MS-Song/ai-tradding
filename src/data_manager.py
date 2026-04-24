@@ -463,6 +463,16 @@ class DataManager:
                                 if top_ai.get('is_inverse', False) and "defensive" not in vibe.lower() and "bear" not in vibe.lower():
                                     continue
 
+                                # [CRITICAL] 당일 등락률 하드 필터 (-1.5% ~ +8.0% 범위만 진입 허용)
+                                # 이미 과열된 종목(+8% 초과) 추격 매수 방지 (GEMINI.md 진입 조건)
+                                _day_rate = float(top_ai.get('rate', 0))
+                                if _day_rate > 8.0:
+                                    self.add_log(f"🚫 등락률 초과({_day_rate:+.1f}%): {top_ai['name']} 매수 차단 (상한 +8.0%)")
+                                    continue
+                                elif _day_rate < -1.5:
+                                    self.add_log(f"🚫 등락률 미달({_day_rate:+.1f}%): {top_ai['name']} 매수 차단 (하한 -1.5%)")
+                                    continue
+
                                 # 2. 보유 현황 및 투자 한도 체크
                                 holding_item = next((h for h in self.cached_holdings if h['pdno'] == top_ai['code']), None)
                                 curr_eval = float(holding_item.get('evlu_amt', 0)) if holding_item else 0
