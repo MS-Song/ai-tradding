@@ -762,6 +762,7 @@ def draw_trading_logs(strategy, dm, tw, th):
                 "INDEX": "시황/지수 분석",
                 "DATA": "잔고/매매 동기화",
                 "RANKING": "인기 종목 탐색",
+                "UPDATE": "최신 버전 감지",
                 "GLOBAL": "수동 지시 처리"
             }
             

@@ -787,6 +787,7 @@ class DataManager:
 
         while self.is_running:
             try:
+                self.set_status("UPDATE", "최신 버전 확인 중")
                 from src.updater import check_for_updates
                 res = check_for_updates(current_ver)
                 if res.get("has_update"):
@@ -797,6 +798,10 @@ class DataManager:
                             "download_url": res["download_url"]
                         })
                     self.add_log(f"🚀 새로운 버전 v{res['latest_version']}이(가) 출시되었습니다! (U 키를 눌러 업데이트)")
+                
+                with self.data_lock:
+                    self.last_times['update'] = time.time()
+                self.clear_status("UPDATE")
             except Exception as e:
                 try: log_error(f"Updater Worker Error: {e}")
                 except: pass
