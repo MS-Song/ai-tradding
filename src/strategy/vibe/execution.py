@@ -60,8 +60,14 @@ class ExecutionMixin:
                                 self.auto_assign_preset(code, name)
                                 self._save_all_states()
                                 break  # 매수 성공 시 종료
-                            else:
-                                logger.warning(f"P4 종가 베팅 실패 ({name}): {msg} -> 다음 순위 탐색")
+        # [Phase 4] 통합 배치 리뷰 트리거 (종목이 많은 경우 개별 AI 호출은 너무 느리므로 한 번에 처리)
+        if phase['id'] == "P4" and getattr(self, "_last_p4_batch_date", None) != today and not skip_trade:
+            self._last_p4_batch_date = today
+            logger.info("🚀 P4 진입: 보유 종목 전체 AI 통합 진단 시작 (Batch Review)")
+            batch_results = self.perform_portfolio_batch_review(skip_trade=False)
+            for br in batch_results:
+                results.append(f"🏁 {br}")
+            self._save_all_states()
 
         for item in holdings:
             code = item.get("pdno")
@@ -108,57 +114,59 @@ class ExecutionMixin:
                             m_id = self.last_buy_models.get(code, "")
                             trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도", profit=p3_profit, model_id="TL/SP")
                             self._save_all_states()
-                elif phase['id'] == "P4" and float(item.get("evlu_pfls_rt", 0.0)) < 0 and f"p4_{today}_{code}" not in self._p3_global_processed:
+
+            # --- [Phase 4] 자동 손실 청산 및 AI 개별 분석 (모든 종목 공통 적용) ---
+            if phase['id'] == "P4":
+                p4_key = f"p4_{today}_{code}"
+                if rt < 0 and p4_key not in self._p3_global_processed:
+                    # [Safety] 당일 매수 보호 (1시간)
                     if (time.time() - self.last_buy_times.get(code, 0)) < 3600:
-                        self._p3_global_processed[f"p4_{today}_{code}"] = True
+                        self._p3_global_processed[p4_key] = True
                         results.append(f"🛡️ 당일 매수 P4 보호: {item.get('prdt_name')}")
                     else:
                         sell_qty = int(float(item.get('hldg_qty', 0)))
                         if sell_qty > 0 and not skip_trade and self.api.order_market(code, sell_qty, False)[0]:
-                            self._p3_global_processed[f"p4_{today}_{code}"] = True
+                            self._p3_global_processed[p4_key] = True
                             p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
                             m_id = self.last_buy_models.get(code, "")
-                            trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit, model_id="TL/SP")
+                            trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit, model_id=m_id or "TL/SP")
                             self._save_all_states()
 
-            if phase['id'] == 'P4' and not skip_trade and not self._p4_ai_done_this_cycle:
+                # 배치 리뷰에서 처리되지 않은 종목에 대해 개별 AI 분석 수행 (보험용)
                 p4_ai_key = f"p4_ai_{today}_{code}"
-                if p4_ai_key not in self._p3_global_processed and (time.time() - self.last_buy_times.get(code, 0)) >= 3600:
-                    sell_qty = int(float(item.get('hldg_qty', 0)))
-                    rt = float(item.get("evlu_pfls_rt", 0.0))
-                    if sell_qty > 0:
-                        self._p4_ai_done_this_cycle = True
-                        self.current_action = "P4 AI판단"
-                        try:
-                            # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
-                            if not is_ai_enabled_time() and not getattr(self, "debug_mode", False):
-                                self._p3_global_processed[p4_ai_key] = True
-                                logger.info(f"P4 AI판단 건너뜀 (Market closed/AI Disabled): {item.get('prdt_name')}")
-                                continue
-
-                            detail = self.api.get_naver_stock_detail(code)
-                            news = self.api.get_naver_stock_news(code)
-                            p_strat = self.preset_strategies.get(code)
-                            if p_strat:
-                                tp, sl = p_strat.get('tp', 0.0), p_strat.get('sl', 0.0)
-                            else:
-                                tp, sl, _ = self.get_dynamic_thresholds(code, self.current_market_vibe)
-                            should_sell, reason = self.ai_advisor.closing_sell_confirm(code, item.get('prdt_name'), self.current_market_vibe, rt, detail, news, tp=tp, sl=sl)
-                            self._p3_global_processed[p4_ai_key] = True
-                            if should_sell:
-                                if self.api.order_market(code, sell_qty, False)[0]:
-                                    p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
-                                    results.append(f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
-                                    m_id = self.last_buy_models.get(code, "")
-                                    trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit, model_id=m_id)
-                                    self.record_sell(code)
-                                    trading_log.log_config(f"🤖 P4 AI 매도: [{code}]{item.get('prdt_name')} | {reason}")
-                                    self._save_all_states()
-                            else:
-                                trading_log.log_config(f"🔒 P4 AI 유지: [{code}]{item.get('prdt_name')} | {reason}")
-                        except Exception as e: log_error(f"P4 AI 매도 판단 오류: {e}")
-                        finally: self.current_action = "대기중"
+                if not skip_trade and not self._p4_ai_done_this_cycle and p4_ai_key not in self._p3_global_processed:
+                    # 이미 위에서 손절 처리되었거나 배치 리뷰에서 처리된 종목은 스킵
+                    is_processed = (p4_key in self._p3_global_processed) or (p4_ai_key in self._p3_global_processed)
+                    if not is_processed and (time.time() - self.last_buy_times.get(code, 0)) >= 3600:
+                        sell_qty = int(float(item.get('hldg_qty', 0)))
+                        if sell_qty > 0:
+                            self._p4_ai_done_this_cycle = True
+                            self.current_action = "P4 AI판단"
+                            try:
+                                # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
+                                if is_ai_enabled_time() or getattr(self, "debug_mode", False):
+                                    detail = self.api.get_naver_stock_detail(code)
+                                    news = self.api.get_naver_stock_news(code)
+                                    tp_cur, sl_cur, _ = self.get_dynamic_thresholds(code, self.current_market_vibe)
+                                    should_sell, reason = self.ai_advisor.closing_sell_confirm(code, item.get('prdt_name'), self.current_market_vibe, rt, detail, news, tp=tp_cur, sl=sl_cur)
+                                    self._p3_global_processed[p4_ai_key] = True
+                                    if should_sell:
+                                        if self.api.order_market(code, sell_qty, False)[0]:
+                                            p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
+                                            results.append(f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
+                                            m_id = self.last_buy_models.get(code, "")
+                                            trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit, model_id=m_id)
+                                            self.record_sell(code)
+                                            trading_log.log_config(f"🤖 P4 AI 매도: [{code}]{item.get('prdt_name')} | {reason}")
+                                            self._save_all_states()
+                                    else:
+                                        trading_log.log_config(f"🔒 P4 AI 유지: [{code}]{item.get('prdt_name')} | {reason}")
+                                else:
+                                    self._p3_global_processed[p4_ai_key] = True
+                                    logger.info(f"P4 AI판단 건너뜀 (Market closed/AI Disabled): {item.get('prdt_name')}")
+                            except Exception as e: log_error(f"P4 AI 매도 판단 오류: {e}")
+                            finally: self.current_action = "대기중"
 
             tp, sl, vol_spike = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
             rt = float(item.get("evlu_pfls_rt", 0.0))

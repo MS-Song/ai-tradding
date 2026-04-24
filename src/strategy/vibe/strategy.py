@@ -76,6 +76,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self.hot_report_time = 0.0
         self.rec_report_cache = ""
         self.rec_report_time = 0.0
+        self._last_p4_batch_date = None
         
         self.ai_config = {
             "amount_per_trade": v_cfg.get("ai_config", {}).get("amount_per_trade", 500000),
@@ -118,6 +119,10 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
 
     def record_sell(self, code):
         self.last_sell_times[code] = time.time()
+        # 매도 시 해당 종목에 할당된 프리셋 전략 설정도 함께 삭제 (상태 파일 최적화)
+        if code in self.preset_eng.preset_strategies:
+            del self.preset_eng.preset_strategies[code]
+            logger.info(f"🗑️ 프리셋 전략 데이터 정리: [{code}]")
         self._save_all_states()
 
     def is_reentry_restricted(self, code, cooldown_sec=7200):

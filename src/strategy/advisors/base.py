@@ -229,11 +229,24 @@ class BaseLLMAdvisor(BaseAdvisor):
         with ThreadPoolExecutor(max_workers=5) as executor:
             enriched_holdings = list(executor.map(fetch_enriched_holding, holdings))
         prompt = f"""
-        수석 포트폴리오 매니저 진단 리포트.
-        장세: {vibe} | 지수: {json.dumps(market_data)}
-        {"\n".join(enriched_holdings)}
-        1.진단 2.대응(Hold/Sell/Add) 3.리스크 4.한줄평. 한국어.
-        ※ 각 종목의 현재 수익률이 설정된 '목표'나 '손절'에 얼마나 근접했는지 반드시 참고하여 대응을 결정하세요.
+        [수석 포트폴리오 매니저 진단 리포트]
+        현재 시황: {vibe} | 주요 지수: {json.dumps(market_data, ensure_ascii=False)}
+
+        아래 보유 종목들을 TUI(Terminal UI)에서 보기 좋은 리스트 형식으로 진단하십시오.
+        {chr(10).join(enriched_holdings)}
+
+        [출력 규칙]
+        1. 종목마다 명확한 헤더(예: ■ 종목명 (코드) [의견])를 사용하십시오.
+        2. 섹션은 이모지를 활용하여 구분하십시오 (💡진단, ⚡대응, ⚠️리스크, 📝총평).
+        3. 터미널 가독성을 위해 각 줄은 너무 길지 않게(약 80자 이내) 작성하십시오.
+        4. 대응(Hold/Sell/Add)은 종목명 우측에 대문자로 명시하십시오.
+
+        [권장 형식 예시]
+        ■ 삼성전자 (005930) [HOLD]
+        💡 진단: 기술적 반등 구간 진입...
+        ⚡ 대응: 목표가 도달 전까지 보유 유지
+        ⚠️ 리스크: 외인 수급 이탈 주의
+        📝 총평: 중기 추세가 견고함
         """
         return self._call_api(prompt)
 
