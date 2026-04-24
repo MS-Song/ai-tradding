@@ -5,12 +5,16 @@ from datetime import datetime
 from src.utils import is_market_open, is_ai_enabled_time
 from src.theme_engine import analyze_popular_themes
 from src.logger import log_error, log_trade, trading_log, cleanup_text_log
+from src.utils.notifier import TelegramNotifier
 
 class DataManager:
     def __init__(self, api, strategy):
         self.api = api
         self.strategy = strategy
         self.is_running = True # [추가] 실행 상태 플래그
+        
+        # --- 알림 엔진 초기화 ---
+        self.notifier = TelegramNotifier()
         
         # --- 전역 상태 및 데이터 캐시 ---
         self.status_msg = ""
@@ -33,6 +37,11 @@ class DataManager:
         self.ranking_filter = "ALL"
         self.is_kr_market_active = False
         self.last_size = (0, 0)
+        
+        # --- 알림 상태 관리 ---
+        self.last_notified_vibe = "Neutral"
+        self.last_notified_halted = False
+        self.notified_dates = {"market_start": "", "market_end": ""}
         
         # --- 업데이트 정보 ---
         self.update_info = {"has_update": False, "latest_version": "", "download_url": "", "is_downloading": False, "progress": 0}
@@ -81,6 +90,10 @@ class DataManager:
             if hasattr(self.strategy, 'is_analyzing') and self.strategy.is_analyzing:
                 if "시장분석" not in statuses:
                     statuses.append("시장분석")
+
+            # [추가] 4. Telegram 알림 엔진 상태 추가
+            if hasattr(self, 'notifier') and self.notifier.status_msg and self.notifier.status_msg != "대기중":
+                statuses.append(f"텔레그램:{self.notifier.status_msg}")
 
             # 4. 기타 워커들 (INDEX, DATA 등)
             other_statuses = [v for k, v in self._worker_statuses.items() if k != "GLOBAL"]
@@ -153,6 +166,15 @@ class DataManager:
         if len(self.trading_logs) > 10:
             self.trading_logs.pop(0)
         log_trade(msg)
+        
+        # [추가] 텔레그램 실시간 알림 (최신 1건 추출하여 전송)
+        with trading_log.lock:
+            if trading_log.data["trades"]:
+                t = trading_log.data["trades"][0]
+                self.notifier.notify_trade(
+                    t['type'], t['code'], t['name'], t['price'], t['qty'], 
+                    t.get('memo', ''), t.get('profit', 0), t.get('model_id', '')
+                )
 
     def update_all_data(self, is_virtual, force=False):
         self.set_busy("전체 데이터 동기화")
@@ -243,6 +265,23 @@ class DataManager:
             except RuntimeError: break # 종료 시 즉시 중단
             except Exception as e:
                 log_error(f"Market Trend Update Error: {e}")
+                
+            # [추가] VIBE 변화 및 장 개시 알림
+            with self.data_lock:
+                curr_vibe = self.cached_vibe
+                curr_time_str = datetime.now().strftime('%H:%M')
+                today_str = datetime.now().strftime('%Y-%m-%d')
+                
+                # 1. VIBE 변화 알림
+                if curr_vibe != self.last_notified_vibe:
+                    self.notifier.notify_alert("시장 VIBE 변화", f"🔄 `{self.last_notified_vibe}` → `{curr_vibe}`")
+                    self.last_notified_vibe = curr_vibe
+                
+                # 2. 장 개시 알림 (09:00 ~ 09:05 사이 1회)
+                if "09:00" <= curr_time_str <= "09:05" and self.notified_dates["market_start"] != today_str:
+                    if self.is_kr_market_active:
+                        self.notifier.notify_market_start(curr_vibe)
+                        self.notified_dates["market_start"] = today_str
 
             # 2) 네이버 인기/거래량 종목 수집 (실패해도 나머지 진행)
             try:
@@ -383,8 +422,21 @@ class DataManager:
                     
                     # 서킷 브레이커 작동 중이면 추가 매수 로직 스킵
                     if self.strategy.risk_mgr.is_halted:
+                        if not self.last_notified_halted:
+                            self.notifier.notify_alert("서킷 브레이커 발동", "🚨 계좌 손실 임계치 도달로 인해 모든 자동 매수가 중단되었습니다.", is_critical=True)
+                            self.last_notified_halted = True
                         time.sleep(5)
                         continue
+                    elif self.last_notified_halted:
+                        self.notifier.notify_alert("서킷 브레이커 해제", "✅ 리스크가 완화되어 자동 매수가 다시 활성화되었습니다.")
+                        self.last_notified_halted = False
+                    
+                    # [추가] 장 마감 알림 (15:30 ~ 15:35 사이 1회)
+                    today_str = datetime.now().strftime('%Y-%m-%d')
+                    curr_time_str = datetime.now().strftime('%H:%M')
+                    if "15:30" <= curr_time_str <= "15:35" and self.notified_dates["market_end"] != today_str:
+                        self.notifier.notify_market_end(self.cached_asset)
+                        self.notified_dates["market_end"] = today_str
                     
                     if (self.strategy.bear_config.get("auto_mode", False) or self.strategy.bull_config.get("auto_mode", False)) and self.cached_recommendations:
                         # [추가] 현금 안전 비중 체크 (지키는 투자 - 물타기/불타기 공용)
@@ -758,6 +810,10 @@ class DataManager:
                     if report:
                         self.add_trading_log("📊 투자 적중 복기 리포트가 생성되었습니다 (P:성과 → 4번 탭)")
                         self.add_log("✅ 투자 적중 복기 리포트 생성 완료")
+                        
+                        # [추가] 텔레그램 리포트 전송
+                        summary = report.get("ai_analysis", {}).get("overall_lesson", "당일 매매 복기가 완료되었습니다.")
+                        self.notifier.notify_alert("📊 투자 적중 복기 리포트", summary)
                     else:
                         self.add_log("ℹ️ 당일 매매 기록이 없어 복기 리포트를 생성하지 않았습니다")
                 else:
@@ -787,7 +843,7 @@ class DataManager:
 
         while self.is_running:
             try:
-                self.set_status("UPDATE", "최신 버전 확인 중")
+                self.set_busy("최신 버전 확인 중", "UPDATE")
                 from src.updater import check_for_updates
                 res = check_for_updates(current_ver)
                 if res.get("has_update"):

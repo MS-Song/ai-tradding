@@ -763,7 +763,8 @@ def draw_trading_logs(strategy, dm, tw, th):
                 "DATA": "잔고/매매 동기화",
                 "RANKING": "인기 종목 탐색",
                 "UPDATE": "최신 버전 감지",
-                "GLOBAL": "수동 지시 처리"
+                "GLOBAL": "수동 지시 처리",
+                "TELEGRAM": "텔레그램 알림 엔진"
             }
             
             # 모든 알려진 워커와 현재 활성화된 워커 키 수집
@@ -776,8 +777,12 @@ def draw_trading_logs(strategy, dm, tw, th):
             buf.write("  " + "-" * (tw - 4) + "\n")
             
             # 우선순위 정렬 (기본 4개 먼저, 나머지는 알파벳 순)
-            sort_order = {"INDEX": 1, "DATA": 2, "RANKING": 3, "GLOBAL": 4}
+            sort_order = {"INDEX": 1, "DATA": 2, "RANKING": 3, "GLOBAL": 4, "TELEGRAM": 5}
             sorted_workers = sorted(list(all_workers), key=lambda x: (sort_order.get(x, 99), x))
+            
+            # [추가] 텔레그램 상태를 모니터링 목록에 강제 추가
+            if "TELEGRAM" not in sorted_workers:
+                sorted_workers.append("TELEGRAM")
             
             for w in sorted_workers:
                 ts = last_times.get(w.lower(), 0)
@@ -798,6 +803,10 @@ def draw_trading_logs(strategy, dm, tw, th):
                 name_col_kr = align_kr(name_col, 18)
                 
                 status = worker_status.get(w, '대기 중 (IDLE)')
+                if w == "TELEGRAM" and hasattr(dm, 'notifier'):
+                    status = dm.notifier.status_msg
+                    # 텔레그램은 별도 시각 기록이 없으므로 필요시 현재 시각 표시 가능
+                    if not ts: ts_aligned = align_kr("실시간 작동 중", 25, 'center')
                 # GLOBAL 워커가 단순히 UI를 "조회 중"인 경우는 사용자에게 노이즈이므로 대기 중으로 표시
                 display_status = status
                 if w == 'GLOBAL' and "조회 중" in status:

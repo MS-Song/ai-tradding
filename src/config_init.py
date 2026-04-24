@@ -57,6 +57,7 @@ def ensure_env(force=False):
     env_data = dotenv_values(env_path) if os.path.exists(env_path) else {}
     
     required_keys = ["KIS_APPKEY", "KIS_SECRET", "KIS_CANO", "TAKE_PROFIT_THRESHOLD", "STOP_LOSS_THRESHOLD", "AI_AMOUNT_PER_TRADE"]
+    # TELEGRAM은 선택 사항이므로 필수 체크에서 제외
     missing = [key for key in required_keys if not env_data.get(key)]
     
     if missing or force:
@@ -89,7 +90,9 @@ def ensure_env(force=False):
             ("AI_AUTO_SELL_MODE", "AI 자율 매도(AUTO) 모드 사용 (Y/N)", "FALSE", "bool"),
             ("AI_DEBUG_MODE", "AI 디버그 모드 (장외 AI 강제실행) (Y/N)", "FALSE", "bool"),
             ("AUTO_APPLY_AI_STRATEGY", "AI 시황 분석 전략 자동 반영 여부 (Y/N)", "FALSE", "bool"),
-            ("BASE_SEED_MONEY", "총 누적 입금액(초기 시드 + 추가 입금액) (원)", "0", "text")
+            ("BASE_SEED_MONEY", "총 누적 입금액(초기 시드 + 추가 입금액) (원)", "0", "text"),
+            ("TELEGRAM_TOKEN", "텔레그램 봇 토큰 (Bot Token)", "", "text"),
+            ("TELEGRAM_CHAT_ID", "텔레그램 채팅 ID (Chat ID)", "", "text")
         ]
 
         def handle_input(key, label, default, input_type, current_env):
