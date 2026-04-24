@@ -401,8 +401,9 @@ def draw_performance_report(strategy, dm, tw, th):
         t1 = "\033[7m" if current_tab == 1 else ""
         t2 = "\033[7m" if current_tab == 2 else ""
         t3 = "\033[7m" if current_tab == 3 else ""
+        t4 = "\033[7m" if current_tab == 4 else ""
         
-        menu = f" {t1} 1.수익 상위(Top 10) \033[0m | {t2} 2.손실 상위(Shame 10) \033[0m | {t3} 3.모델별 성과 \033[0m "
+        menu = f" {t1} 1.수익 상위(Top 10) \033[0m | {t2} 2.손실 상위(Shame 10) \033[0m | {t3} 3.금일 투자 성과 \033[0m | {t4} 4.투자 적중 \033[0m "
         buf.write(align_kr(menu, tw, 'center') + "\n")
         buf.write("=" * tw + "\n\n")
 
@@ -483,22 +484,293 @@ def draw_performance_report(strategy, dm, tw, th):
                     item_count += 1
 
         elif current_tab == 3:
-            # 3. 모델별 통합 성과
-            model_stats = trading_log.get_model_performance()
-            buf.write("\033[1;96m" + " [AI 모델별 통합 승률 및 수익 성과]" + "\033[0m\n")
+            # 3. 금일 투자 성과
+            from datetime import datetime as dt_cls
+            today = dt_cls.now().strftime('%Y-%m-%d')
+            
+            buf.write("\033[1;96m" + " [금일 투자 성과 브리핑]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
+            
+            # --- 금일 거래 내역 수집 ---
+            buy_trades = []   # 금일 매수 종목
+            sell_trades = []  # 금일 매도 종목
+            sell_types = ["익절", "손절", "청산", "확정", "매도", "종료"]
+            
+            with trading_log.lock:
+                for t in trading_log.data.get("trades", []):
+                    if not t["time"].startswith(today):
+                        continue
+                    t_type = t.get("type", "")
+                    if "매수" in t_type:
+                        buy_trades.append(t)
+                    elif any(x in t_type for x in sell_types):
+                        sell_trades.append(t)
+            
+            # --- 현재가 조회 (캐싱된 보유 종목 정보 + Naver 조회) ---
+            def get_current_price(code):
+                """캐시된 보유 종목 정보에서 현재가를 먼저 찾고, 없으면 Naver API 조회"""
+                # 1. 보유 종목 캐시에서 현재가 조회
+                for h in dm.cached_holdings:
+                    if h.get("pdno") == code:
+                        return int(float(h.get("prpr", 0)))
+                # 2. Naver 상세에서 조회 (이미 캐싱됨)
+                try:
+                    detail = strategy.api.get_naver_stock_detail(code)
+                    return int(float(detail.get("price", 0)))
+                except:
+                    return 0
+
+            # --- 시장 지수 데이터 ---
+            kospi_data = dm.cached_market_data.get("KOSPI", {})
+            kosdaq_data = dm.cached_market_data.get("KOSDAQ", {})
+            kospi_rate = kospi_data.get("rate", 0) if kospi_data else 0
+            kosdaq_rate = kosdaq_data.get("rate", 0) if kosdaq_data else 0
+            
+            # --- 금일 실현 손익 ---
+            realized_profit = trading_log.get_daily_profit()
+            asset = dm.cached_asset
+            daily_pnl_rate = asset.get('daily_pnl_rate', 0.0)
+            daily_pnl_amt = asset.get('daily_pnl_amt', 0.0)
+            
+            max_lines = max(5, th - 12)
+            line_count = 0
+            
+            # ① 브리핑 헤더
+            r_color = "\033[91m" if realized_profit > 0 else "\033[94m" if realized_profit < 0 else "\033[93m"
+            d_color = "\033[91m" if daily_pnl_rate > 0 else "\033[94m" if daily_pnl_rate < 0 else "\033[93m"
+            k_color = "\033[91m" if kospi_rate >= 0 else "\033[94m"
+            
+            buf.write(f" 📋 {today} | "
+                      f"실현손익: {r_color}{realized_profit:+,}원\033[0m | "
+                      f"평가손익: {d_color}{int(daily_pnl_amt):+,}원({daily_pnl_rate:+.2f}%)\033[0m | "
+                      f"KOSPI: {k_color}{kospi_rate:+.2f}%\033[0m | "
+                      f"KOSDAQ: {k_color}{kosdaq_rate:+.2f}%\033[0m\n")
+            buf.write("-" * tw + "\n")
+            line_count += 2
+            
+            # ② 매수 종목 (매입가/현재가 비교)
+            buf.write("\033[1;92m [📈 금일 매수 종목]\033[0m\n")
+            line_count += 1
+            if not buy_trades:
+                buf.write("  금일 매수 내역이 없습니다.\n")
+                line_count += 1
+            else:
+                # 종목별 합산 (같은 종목 여러 번 매수 시)
+                buy_summary = {}
+                for t in buy_trades:
+                    code = t.get("code", "")
+                    if code not in buy_summary:
+                        buy_summary[code] = {"name": t.get("name", "?"), "avg_price": 0, "total_amt": 0, "total_qty": 0, "type": t.get("type", ""), "model": t.get("model_id", "")}
+                    price = float(t.get("price", 0))
+                    qty = int(t.get("qty", 0))
+                    buy_summary[code]["total_amt"] += price * qty
+                    buy_summary[code]["total_qty"] += qty
+                
+                for code, info in buy_summary.items():
+                    if line_count >= max_lines - 8: break
+                    avg_price = int(info["total_amt"] / info["total_qty"]) if info["total_qty"] > 0 else 0
+                    cur_price = get_current_price(code)
+                    
+                    if cur_price > 0 and avg_price > 0:
+                        diff = cur_price - avg_price
+                        diff_rate = (diff / avg_price) * 100
+                        # 현재가가 매입가보다 높으면 빨강(잘 샀다), 낮으면 파랑(못 샀다)
+                        color = "\033[91m" if diff >= 0 else "\033[94m"
+                        verdict = "✅잘샀다" if diff >= 0 else "❌못샀다"
+                        buf.write(f"  {align_kr(info['name'][:10], 12)} [{code}] "
+                                  f"매입:{avg_price:>8,} → 현재:{color}{cur_price:>8,}\033[0m "
+                                  f"({color}{diff:+,} / {diff_rate:+.2f}%\033[0m) "
+                                  f"{info['total_qty']}주 | {info['type'][:6]} {verdict}\n")
+                    else:
+                        buf.write(f"  {align_kr(info['name'][:10], 12)} [{code}] 매입:{avg_price:>8,} | {info['total_qty']}주 | {info['type'][:6]}\n")
+                    line_count += 1
+            
+            buf.write("-" * tw + "\n")
+            line_count += 1
+            
+            # ③ 매도 종목 (매도가/현재가 비교)
+            buf.write("\033[1;91m [📉 금일 매도 종목]\033[0m\n")
+            line_count += 1
+            if not sell_trades:
+                buf.write("  금일 매도 내역이 없습니다.\n")
+                line_count += 1
+            else:
+                sell_summary = {}
+                for t in sell_trades:
+                    code = t.get("code", "")
+                    if code not in sell_summary:
+                        sell_summary[code] = {"name": t.get("name", "?"), "total_amt": 0, "total_qty": 0, "total_profit": 0, "type": t.get("type", ""), "model": t.get("model_id", "")}
+                    price = float(t.get("price", 0))
+                    qty = int(t.get("qty", 0))
+                    sell_summary[code]["total_amt"] += price * qty
+                    sell_summary[code]["total_qty"] += qty
+                    sell_summary[code]["total_profit"] += float(t.get("profit", 0))
+                
+                for code, info in sell_summary.items():
+                    if line_count >= max_lines - 6: break
+                    avg_sell = int(info["total_amt"] / info["total_qty"]) if info["total_qty"] > 0 else 0
+                    cur_price = get_current_price(code)
+                    profit = int(info["total_profit"])
+                    p_color = "\033[91m" if profit > 0 else "\033[94m" if profit < 0 else ""
+                    
+                    if cur_price > 0 and avg_sell > 0:
+                        diff = cur_price - avg_sell
+                        # 현재가가 매도가보다 높으면 파랑(일찍 팔았다), 낮으면 빨강(잘 팔았다)
+                        color = "\033[94m" if diff > 0 else "\033[91m" if diff < 0 else ""
+                        verdict = "✅잘팔았다" if diff <= 0 else "❌일찍팔았다"
+                        buf.write(f"  {align_kr(info['name'][:10], 12)} [{code}] "
+                                  f"매도:{avg_sell:>8,} → 현재:{color}{cur_price:>8,}\033[0m "
+                                  f"({color}{diff:+,}\033[0m) "
+                                  f"수익:{p_color}{profit:+,}원\033[0m | {info['type'][:6]} {verdict}\n")
+                    else:
+                        buf.write(f"  {align_kr(info['name'][:10], 12)} [{code}] 매도:{avg_sell:>8,} | 수익:{p_color}{profit:+,}원\033[0m | {info['type'][:6]}\n")
+                    line_count += 1
+            
+            buf.write("-" * tw + "\n")
+            line_count += 1
+            
+            # ④ 시장 대비 성과 진단
+            buf.write("\033[1;93m [📊 시장 대비 투자 성과 진단]\033[0m\n")
+            line_count += 1
+            
+            # KOSPI vs 내 수익률 비교
+            my_rate = daily_pnl_rate
+            market_rate = kospi_rate  # KOSPI 기준
+            alpha = my_rate - market_rate
+            
+            if my_rate > 0 and market_rate > 0:
+                if alpha >= 0:
+                    verdict_msg = f"\033[91m✅ 상승장에서 시장 대비 +{alpha:.2f}%p 초과 수익! 잘하고 있습니다.\033[0m"
+                    if realized_profit < 0:
+                        verdict_msg = f"\033[93m🛡️ 자산은 상승 중이나 당일 실현 손실({realized_profit:,}원) 발생. 매도 타점 점검 필요.\033[0m"
+                else:
+                    verdict_msg = f"\033[93m⚠️ 상승장이지만 시장 대비 {alpha:.2f}%p 부족. 종목 선정 점검 필요.\033[0m"
+            elif my_rate > 0 and market_rate <= 0:
+                verdict_msg = f"\033[91m🏆 하락장에서 수익! 탁월한 종목 선정. Alpha: {alpha:+.2f}%p\033[0m"
+                if realized_profit < 0:
+                    verdict_msg = f"\033[93m🛡️ 하락장에서 시장 대비 선방 중(Alpha: {alpha:+.2f}%p). 단, 실현 손실 주의.\033[0m"
+            elif my_rate <= 0 and market_rate > 0:
+                verdict_msg = f"\033[94m🚨 시장은 상승 중인데 손실 발생! 전략 재점검이 시급합니다. Alpha: {alpha:+.2f}%p\033[0m"
+            elif my_rate <= 0 and market_rate <= 0:
+                if alpha >= 0:
+                    verdict_msg = f"\033[93m🛡️ 하락장에서 방어 성공. 시장 대비 {alpha:+.2f}%p 선방.\033[0m"
+                    if realized_profit < 0 and abs(realized_profit) > 50000:
+                        verdict_msg = f"\033[94m❌ 시장 대비 선방 중이나 실현 손실({realized_profit:,}원)이 큽니다. 리스크 관리 강화.\033[0m"
+                else:
+                    verdict_msg = f"\033[94m❌ 하락장에서 시장보다 더 큰 하락. 리스크 관리 강화 필요.\033[0m"
+            else:
+                verdict_msg = "\033[90mℹ️ 데이터 수집 중...\033[0m"
+            
+            buf.write(f"  내 수익률: {d_color}{my_rate:+.2f}%\033[0m vs KOSPI: {k_color}{market_rate:+.2f}%\033[0m → Alpha: {alpha:+.2f}%p\n")
+            buf.write(f"  {verdict_msg}\n")
+            line_count += 2
+            
+            # ⑤ 전략 제언
+            if alpha < -1.0:
+                buf.write("  💡 \033[93m제언: 손절 기준 타이트닝, 종목 교체 빈도 축소, 현금 비중 확대 검토\033[0m\n")
+                line_count += 1
+            elif alpha > 2.0:
+                buf.write("  💡 \033[92m제언: 현재 전략이 효과적. 불타기로 수익 극대화 기회를 노려보세요.\033[0m\n")
+                line_count += 1
+            
+            buf.write("-" * tw + "\n")
+            line_count += 1
+            
+            # ⑥ 모델별 수익률 (하단 축약)
+            model_stats = trading_log.get_model_performance()
+            buf.write("\033[1;95m [🤖 모델별 누적 수익률]\033[0m\n")
+            line_count += 1
             if not model_stats:
                 buf.write("  모델별 성과 데이터가 없습니다.\n")
+                line_count += 1
             else:
-                buf.write("\033[1m" + f" {align_kr('모델', 10)} | {align_kr('매수', 8)} | {align_kr('결과', 8)} | {align_kr('승률', 10)} | {align_kr('누적수익금', 18)}" + "\033[0m\n")
+                buf.write("\033[1m" + f" {align_kr('모델', 10)} | {align_kr('매수', 6)} | {align_kr('매도', 6)} | {align_kr('승률', 8)} | {align_kr('누적수익금', 16)}" + "\033[0m\n")
+                line_count += 1
                 for m, s in model_stats.items():
+                    if line_count >= max_lines: break
                     win_rate = (s['wins'] / s['total_trades'] * 100) if s['total_trades'] > 0 else 0
                     w_color = "\033[91m" if win_rate >= 50 else "\033[94m"
                     p_color = "\033[91m" if s['total_profit'] > 0 else "\033[94m"
-                    buf.write(f" {align_kr(m, 10)} | {align_kr(str(s['buy_count']), 8, 'right')} | {align_kr(str(s['total_trades']), 8, 'right')} | {w_color}{align_kr(f'{win_rate:.1f}%', 10, 'right')}\033[0m | {p_color}{align_kr(f'{int(s['total_profit']):+,}원', 18, 'right')}\033[0m\n")
+                    tp = int(s['total_profit'])
+                    buf.write(f" {align_kr(m, 10)} | {align_kr(str(s['buy_count']), 6, 'right')} | {align_kr(str(s['total_trades']), 6, 'right')} | {w_color}{align_kr(f'{win_rate:.1f}%', 8, 'right')}\033[0m | {p_color}{align_kr(f'{tp:+,}원', 16, 'right')}\033[0m\n")
+                    line_count += 1
+
+        elif current_tab == 4:
+            # 4. 투자 적중 (매매 복기 누적 분석)
+            retro = getattr(strategy, 'retrospective', None)
+            buf.write("\033[1;95m" + " [투자 적중 분석 (매매 복기 누적 리포트)]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            
+            if not retro:
+                buf.write("  ⚠️ 투자 적중 엔진이 초기화되지 않았습니다.\n")
+            else:
+                # 누적 통계 헤더
+                stats = retro.get_cumulative_stats()
+                if stats["total_days"] > 0:
+                    net_color = "\033[91m" if stats["net_profit"] > 0 else "\033[94m"
+                    wr_color = "\033[91m" if stats["win_rate"] >= 50 else "\033[94m"
+                    buf.write(f" \033[1m[누적 {stats['total_days']}일]\033[0m "
+                              f"승률: {wr_color}{stats['win_rate']:.1f}%\033[0m | "
+                              f"수익종목: \033[91m{int(stats['total_profit']):+,}\033[0m | "
+                              f"손실종목: \033[94m{int(stats['total_loss']):+,}\033[0m | "
+                              f"순이익: {net_color}{int(stats['net_profit']):+,}\033[0m\n")
+                    buf.write("-" * tw + "\n")
+                
+                # 최근 리포트 표시 (최대 3일치)
+                reports = retro.get_reports(limit=3)
+                if not reports:
+                    buf.write("\n  📭 아직 생성된 복기 리포트가 없습니다.\n")
+                    buf.write("  ℹ️  매일 오후 4시(16:00)에 자동 생성되며, 장 마감 후 30분마다 업데이트됩니다.\n")
+                else:
+                    max_lines = max(5, th - 16)
+                    line_count = 0
+                    for date_str, report in reports:
+                        if line_count >= max_lines: break
+                        
+                        gen_time = report.get("generated_at", "?").split(' ')[-1]
+                        upd_count = report.get("update_count", 1)
+                        vibe_tag = report.get("market_vibe", "N/A")
+                        buf.write(f"\n \033[1;93m📊 [{date_str}]\033[0m 생성: {gen_time} | 갱신: {upd_count}회 | 장세: {vibe_tag}\n")
+                        line_count += 1
+                        
+                        # 수익 종목 요약
+                        for s in report.get("top_profits", []):
+                            if line_count >= max_lines: break
+                            buf.write(f"  \033[92m🟢 {s.get('name', '?')}\033[0m \033[91m{int(s.get('total_profit', 0)):+,}\033[0m원")
+                            if s.get("closing_price"):
+                                buf.write(f" (종가:{int(s['closing_price']):,}원)")
+                            buf.write("\n")
+                            line_count += 1
+                        
+                        # 손실 종목 요약
+                        for s in report.get("top_losses", []):
+                            if line_count >= max_lines: break
+                            buf.write(f"  \033[91m🔴 {s.get('name', '?')}\033[0m \033[94m{int(s.get('total_profit', 0)):+,}\033[0m원")
+                            if s.get("closing_price"):
+                                buf.write(f" (종가:{int(s['closing_price']):,}원)")
+                            buf.write("\n")
+                            line_count += 1
+                        
+                        # AI 분석 의견 (축약)
+                        ai_text = report.get("ai_analysis", "")
+                        if ai_text:
+                            for line in ai_text.split('\n'):
+                                if line_count >= max_lines: break
+                                stripped = line.strip()
+                                if stripped:
+                                    # 너비 제한
+                                    if get_visual_width(stripped) > tw - 4:
+                                        while get_visual_width(stripped) > tw - 6:
+                                            stripped = stripped[:-1]
+                                        stripped += ".."
+                                    buf.write(f"  {stripped}\n")
+                                    line_count += 1
+                        
+                        buf.write("-" * tw + "\n")
+                        line_count += 1
 
         buf.write("\n" + "-" * tw + "\n")
-        buf.write(align_kr(" [1, 2, 3]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
+        buf.write(align_kr(" [1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
         sys.stdout.write(buf.getvalue()); sys.stdout.flush()
         
         while True:
@@ -508,6 +780,7 @@ def draw_performance_report(strategy, dm, tw, th):
                 if kl == '1': current_tab = 1; break
                 elif kl == '2': current_tab = 2; break
                 elif kl == '3': current_tab = 3; break
+                elif kl == '4': current_tab = 4; break
                 elif kl in ['q', 'esc', ' ']:
                     buf.close()
                     return
@@ -750,7 +1023,9 @@ def perform_interaction(key, api, strategy, dm, cycle):
                         if strategy.parse_and_apply_ai_strategy():
                             if strategy.ai_config.get("auto_apply"): dm.show_status("🚀 전략 자동 반영됨")
                     else: dm.show_status(f"❌ AI 분석 실패", True)
-                finally: dm.clear_busy()
+                finally:
+                    strategy.is_ready = True # [추가] 수동 분석 시에도 시스템 준비 상태로 전환
+                    dm.clear_busy()
             command_queue.put((task_ai, (), {}))
 
         elif mode == '5':

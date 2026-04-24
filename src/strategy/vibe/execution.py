@@ -188,32 +188,54 @@ class ExecutionMixin:
             code = item.get("pdno")
             tp, sl, spike = self.get_dynamic_thresholds(code, market_trend)
             
+            # [추가] 기술적 지표 분석 (MA) 정보 추출
+            ma_info = ""
+            try:
+                ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+                sig = ma_analysis.get('signal', 'NEUTRAL')
+                ma_info = f" [MA:{sig}]"
+            except: pass
+
             # 1. 물타기 체크
             rec_bear = self.recovery_eng.get_recommendation(item, self.global_panic, sl, vibe=market_trend)
             if rec_bear:
-                rec_bear['reason'] = f"손절선({sl}%) 근접 하락 대응"
+                rec_bear['reason'] = f"손절선({sl}%) 근접 하락 대응{ma_info}"
                 recs.append(rec_bear)
             
             # 2. 불타기 체크
             rec_bull = self.pyramid_eng.get_recommendation(item, market_trend, self.global_panic, spike, tp)
             if rec_bull:
-                rec_bull['reason'] = f"익절선({tp}%) 추종 상승 매수"
+                rec_bull['reason'] = f"익절선({tp}%) 추종 상승 매수{ma_info}"
                 recs.append(rec_bull)
         return recs
 
     def confirm_buy_decision(self, code: str, name: str, score: float = 0.0) -> Tuple[bool, str]:
         self._cleanup_rejected_stocks()
         if code in self.rejected_stocks: return False, f"당일 매수 거절됨"
+        
+        # [Safety] indicators 초기화 위치를 함수 최상단으로 이동 (UnboundLocalError 방지)
+        indicators = {}
+        
         detail = self.api.get_naver_stock_detail(code)
         try: price = float(detail.get('price', 0))
         except: price = 0.0
         if price == 0.0: return False, "실시간 데이터 오류: 시세 0원"
         news = self.api.get_naver_stock_news(code)
-        indicators = {}
+        
         try:
             candles = self.api.get_minute_chart_price(code)
-            if candles: indicators = self.indicator_eng.get_all_indicators(candles)
-        except: pass
+            if candles: 
+                indicators = self.indicator_eng.get_all_indicators(candles)
+            
+            # [추가] MA 이중 분석 및 점수 보정
+            ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+            if ma_analysis:
+                indicators['ma_analysis'] = ma_analysis
+                # 일봉 하락추세(CAUTION)인 경우 AI 점수 20% 감축하여 보수적 접근 유도
+                if ma_analysis.get('signal') == "CAUTION":
+                    score *= 0.8
+        except Exception as e:
+            logger.warning(f"지표 분석 중 오류 발생 (스킵): {e}")
 
         phase = self.get_market_phase()
         is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news, indicators=indicators, score=score, phase=phase)
@@ -259,12 +281,25 @@ class ExecutionMixin:
             else:
                 tp, sl, _ = self.get_dynamic_thresholds(code, self.current_market_vibe)
 
+            # [추가] MA 괴리율 분석 데이터 보강
+            ma_gap_str = ""
+            try:
+                min_candles = self.api.get_minute_chart_price(code)
+                if min_candles:
+                    closes = [float(c.get('stck_clpr', 0)) for c in min_candles]
+                    sma_20 = sum(closes[:20]) / 20 if len(closes) >= 20 else 0
+                    if sma_20 > 0:
+                        gap = ((float(h.get('prpr', 0)) - sma_20) / sma_20) * 100
+                        ma_gap_str = f" | 분봉20MA괴리: {gap:+.2f}%"
+            except: pass
+
             holdings_data.append({
                 "code": code, "name": h['prdt_name'],
                 "rt": float(h.get('evlu_pfls_rt', 0)),
                 "tp": tp, "sl": sl,
                 "per": detail.get('per'), "pbr": detail.get('pbr'),
-                "news": ", ".join(news[:2])
+                "news": ", ".join(news[:2]),
+                "ma_info": ma_gap_str
             })
         
         # 2. AI Advisor 호출 (배치 분석)

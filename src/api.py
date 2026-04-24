@@ -184,7 +184,8 @@ class KISAPI:
                 "d0_cash": d0_cash,
                 "d2_cash": d2_cash,
                 "pnl": pnl,
-                "deposit": self._safe_float(raw_summary.get("prvs_rcdl_exca_amt") or 0)
+                "deposit": self._safe_float(raw_summary.get("prvs_rcdl_exca_amt") or 0),
+                "prev_day_asset": self._safe_float(raw_summary.get("prdy_evlu_amt") or 0)
             }
             return holdings, asset_info
         except: return [], {"total_asset":0, "total_principal":0, "stock_eval":0, "stock_principal":0, "cash":0, "pnl":0, "deposit":0}
@@ -250,11 +251,49 @@ class KISAPI:
         try:
             res = self._request("GET", url, headers=headers, params=params, timeout=10)
             data = res.json()
-            if data.get("rt_cd") != "0": return []
+            if data.get("rt_cd") != "0": 
+                return self._get_naver_daily_chart_fallback(code)
             result = data.get("output2", [])
+            if not result:
+                return self._get_naver_daily_chart_fallback(code)
             if result: self._set_cached_chart(cache_key, result)
             return result
-        except: return []
+        except: 
+            return self._get_naver_daily_chart_fallback(code)
+
+    def _get_naver_daily_chart_fallback(self, code: str, count: int = 60) -> List[dict]:
+        """KIS API 실패 시 네이버 금융 XML API를 통해 일봉 데이터를 가져옵니다."""
+        import xml.etree.ElementTree as ET
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
+        try:
+            time.sleep(random.uniform(0.2, 0.4))
+            res = requests.get(url, timeout=5)
+            if res.status_code != 200: return []
+            
+            root = ET.fromstring(res.text)
+            items = root.findall(".//itemdata/item")
+            
+            # 네이버 XML 형식: "20240424|73000|74000|72000|73500|1234567" (날짜|시가|고가|저가|종가|거래량)
+            converted = []
+            for item in reversed(items): # 최신순으로 정렬 (KIS 방식)
+                data_str = item.get("data", "")
+                if not data_str: continue
+                parts = data_str.split("|")
+                if len(parts) < 6: continue
+                
+                converted.append({
+                    "stck_bsop_date": parts[0],
+                    "stck_oprc": parts[1],
+                    "stck_hgpr": parts[2],
+                    "stck_lwpr": parts[3],
+                    "stck_clpr": parts[4],
+                    "acml_vol": parts[5]
+                })
+            return converted
+        except Exception as e:
+            from src.logger import log_error
+            log_error(f"Naver 일봉 Fallback 오류: {e}")
+            return []
 
     @retry_api(max_retries=2, delay=1.5)
     def get_minute_chart_price(self, code: str, target_time: str = "") -> List[dict]:

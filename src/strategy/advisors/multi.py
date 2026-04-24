@@ -79,3 +79,6 @@ class MultiLLMAdvisor(BaseAdvisor):
 
     def get_portfolio_strategic_review(self, *args, **kwargs):
         return self._try_all("get_portfolio_strategic_review", *args, **kwargs)
+
+    def analyze_trade_retrospective(self, *args, **kwargs):
+        return self._try_all("analyze_trade_retrospective", *args, **kwargs)

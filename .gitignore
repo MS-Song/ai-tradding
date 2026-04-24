@@ -11,6 +11,7 @@ target/
 trading_state.json
 trading.log
 trading_logs.json
+trade_retrospective.json
 error.log
 ai_usage.json
 activate_venv.sh

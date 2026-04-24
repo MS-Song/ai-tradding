@@ -117,12 +117,20 @@ class DataManager:
         if not a or a.get('total_asset', 0) <= 0: return
         
         today_str = datetime.now().strftime('%Y-%m-%d')
-        # 기준점이 없거나 날짜가 변경된 경우에만 기준 자산 설정
-        if self.strategy.start_day_asset == 0 or self.strategy.last_asset_date != today_str:
-            self.strategy.start_day_asset = a['total_asset']
+        
+        # 1. KIS API에서 제공하는 전일 평가 금액(prev_day_asset)을 우선적으로 기준점으로 사용
+        # 장 중간에 앱을 재시작하더라도 당일 전체의 수익률을 정확히 계산하기 위함
+        p_asset = a.get('prev_day_asset', 0)
+        if p_asset > 0:
+            self.strategy.start_day_asset = p_asset
             self.strategy.last_asset_date = today_str
-            self.strategy._save_all_states()
-            self.add_log(f"📅 기준 자산 설정: {self.strategy.start_day_asset:,.0f}원")
+        else:
+            # 2. 전일 자산 데이터가 없을 경우에만 기존처럼 앱 시작 시점 자산 사용 (Fallback)
+            if self.strategy.start_day_asset == 0 or self.strategy.last_asset_date != today_str:
+                self.strategy.start_day_asset = a['total_asset']
+                self.strategy.last_asset_date = today_str
+                self.strategy._save_all_states()
+                self.add_log(f"📅 기준 자산 설정(Fallback): {self.strategy.start_day_asset:,.0f}원")
 
         if self.strategy.start_day_asset > 0:
             a['daily_pnl_rate'] = (a['total_asset'] / self.strategy.start_day_asset - 1) * 100
@@ -694,8 +702,71 @@ class DataManager:
             # 1시간 대기
             time.sleep(3600)
 
+    def retrospective_worker(self):
+        """투자 적중 복기 워커 (장 마감 후 30분 주기)
+        - 매일 16:00 이후 당일 복기 리포트 자동 생성
+        - 이미 생성된 경우 30분마다 사후 분석 업데이트
+        - 주말/공휴일에는 실행하지 않음
+        """
+        from datetime import time as dtime
+        
+        while self.is_running:
+            try:
+                now = datetime.now()
+                
+                # 주말 제외
+                if now.weekday() >= 5:
+                    time.sleep(1800)
+                    continue
+                
+                # 16:00 이전이면 대기
+                if now.time() < dtime(16, 0):
+                    time.sleep(60)
+                    continue
+                
+                # 22:00 이후에는 더 이상 분석하지 않음 (야간 API 절약)
+                if now.time() > dtime(22, 0):
+                    time.sleep(1800)
+                    continue
+                
+                retro = getattr(self.strategy, 'retrospective', None)
+                if not retro:
+                    time.sleep(1800)
+                    continue
+                
+                today_str = now.strftime('%Y-%m-%d')
+                vibe = self.cached_vibe or "Neutral"
+                
+                if not retro.has_daily_report(today_str):
+                    # 당일 리포트 최초 생성
+                    self.set_busy("복기 리포트 생성")
+                    self.add_log("📝 당일 투자 적중 복기 분석을 시작합니다...")
+                    report = retro.generate_daily_report(today_str, vibe)
+                    if report:
+                        self.add_trading_log("📊 투자 적중 복기 리포트가 생성되었습니다 (P:성과 → 4번 탭)")
+                        self.add_log("✅ 투자 적중 복기 리포트 생성 완료")
+                    else:
+                        self.add_log("ℹ️ 당일 매매 기록이 없어 복기 리포트를 생성하지 않았습니다")
+                else:
+                    # 기존 리포트 사후 분석 업데이트 (최대 3회까지만)
+                    existing = retro.get_report(today_str)
+                    if existing and existing.get("update_count", 1) < 4:
+                        self.set_busy("복기 사후분석")
+                        self.add_log("🔄 투자 적중 사후 분석을 업데이트합니다...")
+                        retro.update_post_market_analysis(today_str, vibe)
+                        self.add_log(f"✅ 투자 적중 사후 분석 업데이트 완료 ({existing.get('update_count', 1)+1}회차)")
+                
+            except Exception as e:
+                log_error(f"Retrospective Worker Error: {e}")
+            finally:
+                self.clear_busy()
+            
+            # 30분 대기
+            time.sleep(1800)
+
     def start_workers(self, is_virtual):
         threading.Thread(target=self.index_update_worker, daemon=True).start()
         threading.Thread(target=self.data_update_worker, args=(is_virtual,), daemon=True).start()
         threading.Thread(target=self.theme_update_worker, daemon=True).start()
         threading.Thread(target=self.log_cleanup_worker, daemon=True).start()
+        threading.Thread(target=self.retrospective_worker, daemon=True).start()

@@ -16,6 +16,7 @@ from src.strategy.rebalance_engine import RebalanceEngine
 from src.strategy.preset_engine import PresetStrategyEngine
 from src.strategy.risk_manager import RiskManager
 from src.strategy.state_manager import StateManager
+from src.strategy.retrospective_engine import RetrospectiveEngine
 from src.strategy.vibe.analysis import AnalysisMixin
 from src.strategy.vibe.execution import ExecutionMixin
 
@@ -100,6 +101,10 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self.rebalance_eng = RebalanceEngine(api, self.ai_advisor)
         self.preset_eng = PresetStrategyEngine(self.ai_advisor, api, lambda: self.current_market_vibe, self._save_all_states)
         self.analyzer.debug_mode = self.debug_mode # [추가]
+        
+        # --- 투자 적중 복기 엔진 ---
+        self.retrospective = RetrospectiveEngine(api=api, ai_advisor=self.ai_advisor)
+        
         self._load_all_states()
         self.state_mgr.update_yesterday_recs()
 
@@ -150,6 +155,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             self.analyzer.ai_advisor = self.ai_advisor
             self.analyzer.debug_mode = self.debug_mode # [추가]
             self.preset_eng.ai_advisor = self.ai_advisor
+            if hasattr(self, 'retrospective') and self.retrospective:
+                self.retrospective.ai_advisor = self.ai_advisor
             logger.info("🔧 시스템 설정 동기화 완료")
             return True
         except Exception as e: log_error(f"설정 동기화 오류: {e}"); return False

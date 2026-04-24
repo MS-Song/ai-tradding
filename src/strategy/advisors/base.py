@@ -61,6 +61,14 @@ class BaseAdvisor(ABC):
         """
         pass
 
+    @abstractmethod
+    def analyze_trade_retrospective(self, date_str: str, vibe: str, profits: List[dict], losses: List[dict], is_update: bool = False) -> Optional[str]:
+        """
+        당일 매매 복기 분석: 수익/손실 TOP 종목의 사유를 분석하여
+        적중 여부를 판정하고 개선점을 도출합니다.
+        """
+        pass
+
 class BaseLLMAdvisor(BaseAdvisor):
     # API 키별 마지막 호출 시간을 추적하기 위한 클래스 변수 (모든 인스턴스가 공유)
     _last_call_times = {}
@@ -119,6 +127,16 @@ class BaseLLMAdvisor(BaseAdvisor):
                 bb = ind.get('bb', {})
                 indicators_txt += f" {code}: RSI {ind.get('rsi', 0):.0f}, %b {bb.get('percent_b', 0):.1f}"
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+        ma_info = ""
+        if indicators:
+            # 개별 종목에 대한 MA 분석이 있는 경우 요약 정보 추가
+            for code, ind in indicators.items():
+                if isinstance(ind, dict) and 'ma_analysis' in ind:
+                    ma = ind['ma_analysis']
+                    d = ma.get('daily', {})
+                    m = ma.get('minute', {})
+                    ma_info += f"\n        [{code} MA] 일봉:{d.get('trend','?')} | 분봉20MA:{int(m.get('ma',{}).get('sma_20',0)):,}원 (Signal:{ma.get('signal','?')})"
+
         prompt = f"""
         현재 시각: {now_str}
         당신은 시장의 흐름에 민감한 초단기 데이트레이더(Scalper)입니다. 오늘의 변동성만을 수익의 원천으로 삼습니다. 아래 정보로 간결한 전략을 제시하세요. 불필요한 공백/수식어 금지.
@@ -130,22 +148,26 @@ class BaseLLMAdvisor(BaseAdvisor):
 
         - 지수: {json.dumps(market_data)} | Vibe: {vibe}
         - 포트: {holdings_txt if holdings else "None"}
-        - 추천: {recs_txt if recs_txt else "None"} {indicators_txt}
+        - 추천: {recs_txt if recs_txt else "None"} {indicators_txt} {ma_info}
         - 매수: {current_config.get('ai_amt'):,}원
+        
         [전략 가이드라인]
-        1. 장기적 기업 가치나 모호한 불확실성에 매몰되지 마세요. 
-        2. 지금 당장의 수급, 거래량, 차트 에너지가 확인되면 적극적으로 매수를 제안하세요. 
-        3. 리스크는 타이트한 손절선으로 방어하면 되므로, 진입 기회를 놓치지 않는 것이 중요합니다.
+        1. 이동평균선(MA) 데이터를 적극 참고하십시오. 일봉 상승추세(UP)이면서 현재가가 분봉 20MA에 근접(BUY_ZONE)한 경우 적극 매수를 검토하세요.
+        2. 분봉 20MA 대비 괴리율이 과도하게 높으면(OVERBOUGHT) 추격 매수를 지양하고 눌림목을 기다리도록 조언하세요.
+        3. 장기적 기업 가치나 모호한 불확실성에 매몰되지 마세요. 
+        4. 지금 당장의 수급, 거래량, 차트 에너지가 확인되면 적극적으로 매수를 제안하세요. 
+        
         [형식 - 엄수]
         AI[시장]: 요약 (15자 이내)
         AI[전략]: 익절 +X.X%, 손절 -Y.Y%, 물타기 -Z.Z%, 불타기 +W.W%, 금액 N원
         AI[액션]: 대응 지침 (20자 이내)
         AI[추천]: 종목명(코드), 권장가 N원, M주 (상세 사유 제외)
+        
         [제약]
         1. |물타기|는 반드시 |손절|보다 작아야 함.
         2. 불타기는 반드시 익절보다 작아야 함.
-        3. 실거래 수수료 및 슬리피지를 고려하여, 익절/손절 폭은 가급적 최소 2.0% 이상으로 넉넘하게 산정하세요.
-        4. AI[추천]에는 반드시 **KOSPI, KOSDAQ 상장 주식 및 ETF만** 추천하세요. 선물(KPI200 등), ETN, 암호화폐(BTC 등)는 절대 추천 종목에 포함하지 마세요. 코인/지수 시세는 시황 판단 참고용일 뿐입니다.
+        3. 실거래 수수료 및 슬리피지를 고려하여, 익절/손절 폭은 가급적 최소 2.0% 이상으로 넉넉하게 산정하세요.
+        4. AI[추천]에는 반드시 **KOSPI, KOSDAQ 상장 주식 및 ETF만** 추천하세요.
         한국어 대답.
         """
         return self._call_api(prompt)
@@ -292,18 +314,31 @@ class BaseLLMAdvisor(BaseAdvisor):
 
     def final_buy_confirm(self, code, name, vibe, detail, news, indicators=None, score=0.0, phase=None):
         phase_txt = f"[{phase.get('name', 'UNKNOWN')}]" if phase else ""
+        # [추가] MA 분석 텍스트 생성
+        ma_txt = ""
+        if indicators and 'ma_analysis' in indicators:
+            ma = indicators['ma_analysis']
+            d_trend = ma.get('daily', {}).get('trend', '?')
+            m_sma20 = ma.get('minute', {}).get('ma', {}).get('sma_20', 0)
+            sig = ma.get('signal', 'NEUTRAL')
+            ma_txt = f"\n        [MA지표] 일봉:{d_trend} | 분봉20MA:{int(m_sma20):,}원 | 시그널:{sig} ({ma.get('reason','')})"
+
         prompt = f"""
         당신은 공격적 단타 페르소나를 가진 수석 트레이더입니다. {phase_txt} 점수: {score:.1f}
-        종목: {name}({code}) | 현재가: {int(float(detail.get('price', 0))):,}원 | 장세: {vibe} | 뉴스: {news[:2] if news else "None"}
+        종목: {name}({code}) | 현재가: {int(float(detail.get('price', 0))):,}원 | 장세: {vibe} {ma_txt}
+        뉴스: {news[:2] if news else "None"}
         
         [필독: 데이터 오류 판단 금지]
         제공된 실시간 가격({int(float(detail.get('price', 0))):,}원)을 절대적으로 신뢰하십시오. 과거의 지식과 다르다고 해서 매수를 거절하는 것은 큰 기회비용을 초래합니다. 수급과 에너지가 보인다면 과감하게 결정하세요.
 
         [가이드라인]
-        1. 현재 페이즈가 'OFFENSIVE'라면 적극적으로 수익 기회를 포착하여 'Yes'를 결정하세요.
-        2. 'CONVERGENCE'나 'BEAR' 장세라고 해서 무조건 깐깐하게 굴기보다, '낙폭과대 반등'이나 '강한 지지선'이 확인되는 종목은 기회비용을 고려하여 전향적으로 검토하세요.
-        3. 기회를 놓치는 것(Missing out) 또한 손실임을 명심하고, 모멘텀이 살아있다면 과감히 진입을 승인하십시오.
-        답변형식: 결정: Yes 또는 No, 사유: 한 줄 요약
+        1. 이동평균선(MA) 지표를 매수 근거로 활용하십시오. 
+           - 'BUY_ZONE'(이평선 근접)인 경우 지지선 반등 확률이 높으므로 적극 승인하세요.
+           - 'OVERBOUGHT'(이평선 상단 이탈)인 경우 단기 조정을 경계하여 보수적으로 보되, 거래량이 폭발적이면 승인 가능합니다.
+           - 일봉이 'DOWN' 추세라면 기술적 반등 목적으로만 짧게 보십시오.
+        2. 현재 페이즈가 'OFFENSIVE'라면 적극적으로 수익 기회를 포착하여 'Yes'를 결정하세요.
+        3. 'CONVERGENCE'나 'BEAR' 장세라고 해서 무조건 깐깐하게 굴기보다, '낙폭과대 반등'이나 '강한 지지선'이 확인되는 종목은 기회비용을 고려하여 전향적으로 검토하세요.
+        답변형식: 결정: Yes 또는 No, 사유: [기술적 근거(MA/추세) 포함] 한 줄 요약
         """
         answer = self._call_api(prompt)
         if answer:
@@ -332,7 +367,18 @@ class BaseLLMAdvisor(BaseAdvisor):
 
     def closing_sell_confirm(self, code, name, vibe, rt, detail, news, tp=None, sl=None):
         target_info = f" (목표 {tp:+.1f}%, 손절 {sl:.1f}%)" if tp is not None else ""
-        prompt = f"Close in 10m. {name}({code}) Profit: {rt:+.2f}%{target_info}. Sell or Hold? Reason: one line."
+        prompt = f"""
+        [장 마감 10분 전 최종 판단]
+        종목: {name}({code}) | 수익률: {rt:+.2f}% {target_info}
+        장세: {vibe} | 현재가: {int(float(detail.get('price', 0))):,}원
+        뉴스: {news[:2] if news else "None"}
+
+        [가이드라인]
+        1. 내일 시초가 갭상승 가능성(추세 지지, 호재)이 있다면 'Hold'를, 불확실하거나 추세가 무너졌다면 'Sell'을 결정하세요.
+        2. 사유에는 반드시 기술적 지지/저항(MA 등) 또는 뉴스 모멘텀을 언급하십시오.
+        
+        답변형식: 결정: Sell 또는 Hold, 사유: [차트/MA/뉴스 근거 포함] 한 줄 요약
+        """
         answer = self._call_api(prompt, timeout=30)
         if answer:
             decision_match = re.search(r"결정[^\w]*\b(Sell|Hold|매도|보유)\b", answer, re.I)
@@ -386,7 +432,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         
         preset_list = "\n".join([f"  {sid}: {s['name']}" for sid, s in PRESET_STRATEGIES.items() if sid != "00"])
         holdings_txt = "\n".join([
-            f"- {h['name']}({h['code']}): 수익률 {h['rt']:+.2f}% (목표 {h.get('tp', 0.0):+.1f}%, 손절 {h.get('sl', 0.0):.1f}%) | PER:{h.get('per')} | 뉴스:{h.get('news', 'None')}"
+            f"- {h['name']}({h['code']}): 수익률 {h['rt']:+.2f}% (목표 {h.get('tp', 0.0):+.1f}%, 손절 {h.get('sl', 0.0):.1f}%) | PER:{h.get('per')} {h.get('ma_info', '')} | 뉴스:{h.get('news', 'None')}"
             for h in holdings_data
         ])
 
@@ -397,14 +443,11 @@ class BaseLLMAdvisor(BaseAdvisor):
 {holdings_txt}
 
         [가이드라인]
-        1. 시황이 Bear/Defensive라고 해서 단순히 겁을 먹고 쉽게 'SELL'하지 마십시오. 
-        2. 종목의 개별 모멘텀이 살아있거나, 일시적 하락 후 반등 구간(Support)에 있다면 끈기 있게 'HOLD'를 유지하며 전략을 갱신하세요.
-        3. 'SELL'은 오직 추세가 완전히 꺾였거나, 심각한 펀더멘털 훼손이 확인될 때만 과감하게 집행합니다.
+        1. 이동평균선(MA) 괴리율을 확인하십시오. 분봉 20MA 대비 괴리율이 +3% 이상 과열되었거나, 이평선을 강하게 하향 이탈하면 매도를 검토하세요.
+        2. 시황이 Bear/Defensive라고 해서 단순히 겁을 먹고 쉽게 'SELL'하지 마십시오. 
+        3. 종목의 개별 모멘텀이 살아있거나, 일시적 하락 후 반등 구간(Support)에 있다면 끈기 있게 'HOLD'를 유지하며 전략을 갱신하세요.
         4. 유지할 경우, 아래 프리셋 중 가장 적합한 전략과 최적의 TP/SL(시장 상황 반영), 그리고 유효 시간을 제안하세요.
-        5. 각 종목에 현재 적용중인 '목표' 및 '손절' 수치를 참고하여, 목표에 도달하기 직전이거나 손절선을 위협받는 경우 이를 반영하여 선제적 매도 또는 홀딩 여부를 결정하십시오.
-        [프리셋 전략 리스트]
-{preset_list}
-
+        
         [응답 형식 - 반드시 JSON으로만 응답]
         {{
           "종목코드": {{
@@ -413,7 +456,7 @@ class BaseLLMAdvisor(BaseAdvisor):
             "tp": 5.0,
             "sl": -5.0,
             "lifetime": 120,
-            "reason": "결정 사유 (한 줄)"
+            "reason": "결정 사유 (반드시 MA/추세/뉴스 등 구체적 근거 포함)"
           }},
           ...
         }}
@@ -428,3 +471,65 @@ class BaseLLMAdvisor(BaseAdvisor):
             except Exception as e:
                 log_error(f"포트폴리오 리뷰 파싱 오류: {e}")
         return None
+
+    def analyze_trade_retrospective(self, date_str, vibe, profits, losses, is_update=False):
+        """
+        매매 복기 분석: 당일 수익/손실 TOP 종목에 대해 AI가 사후 분석을 수행합니다.
+        - 매매 결정의 적절성 평가
+        - 타이밍 분석 (너무 일찍/늦게 팔았는지)
+        - 개선점 및 교훈 도출
+        """
+        profit_txt = ""
+        for i, s in enumerate(profits, 1):
+            trades_detail = ""
+            for t in s.get("trades", []):
+                trades_detail += f"    - [{t.get('time', '').split(' ')[-1]}] {t.get('type', '')} {int(t.get('price', 0)):,}원 x {t.get('qty', 0)}주 | 수익 {int(t.get('profit', 0)):+,}원 | {t.get('memo', '')}\n"
+            closing = f"종가 {int(s.get('closing_price', 0)):,}원" if s.get('closing_price') else "종가 미확인"
+            news_txt = ", ".join(s.get('latest_news', [])[:2]) if s.get('latest_news') else "뉴스 없음"
+            profit_txt += f"  {i}위: {s['name']}({s['code']}) | 누적수익 {int(s.get('total_profit', 0)):+,}원 | {closing}\n{trades_detail}    뉴스: {news_txt}\n"
+
+        loss_txt = ""
+        for i, s in enumerate(losses, 1):
+            trades_detail = ""
+            for t in s.get("trades", []):
+                trades_detail += f"    - [{t.get('time', '').split(' ')[-1]}] {t.get('type', '')} {int(t.get('price', 0)):,}원 x {t.get('qty', 0)}주 | 손실 {int(t.get('profit', 0)):+,}원 | {t.get('memo', '')}\n"
+            closing = f"종가 {int(s.get('closing_price', 0)):,}원" if s.get('closing_price') else "종가 미확인"
+            news_txt = ", ".join(s.get('latest_news', [])[:2]) if s.get('latest_news') else "뉴스 없음"
+            loss_txt += f"  {i}위: {s['name']}({s['code']}) | 누적손실 {int(s.get('total_profit', 0)):+,}원 | {closing}\n{trades_detail}    뉴스: {news_txt}\n"
+
+        update_note = "이것은 장 마감 후 종가 반영된 사후 분석입니다. 이전 분석을 보완하여 더 정확한 판단을 내려주세요." if is_update else ""
+
+        prompt = f"""
+        당신은 냉철한 매매 복기 전문가입니다. {date_str} 당일 매매 결과를 분석하여 **적중 여부**를 판정하고 구체적 교훈을 도출하세요.
+        {update_note}
+        [장세] {vibe}
+
+        [수익 TOP 3]
+{profit_txt if profit_txt else '  (수익 발생 종목 없음)'}
+
+        [손실 TOP 3]
+{loss_txt if loss_txt else '  (손실 발생 종목 없음)'}
+
+        [분석 가이드라인]
+        1. 각 종목별로 **매매 타이밍**이 기술적 타점(MA 지지/저항 등)에 비추어 적절했는지 판정하세요.
+           - 익절: MA 돌파 실패 시 적절히 매도했는지, 아니면 지지선을 확인하지 못하고 일찍 팔았는지?
+           - 손절: MA 이탈 즉시 대응했는지, 아니면 무의미하게 버티다 손실을 키웠는지?
+        2. **종목 선정** 자체가 기술적/모멘텀 관점에서 적절했는지 평가하세요 (진입 사유가 합리적이었는지).
+        3. 'CORRECT'(적절), 'EARLY'(너무 빠름), 'LATE'(너무 늦음) 중 하나를 선택하고 구체적 차트 근거를 제시하세요.
+        4. 마지막에 **종합 교훈**을 기술적 개선점 위주로 3줄 이내 정리하세요.
+
+        [응답 형식 (반드시 준수)]
+        📊 [{date_str}] 매매 복기 리포트
+        
+        🟢 수익 종목 분석:
+        [종목별 1~2줄 분석 및 CORRECT/EARLY/LATE 판정]
+        
+        🔴 손실 종목 분석:
+        [종목별 1~2줄 분석 및 WRONG/UNLUCKY/FORCED 판정]
+        
+        📝 종합 교훈:
+        [3줄 이내의 구체적이고 실전 가능한 교훈]
+        
+        한국어 어조, 간결 명료하게.
+        """
+        return self._call_api(prompt, timeout=60)

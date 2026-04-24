@@ -78,8 +78,15 @@ class AnalysisMixin:
         candidate_indicators = {}
         for r in self.ai_recommendations[:5]:
             try:
+                # 기존 RSI/BB/MACD 지표 수집
                 candles = self.api.get_minute_chart_price(r['code'])
-                if candles: candidate_indicators[r['code']] = self.indicator_eng.get_all_indicators(candles)
+                if candles: 
+                    candidate_indicators[r['code']] = self.indicator_eng.get_all_indicators(candles)
+                
+                # [추가] 일봉+분봉 이중 MA 분석 수집
+                ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, r['code'])
+                if r['code'] not in candidate_indicators: candidate_indicators[r['code']] = {}
+                candidate_indicators[r['code']]['ma_analysis'] = ma_analysis
             except: pass
 
         for h in holdings:

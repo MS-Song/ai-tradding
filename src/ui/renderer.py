@@ -63,7 +63,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     is_v = getattr(strategy.api.auth, 'is_virtual', True)
     debug_tag = " [디버그]" if getattr(strategy, "debug_mode", False) else ""
     mode_tag = f" [모의]{debug_tag}" if is_v else f" [실전]{debug_tag}"
-    version_text = f"[AI TRADING SYSTEM ver 1.2.5]{mode_tag}"
+    version_text = f"[AI TRADING SYSTEM ver 1.2.7]{mode_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg
@@ -483,7 +483,7 @@ def draw_manual_page(tw, th):
             w("           | \033[1m8\033[0m  | 시황 분석 + AI 추천 갱신     | (입력 없음, 자동 실행)")
             w("           | \033[1m9\033[0m  | 프리셋 전략 할당            | 번호 → 전략ID (엔터=AI자동, 00=표준복귀)")
             w("-" * tw)
-            w(" \033[95m리포트\033[0m    | \033[1mP\033[0m  | 성과 대시보드               | 수익TOP10, 손실TOP10, 모델별 성과")
+            w(" \033[95m리포트\033[0m    | \033[1mP\033[0m  | 성과 대시보드               | 수익TOP10, 손실TOP10, 금일투자성과, 투자적중 복기")
             w("           | \033[1mB\033[0m  | 보유 종목 진단              | AI 포트폴리오 매니저 진단 의견")
             w("           | \033[1mD\033[0m  | 추천 종목 상세              | AI 추천 10종목 입체 분석")
             w("           | \033[1mH\033[0m  | 인기 테마 분석              | 실시간 인기 TOP10 테마 트렌드")
@@ -858,6 +858,10 @@ def draw_trading_logs(strategy, dm, tw, th):
                 if kl == '1': current_tab = 1; break
                 elif kl == '2': current_tab = 2; break
                 elif kl == '3': current_tab = 3; break
+                elif kl == '8': # [추가] 모니터링 화면에서도 시황 분석 실행 가능하게 개선
+                    from src.ui.interaction import perform_interaction
+                    threading.Thread(target=perform_interaction, args=('8', strategy.api, strategy, dm, 0), daemon=True).start()
+                    break
                 elif kl in ['q', 'esc', ' ', '\r']:
                     buf.close()
                     return
