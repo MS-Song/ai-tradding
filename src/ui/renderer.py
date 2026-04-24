@@ -7,6 +7,12 @@ from datetime import datetime
 from src.utils import is_market_open, is_us_market_open, get_visual_width, align_kr, ANSI_ESCAPE, get_market_name, get_key_immediate
 from src.theme_engine import get_cached_themes
 
+VERSION_CACHE = "Unknown"
+try:
+    with open("VERSION", "r") as f:
+        VERSION_CACHE = f.read().strip()
+except: pass
+
 def truncate_log_line(text: str, max_width: int, suffix: str = '…') -> str:
     """ANSI 이스케이프 코드를 보존하면서 시각 너비(한글 2칸) 기준으로 텍스트를 잘라냅니다.
     max_width를 초과하는 경우 suffix(기본 '…')를 붙입니다."""
@@ -64,7 +70,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     debug_tag = " [디버그]" if getattr(strategy, "debug_mode", False) else ""
     mode_tag = f" [모의]{debug_tag}" if is_v else f" [실전]{debug_tag}"
     update_tag = f" \033[1;93m[NEW v{dm.update_info['latest_version']}]\033[0;44m" if dm.update_info.get("has_update") else ""
-    version_text = f"[AI TRADING SYSTEM ver 1.3.0]{mode_tag}{update_tag}"
+    version_text = f"[AI TRADING SYSTEM ver {VERSION_CACHE}]{mode_tag}{update_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg
