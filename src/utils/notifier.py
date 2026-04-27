@@ -4,7 +4,7 @@ import queue
 import asyncio
 import time
 from datetime import datetime
-from src.logger import log_error
+from src.logger import log_error, telegram_logger
 
 class TelegramNotifier:
     def __init__(self, token=None, chat_id=None):
@@ -16,6 +16,8 @@ class TelegramNotifier:
         self.is_running = True
         self.worker_thread = None
         self.status_msg = "대기중"
+        self.last_result = "-"
+        self.last_task = "-"
         
         if self.is_active:
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
@@ -45,11 +47,17 @@ class TelegramNotifier:
 
                 # 메시지 전송
                 self.status_msg = "전송중"
+                self.last_task = f"메시지 전송: {msg[:20]}..."
                 await bot.send_message(
                     chat_id=self.chat_id,
                     text=msg,
                     parse_mode=parse_mode or ParseMode.MARKDOWN
                 )
+                self.last_result = "성공"
+                # 발송 내역 로깅
+                clean_msg = msg.replace('\n', ' ')
+                telegram_logger.info(f"SENT | {clean_msg[:100]}...")
+                
                 self.msg_queue.task_done()
                 self.status_msg = "대기중"
                 
@@ -58,6 +66,8 @@ class TelegramNotifier:
                 
             except Exception as e:
                 self.status_msg = "에러"
+                self.last_result = "실패"
+                self.last_task = f"전송 실패: {str(e)[:30]}"
                 log_error(f"Telegram Send Error (ID: {self.chat_id}): {e}")
                 await asyncio.sleep(2) # 에러 발생 시 잠시 대기
 

@@ -46,10 +46,16 @@ class DataManager:
         # --- 업데이트 정보 ---
         self.update_info = {"has_update": False, "latest_version": "", "download_url": "", "is_downloading": False, "progress": 0}
         
+        # --- 시황 및 AI 분석 상태 (Task 추가) ---
+        self.market_info_status = "대기"  # 정상, 실패, 대기
+        self.worker_results = {}          # {worker_name: result_msg}
+        self.worker_last_tasks = {}       # {worker_name: last_task_name}
+        
         # --- 입력 상태 관리 (Task 4) ---
         self.is_input_active = False
         self.input_prompt = ""
         self.input_buffer = ""
+        self.current_prompt_mode = None  # [추가] 현재 입력 프롬프트의 모드 (예: STRATEGY)
         self.is_full_screen_active = False
         
         # --- 글로벌 진행 표시기 상태 ---
@@ -77,6 +83,7 @@ class DataManager:
         with self.data_lock:
             self._worker_statuses[worker] = msg
             self.last_times[worker.lower()] = time.time() # [추가] 갱신 시각 기록
+            self.worker_last_tasks[worker] = msg         # [추가] 마지막 작업 기록
 
     def clear_busy(self, worker="GLOBAL"):
         with self.data_lock:
@@ -225,6 +232,7 @@ class DataManager:
                 with self.data_lock:
                     self.cached_holdings = h
                     self.cached_asset = a
+                    self.worker_results["ASSET"] = "성공"
                 self.last_times["asset"] = curr_t
                 
                 # [순차 적용] 시장 트렌드 수신 즉시 반영
@@ -241,40 +249,71 @@ class DataManager:
                 analyze_popular_themes(h_raw, v_raw)
                 self.last_times["ranking"] = curr_t
 
-                # 보유 종목 상세 정보 패치
+                # [수정] 보유 종목 + 당일 매매 종목 전체에 대해 상세 정보 및 MA 수집
                 temp_stock_info = {}
-                for stock in h:
-                    code = stock.get('pdno')
-                    p_data = self.api.get_inquire_price(code)
-                    n_data = self.api.get_naver_stock_detail(code)
+                
+                # 당일 매매 종목 코드 수집
+                today_codes = set()
+                with trading_log.lock:
+                    today_str = datetime.now().strftime('%Y-%m-%d')
+                    for t in trading_log.data.get("trades", []):
+                        if t["time"].startswith(today_str):
+                            today_codes.add(t["code"])
+                
+                all_relevant_codes = set([stock.get('pdno') for stock in h]) | today_codes
+                
+                # [핵심 개선] 네이버 벌크 API를 사용하여 모든 종목의 시세를 한 번에 가져옴 (비약적인 속도 향상)
+                bulk_data = self.api.get_naver_stocks_realtime(list(all_relevant_codes))
+                
+                for code in all_relevant_codes:
+                    n_data = bulk_data.get(code)
                     
-                    tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
+                    # 전체 데이터 동기화(force) 시나 캐시가 없는 경우 상세 데이터를 가져옴
+                    p_data = None
+                    if force or code not in self.cached_stock_info:
+                        p_data = self.api.get_inquire_price(code)
                     
-                    if n_data and n_data.get('name') != "Error" and n_data.get('price') != "0":
-                        day_rate = n_data.get('rate', 0.0)
-                        curr_p = float(n_data.get('price', 0))
-                        prev_close = curr_p / (1 + day_rate / 100)
-                        day_val = curr_p - prev_close
+                    if n_data:
+                        curr_p = n_data['price']
+                        day_rate = n_data['rate']
+                        day_val = n_data['cv']
+                        
+                        # TP/SL 계산용 p_data_fallback 구성
+                        p_data_fallback = {
+                            "price": curr_p, "vrss": day_val, "ctrt": day_rate,
+                            "vol": n_data['aq'], "high": n_data['hv'], "low": n_data['lv'],
+                            "prev_vol": p_data.get("prev_vol", 0) if p_data else 0
+                        }
+                        tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data_fallback)
+                        p_vol = p_data_fallback["prev_vol"]
                     else:
+                        # 네이버 벌크 실패 시 Failover
+                        tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
+                        curr_p = p_data.get('price', 0) if p_data else 0
                         day_val = p_data.get('vrss', 0) if p_data else 0
                         day_rate = p_data.get('ctrt', 0) if p_data else 0
+                        p_vol = p_data.get('prev_vol', 0) if p_data else 0
                         
                     # [추가] 분봉 20MA 수집
-                    ma_20 = 0.0
-                    try:
-                        m_candles = self.api.get_minute_chart_price(code)
-                        if m_candles:
-                            closes = [float(c.get('stck_clpr', 0)) for c in m_candles]
-                            ma_vals = self.strategy.indicator_eng.calculate_sma(closes, [20])
-                            ma_20 = ma_vals.get("sma_20", 0.0)
-                            with self.data_lock:
-                                self.ma_20_cache[code] = ma_20
-                    except: pass
+                    ma_20 = self.ma_20_cache.get(code, 0.0)
+                    if ma_20 == 0 or force:
+                        try:
+                            m_candles = self.api.get_minute_chart_price(code)
+                            if m_candles:
+                                def safe_float(v):
+                                    try: return float(str(v).strip()) if v and str(v).strip() else 0.0
+                                    except: return 0.0
+                                closes = [safe_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in m_candles]
+                                ma_vals = self.strategy.indicator_eng.calculate_sma(closes, [20])
+                                ma_20 = ma_vals.get("sma_20", 0.0)
+                                with self.data_lock:
+                                    self.ma_20_cache[code] = ma_20
+                        except: pass
 
                     temp_stock_info[code] = {
                         "tp": tp, "sl": sl, "spike": spike,
                         "day_val": day_val, "day_rate": day_rate,
-                        "ma_20": ma_20
+                        "ma_20": ma_20, "price": curr_p, "prev_vol": p_vol
                     }
                 
                 with self.data_lock:
@@ -302,12 +341,17 @@ class DataManager:
                     self.cached_market_data = self.strategy.current_market_data
                     self.cached_vibe = self.strategy.current_market_vibe
                     self.cached_panic = self.strategy.global_panic
+                    self.market_info_status = "정상"
+                    self.worker_results["INDEX"] = "성공"
                 self.last_times["index"] = curr_t
                 kospi_info = self.cached_market_data.get("KOSPI")
                 self.is_kr_market_active = kospi_info.get("status") == "02" if (kospi_info and "status" in kospi_info) else is_market_open()
             except RuntimeError: break # 종료 시 즉시 중단
             except Exception as e:
                 log_error(f"Market Trend Update Error: {e}")
+                with self.data_lock:
+                    self.market_info_status = "실패"
+                    self.worker_results["INDEX"] = "실패"
                 
             # [추가] VIBE 변화 및 장 개시 알림
             with self.data_lock:
@@ -332,9 +376,39 @@ class DataManager:
                 h_raw = self.api.get_naver_hot_stocks()
                 v_raw = self.api.get_naver_volume_stocks()
                 themes = analyze_popular_themes(h_raw, v_raw)
+                
+                # [개선] 인기/거래량 종목에서 수집된 시세를 전역 캐시(cached_stock_info)에 즉시 공유
+                # 이로 인해 보유 종목 중 인기 종목에 포함된 경우 별도 API 호출 없이도 즉시 가격이 업데이트됨
+                shared_info = {}
+                for item in h_raw + v_raw:
+                    code = item.get('code')
+                    if code:
+                        price = float(str(item.get('price', 0)).replace(',', ''))
+                        rate = float(item.get('rate', 0.0))
+                        prev_close = price / (1 + rate / 100) if rate != -100 else price
+                        cv = price - prev_close
+                        
+                        shared_info[code] = {
+                            "price": price,
+                            "day_rate": rate,
+                            "day_val": cv
+                        }
+                
                 with self.data_lock:
                     self.cached_hot_raw = h_raw
                     self.cached_vol_raw = v_raw
+                    
+                    # 기존 캐시에 병합 (기존 TP/SL 등은 유지하면서 가격 정보만 업데이트)
+                    for c, info in shared_info.items():
+                        if c in self.cached_stock_info:
+                            self.cached_stock_info[c].update(info)
+                        else:
+                            # 신규 종목의 경우 기본 구조로 생성 (나중에 상세 분석에서 채워짐)
+                            base = {"tp": 0, "sl": 0, "spike": False, "ma_20": 0, "prev_vol": 0, "day_val": 0, "day_rate": 0, "price": 0}
+                            base.update(info)
+                            self.cached_stock_info[c] = base
+                            
+                    self.worker_results["RANKING"] = "성공"
                 self.last_times["ranking"] = curr_t
             except RuntimeError: break
             except Exception as e:
@@ -361,6 +435,7 @@ class DataManager:
                         costs = self.strategy.get_ai_costs()
                         with self.data_lock:
                             self.cached_ai_costs = costs
+                            self.worker_results["BILLING"] = "성공"
                         self.last_times["billing"] = curr_t
                     except Exception as e:
                         log_error(f"Billing Update Error: {e}")
@@ -406,10 +481,18 @@ class DataManager:
         import math
         self.update_all_data(is_virtual, force=True)
         
+        # [추가] 프로그램을 켜자마자 TP/SL로 매도되지 않도록 최초 AI/시황 분석 시도를 대기함 (최대 15초)
+        start_wait = time.time()
+        while not getattr(self.strategy, "first_analysis_attempted", False) and time.time() - start_wait < 15:
+            self.set_busy(f"초기 분석 대기 ({int(time.time()-start_wait)}s)", "DATA")
+            time.sleep(1)
+        self.clear_busy("DATA")
+
         while self.is_running:
             try:
-                # [추가] 매매 선행 분석 대기
-                if not self.strategy.is_ready:
+                # [수정] 최초 분석 시도 이후에는 is_ready 여부와 상관없이 잔고 업데이트 및 TP/SL 감시 진행
+                # (단, 전략 객체가 아예 준비되지 않은 경우만 짧게 대기)
+                if not hasattr(self.strategy, 'analyzer'):
                     time.sleep(2)
                     continue
 
@@ -420,27 +503,81 @@ class DataManager:
                 if h or a.get('total_asset', 0) > 0:
                     # 1. 락 밖에서 필요한 데이터 미리 수집 (API 호출 등)
                     temp_stock_info = {}
-                    for stock in h:
-                        code = stock.get('pdno')
-                        p_data = self.api.get_inquire_price(code) # API 호출 (락 외부)
-                        n_data = self.api.get_naver_stock_detail(code) # 네이버 실시간 데이터 (캐시 활용)
+                    
+                    # [수정] 보유 종목 + 당일 매매 종목 전체에 대해 상세 정보 및 MA 수집
+                    today_codes = set()
+                    with trading_log.lock:
+                        today_str = datetime.now().strftime('%Y-%m-%d')
+                        for t in trading_log.data.get("trades", []):
+                            if t["time"].startswith(today_str):
+                                today_codes.add(t["code"])
+                    
+                    all_relevant_codes = set([stock.get('pdno') for stock in h]) | today_codes
+                    
+                    # [핵심 개선] 네이버 벌크 API를 사용하여 모든 종목의 시세를 한 번에 가져옴 (비약적인 속도 향상)
+                    # 전일대비 정보 수집을 분석 로직과 분리하여 병목 현상 해결
+                    bulk_data = self.api.get_naver_stocks_realtime(list(all_relevant_codes))
+                    
+                    for code in all_relevant_codes:
+                        n_data = bulk_data.get(code)
                         
-                        tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
+                        # 60초 주기로만 KIS 상세 데이터(거래량 스파이크용 prev_vol 등)를 가져옴 (API 호출 최소화)
+                        # 단, 캐시에 정보가 없는 경우(최초 진입 등) 즉시 수집
+                        p_data = None
+                        if curr_t - self.last_times.get(f"slow_{code}", 0) > 60 or code not in self.cached_stock_info:
+                            p_data = self.api.get_inquire_price(code)
+                            self.last_times[f"slow_{code}"] = curr_t
                         
-                        # [개선] 모의계좌의 부정확한 전일대비(vrss/ctrt) 데이터를 네이버 실시간 데이터로 교체
-                        if n_data and n_data.get('name') != "Error" and n_data.get('price') != "0":
-                            day_rate = n_data.get('rate', 0.0)
-                            curr_p = float(n_data.get('price', 0))
-                            # 전일 종가 역산하여 변동액(vrss) 계산 (KIS 모의계좌 stale 데이터 방지)
-                            prev_close = curr_p / (1 + day_rate / 100)
-                            day_val = curr_p - prev_close
+                        if n_data:
+                            curr_p = n_data['price']
+                            day_rate = n_data['rate']
+                            day_val = n_data['cv']
+                            
+                            # TP/SL 계산용 p_data_fallback 구성 (기존 캐시 활용)
+                            old_info = self.cached_stock_info.get(code, {})
+                            p_data_fallback = {
+                                "price": curr_p, "vrss": day_val, "ctrt": day_rate,
+                                "vol": n_data['aq'], "high": n_data['hv'], "low": n_data['lv'],
+                                "prev_vol": old_info.get("prev_vol", 0)
+                            }
+                            if p_data: p_data_fallback["prev_vol"] = p_data.get("prev_vol", 0)
+                            
+                            tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data_fallback)
+                            p_vol = p_data_fallback["prev_vol"]
                         else:
+                            # 네이버 벌크 실패 시에만 KIS 개별 호출 (Failover)
+                            if not p_data: p_data = self.api.get_inquire_price(code)
+                            tp, sl, spike = self.strategy.get_dynamic_thresholds(code, self.cached_vibe.lower(), p_data)
+                            curr_p = p_data.get('price', 0) if p_data else 0
                             day_val = p_data.get('vrss', 0) if p_data else 0
                             day_rate = p_data.get('ctrt', 0) if p_data else 0
+                            p_vol = p_data.get('prev_vol', 0) if p_data else 0
                         
+                        # [수정] 메인 루프에서도 ma_20 정보를 유지하도록 보정 (캐시 활용)
+                        ma_20 = self.ma_20_cache.get(code, 0.0)
+                        
+                        # 60초마다 또는 데이터가 없는 경우 MA를 백그라운드에서 자동 갱신
+                        if ma_20 == 0 or (curr_t - self.last_times.get(f"ma_{code}", 0) > 60):
+                            try:
+                                m_candles = self.api.get_minute_chart_price(code)
+                                if m_candles:
+                                    def safe_float(v):
+                                        try: return float(str(v).strip()) if v and str(v).strip() else 0.0
+                                        except: return 0.0
+                                    closes = [safe_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in m_candles]
+                                    ma_vals = self.strategy.indicator_eng.calculate_sma(closes, [20])
+                                    ma_20 = ma_vals.get("sma_20", 0.0)
+                                    with self.data_lock:
+                                        self.ma_20_cache[code] = ma_20
+                                        self.last_times[f"ma_{code}"] = curr_t
+                            except: pass
+
                         temp_stock_info[code] = {
                             "tp": tp, "sl": sl, "spike": spike,
-                            "day_val": day_val, "day_rate": day_rate
+                            "day_val": day_val, "day_rate": day_rate,
+                            "ma_20": ma_20,
+                            "price": curr_p,
+                            "prev_vol": p_vol
                         }
 
                     # 2. 락 안에서는 캐시 업데이트만 수행 (최소한의 시간 점유)
@@ -448,9 +585,12 @@ class DataManager:
                     with self.data_lock:
                         self.cached_holdings = h
                         self.cached_asset = a
+                        if a.get('total_asset', 0) > 0:
+                            self.strategy.last_known_asset = float(a['total_asset'])
                         self.cached_stock_info.update(temp_stock_info)
                     
                     self.last_times["asset"] = curr_t
+                    self.worker_results["DATA"] = "성공"
                     self.add_log(f"잔고 업데이트 완료 (Cash: {a['cash']:,}원)")
                     self.clear_busy("DATA")
 
@@ -459,9 +599,18 @@ class DataManager:
                 
                 if self.is_kr_market_active and not self.cached_panic:
                     self.set_busy("매매 사이클", "DATA")
-                    auto_res = self.strategy.run_cycle(market_trend=vibe.lower(), skip_trade=False)
-                    if auto_res:
-                        for r in auto_res: self.add_trading_log(f"🤖 자동: {r}")
+                    try:
+                        # [개선] 이미 수집된 잔고(h)와 자산(a)을 전달하여 run_cycle 내부의 중복 API 호출 제거 (약 3초 절약)
+                        auto_res = self.strategy.run_cycle(
+                            market_trend=vibe.lower(), 
+                            skip_trade=False,
+                            holdings=self.cached_holdings,
+                            asset_info=self.cached_asset
+                        )
+                        if auto_res:
+                            for r in auto_res: self.add_trading_log(f"🤖 자동: {r}")
+                    finally:
+                        self.clear_busy("DATA")
                     
                     # [추가] 신규 거래 알림 체크
                     self.notify_latest_trades()
@@ -740,6 +889,9 @@ class DataManager:
                                             preset_result = self.strategy.auto_assign_preset(top_ai['code'], top_ai['name'])
                                             if preset_result:
                                                 self.add_trading_log(f"📋 전략 자동적용: [{preset_result['preset_name']}] TP:{preset_result['tp']:+.1f}% SL:{preset_result['sl']:.1f}%")
+                                            
+                                            with self.data_lock:
+                                                self.worker_results["DATA"] = "성공"
                                             self.update_all_data(is_virtual, force=True)
                                             break
                                         else:
@@ -760,6 +912,8 @@ class DataManager:
                 self.last_update_time = datetime.now().strftime('%H:%M:%S')
             except Exception as e:
                 log_error(f"Data Update Error: {e}")
+                with self.data_lock:
+                    self.worker_results["DATA"] = "실패"
             finally:
                 self.clear_busy("DATA")
             time.sleep(5)
@@ -779,6 +933,8 @@ class DataManager:
                     log_error(f"Theme Update Error: {e}")
                 except: pass
             finally:
+                with self.data_lock:
+                    self.worker_results["THEME"] = "성공"
                 self.clear_busy()
             
             # 테마 데이터는 6시간마다 갱신
@@ -800,10 +956,16 @@ class DataManager:
                 # 3. trading.log 정리
                 t_cleaned = cleanup_text_log("trading.log", days_to_keep=2)
                 
-                if j_cleaned or e_cleaned or t_cleaned:
+                # 4. telegram.log 정리
+                tel_cleaned = cleanup_text_log("telegram.log", days_to_keep=2)
+                
+                if j_cleaned or e_cleaned or t_cleaned or tel_cleaned:
                     self.add_log("오래된 로그 파일 정리를 완료했습니다.")
                 else:
                     self.add_log("로그 파일이 이미 최신 상태입니다.")
+                
+                with self.data_lock:
+                    self.worker_results["CLEANUP"] = "성공"
                     
             except Exception as e:
                 log_error(f"Log Cleanup Worker Error: {e}")
@@ -874,6 +1036,8 @@ class DataManager:
             except Exception as e:
                 log_error(f"Retrospective Worker Error: {e}")
             finally:
+                with self.data_lock:
+                    self.worker_results["RETRO"] = "성공"
                 self.clear_busy()
             
             # 30분 대기
@@ -907,10 +1071,12 @@ class DataManager:
                 
                 with self.data_lock:
                     self.last_times['update'] = time.time()
-                self.clear_status("UPDATE")
+                    self.worker_results["UPDATE"] = "성공"
             except Exception as e:
                 try: log_error(f"Updater Worker Error: {e}")
                 except: pass
+            finally:
+                self.clear_busy("UPDATE")
             
             # 1시간 대기 (장중에는 1시간마다 체크)
             time.sleep(3600)

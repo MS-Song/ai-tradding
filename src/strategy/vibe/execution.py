@@ -8,9 +8,11 @@ from src.utils import is_ai_enabled_time
 from src.strategy.constants import PRESET_STRATEGIES
 
 class ExecutionMixin:
-    def run_cycle(self, market_trend="neutral", skip_trade=False):
+    def run_cycle(self, market_trend="neutral", skip_trade=False, holdings=None, asset_info=None):
         self._cleanup_rejected_stocks()
-        holdings = self.api.get_balance()
+        if holdings is None: holdings = self.api.get_balance()
+        if asset_info is None: asset_info = self.api.get_full_balance()[1] if not skip_trade else {}
+        
         results, curr_t = [], time.time()
         phase = self.get_market_phase()
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -18,9 +20,10 @@ class ExecutionMixin:
         if not hasattr(self, '_p3_global_processed'): self._p3_global_processed = {}
         self._p4_ai_done_this_cycle = False
         
-        asset_info = self.api.get_full_balance()[1] if not skip_trade else {}
-        if self.start_day_asset > 0 and asset_info.get('total_asset', 0) > 0:
-            asset_info['daily_pnl_rate'] = (asset_info['total_asset'] / self.start_day_asset - 1) * 100
+        if asset_info.get('total_asset', 0) > 0:
+            self.last_known_asset = float(asset_info['total_asset'])
+            if self.start_day_asset > 0:
+                asset_info['daily_pnl_rate'] = (asset_info['total_asset'] / self.start_day_asset - 1) * 100
         
         if self.risk_mgr.check_circuit_breaker(asset_info):
             return [f"🛑 리스크 상한 도달: {self.risk_mgr.halt_reason} (매매 중단)"]
@@ -70,8 +73,8 @@ class ExecutionMixin:
             self._save_all_states()
 
         for item in holdings:
-            code = item.get("pdno")
-            p_strat = self.preset_eng.preset_strategies.get(code)
+            code, name = item['pdno'], item['prdt_name']
+            p_strat = self.preset_strategies.get(code)
             
             if p_strat:
                 if p_strat.get('deadline') and now_str > p_strat['deadline']:
@@ -98,6 +101,7 @@ class ExecutionMixin:
                             results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원)")
                             m_id = self.last_buy_models.get(code, "")
                             trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도", profit=p3_profit, model_id="TL/SP")
+                            self.record_sell(code, is_full_exit=False)
                             self._save_all_states()
                     elif skip_trade: p_strat['is_p3_processed'] = True
             else:
@@ -113,11 +117,13 @@ class ExecutionMixin:
                             results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원) | SL→본전(+0.2%)")
                             m_id = self.last_buy_models.get(code, "")
                             trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도", profit=p3_profit, model_id="TL/SP")
+                            self.record_sell(code, is_full_exit=False)
                             self._save_all_states()
 
             # --- [Phase 4] 자동 손실 청산 및 AI 개별 분석 (모든 종목 공통 적용) ---
             if phase['id'] == "P4":
                 p4_key = f"p4_{today}_{code}"
+                rt = float(item.get("evlu_pfls_rt", 0.0))
                 if rt < 0 and p4_key not in self._p3_global_processed:
                     # [Safety] 당일 매수 보호 (1시간)
                     if (time.time() - self.last_buy_times.get(code, 0)) < 3600:
@@ -125,13 +131,19 @@ class ExecutionMixin:
                         results.append(f"🛡️ 당일 매수 P4 보호: {item.get('prdt_name')}")
                     else:
                         sell_qty = int(float(item.get('hldg_qty', 0)))
-                        if sell_qty > 0 and not skip_trade and self.api.order_market(code, sell_qty, False)[0]:
-                            self._p3_global_processed[p4_key] = True
-                            p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
-                            results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
-                            m_id = self.last_buy_models.get(code, "")
-                            trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit, model_id=m_id or "TL/SP")
-                            self._save_all_states()
+                        if sell_qty > 0 and not skip_trade:
+                            self.current_action = "P4청산실행"
+                            try:
+                                if self.api.order_market(code, sell_qty, False)[0]:
+                                    self._p3_global_processed[p4_key] = True
+                                    p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
+                                    results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
+                                    m_id = self.last_buy_models.get(code, "")
+                                    trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit, model_id=m_id or "TL/SP")
+                                    self.record_sell(code, is_full_exit=True)
+                                    self._save_all_states()
+                            except Exception as e: log_error(f"P4 청산 중 오류: {e}")
+                            finally: self.current_action = "대기중"
 
                 # 배치 리뷰에서 처리되지 않은 종목에 대해 개별 AI 분석 수행 (보험용)
                 p4_ai_key = f"p4_ai_{today}_{code}"
@@ -157,7 +169,7 @@ class ExecutionMixin:
                                             results.append(f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
                                             m_id = self.last_buy_models.get(code, "")
                                             trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit, model_id=m_id)
-                                            self.record_sell(code)
+                                            self.record_sell(code, is_full_exit=True)
                                             trading_log.log_config(f"🤖 P4 AI 매도: [{code}]{item.get('prdt_name')} | {reason}")
                                             self._save_all_states()
                                     else:
@@ -185,13 +197,23 @@ class ExecutionMixin:
 
             if action and not skip_trade and sell_qty > 0:
                 self.current_action = f"{action}실행"
-                if self.api.order_market(code, sell_qty, False)[0]:
-                    self.record_sell(code)
-                    m_id = self.last_buy_models.get(code, "")
-                    trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id="TL/SP")
-                    self._save_all_states()
-                    results.append(f"자동 {action}{f'({action_reason})' if action_reason else ''}: {item.get('prdt_name')} {sell_qty}주")
-                self.current_action = "대기중"
+                try:
+                    logger.info(f"🚀 {action} 주문 시작: {item.get('prdt_name')}({code}) {sell_qty}주")
+                    success, msg = self.api.order_market(code, sell_qty, False)
+                    if success:
+                        # [Fix] 익절(30%)은 부분 매도이므로 전략 삭제 제외, 손절은 전체 매도이므로 삭제
+                        is_full = action in ["손절", "긴급손절"]
+                        self.record_sell(code, is_full_exit=is_full)
+                        m_id = self.last_buy_models.get(code, "")
+                        trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id="TL/SP")
+                        self._save_all_states()
+                        results.append(f"자동 {action}{f'({action_reason})' if action_reason else ''}: {item.get('prdt_name')} {sell_qty}주")
+                    else:
+                        logger.error(f"❌ {action} 주문 실패: {msg}")
+                except Exception as e:
+                    logger.error(f"⚠️ {action} 실행 중 예외 발생: {e}")
+                finally:
+                    self.current_action = "대기중"
         return results
 
     def get_buy_recommendations(self, market_trend="neutral"):
@@ -276,7 +298,7 @@ class ExecutionMixin:
             holdings_info.append({"code": h['pdno'], "name": h['prdt_name'], "rt": float(h.get('evlu_pfls_rt', 0)), "detail": str(detail)})
         return self.ai_advisor.compare_stock_superiority(candidate_info, holdings_info, self.current_market_vibe)
 
-    def perform_portfolio_batch_review(self, skip_trade=False) -> List[str]:
+    def perform_portfolio_batch_review(self, skip_trade=False, include_manual=False) -> List[str]:
         """보유 종목 전체에 대해 AI 통합 진단을 수행하고 매도 또는 전략 갱신을 실행합니다."""
         holdings = self.api.get_balance()
         if not holdings: return []
@@ -289,6 +311,13 @@ class ExecutionMixin:
             detail = self.api.get_naver_stock_detail(code)
             news = self.api.get_naver_stock_news(code)
             p_strat = self.preset_strategies.get(code)
+            
+            # [Fix] 수동으로 설정한 전략은 AI 배치 리뷰(자동 갱신) 대상에서 제외하여 사용자 의도 존중
+            # 단, include_manual=True인 경우(사용자가 직접 일괄 진단 요청 시)에는 포함하여 AI 관리 모드로 전환
+            if p_strat and p_strat.get('is_manual') and not include_manual:
+                logger.info(f"🛡️ 전략 보호: [{h['prdt_name']}] 수동 전략 유지 중 (배치 리뷰 스킵)")
+                continue
+
             if p_strat:
                 tp, sl = p_strat.get('tp', 0.0), p_strat.get('sl', 0.0)
             else:
@@ -356,9 +385,7 @@ class ExecutionMixin:
                             profit = (curr_price - float(h_item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"🤖 AI 자율 매도: {name} ({int(profit):+,}원)")
                             trading_log.log_trade("AI자율매도", code, name, curr_price, sell_qty, f"AI 선제적 매도: {reason}", profit=profit, model_id=dm_tag)
-                            self.record_sell(code)
-                            # 전략 삭제
-                            if code in self.preset_strategies: self.assign_preset(code, "00", name=name)
+                            self.record_sell(code, is_full_exit=True)
                         else:
                             trading_log.log_config(f"❌ AI 매도 주문 실패: [{code}]{name} | 사유: {res_data}")
                             results.append(f"❌ AI 매도 실패: {name}")

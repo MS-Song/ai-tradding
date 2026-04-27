@@ -2,7 +2,7 @@ import requests
 import json
 import time
 import random
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from datetime import datetime
 from src.auth import KISAuth
 try:
@@ -53,15 +53,29 @@ class KISAPI:
         self._index_src_disable_until = {"yahoo": 0, "naver_api": 0, "naver_crawl": 0}
 
     def _wait_for_domain_delta(self, url: str):
-        """동일 도메인에 대해 일정 시간 간격(self._min_interval)을 두고 호출하도록 제어"""
-        domain = urlparse(url).netloc
-        with self._domain_lock:
-            last_t = self._last_request_times.get(domain, 0)
-            now = time.time()
-            wait_t = last_t + self._min_interval - now
-            if wait_t > 0:
-                time.sleep(wait_t)
-            self._last_request_times[domain] = time.time()
+        """
+        동일 도메인에 대한 과도한 요청을 방지하기 위해 대기합니다. (Thread-safe)
+        Lock 내부에서는 시간 계산만 수행하고, 실제 sleep은 Lock 밖에서 수행하여 병목을 최소화합니다.
+        """
+        try:
+            domain = urlparse(url).netloc
+            if not domain: return
+            
+            wait_time = 0
+            with self._domain_lock:
+                now = time.time()
+                last_time = self._last_request_times.get(domain, 0)
+                elapsed = now - last_time
+                
+                if elapsed < self._min_interval:
+                    wait_time = self._min_interval - elapsed
+                
+                # 다음 호출을 위해 현재 시각 업데이트 (sleep 예상 시간 포함)
+                self._last_request_times[domain] = now + wait_time
+            
+            if wait_time > 0:
+                time.sleep(wait_time)
+        except: pass
 
     def _get_cached_chart(self, key: str, ttl: int = 300) -> Optional[List[dict]]:
         """메모리 내 차트 데이터 캐시 조회 (기본 5분 유효)"""
@@ -84,24 +98,6 @@ class KISAPI:
         else: time.sleep(1.1)
         return requests.request(method, url, **kwargs)
 
-    def _wait_for_domain_delta(self, url: str):
-        """동일 도메인에 대한 과도한 요청을 방지하기 위해 대기합니다. (Thread-safe)"""
-        try:
-            domain = urlparse(url).netloc
-            if not domain: return
-            
-            with self._domain_lock:
-                now = time.time()
-                last_time = self._last_request_times.get(domain, 0)
-                elapsed = now - last_time
-                
-                if elapsed < self._min_interval:
-                    wait_time = self._min_interval - elapsed
-                    time.sleep(wait_time)
-                    now = time.time() # sleep 후 시간 갱신
-                
-                self._last_request_times[domain] = now
-        except: pass
 
     @retry_api(max_retries=3, delay=1.5)
     def get_full_balance(self, force=False) -> Tuple[List[dict], dict]:
@@ -611,6 +607,42 @@ class KISAPI:
                 results[s] = self.get_index_price(code)
                 
         return results
+
+    def get_naver_stocks_realtime(self, codes: List[str]) -> Dict[str, dict]:
+        """네이버 금융 실시간 API를 통해 여러 종목의 시세를 한 번에 조회 (Bulk)"""
+        if not codes: return {}
+        try:
+            codes_str = ",".join(codes)
+            api_url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes_str}"
+            res = requests.get(api_url, headers=self.headers, timeout=5)
+            results = {}
+            if res.status_code == 200:
+                data = res.json()
+                for area in data.get('result', {}).get('areas', []):
+                    for item in area.get('datas', []):
+                        code = item.get('cd')
+                        if not code: continue
+                        
+                        price = float(item.get('nv', 0))
+                        raw_rate = float(item.get('cr', 0.0))
+                        rf_code = str(item.get('rf', ''))
+                        rate = -abs(raw_rate) if rf_code in ['4', '5'] else abs(raw_rate)
+                        
+                        results[code] = {
+                            "name": item.get('nm'),
+                            "price": price,
+                            "rate": rate,
+                            "cv": float(item.get('cv', 0)), # 전일대비 변동액
+                            "ov": float(item.get('ov', 0)), # 시가
+                            "hv": float(item.get('hv', 0)), # 고가
+                            "lv": float(item.get('lv', 0)), # 저가
+                            "aq": float(item.get('aq', 0)), # 거래량
+                        }
+            return results
+        except Exception as e:
+            from src.logger import log_error
+            log_error(f"get_naver_stocks_realtime Error: {e}")
+            return {}
 
     def get_naver_stock_detail(self, code: str, force: bool = False) -> dict:
         """네이버 금융 상세 페이지에서 핵심 시세 정보 및 펀더멘털 지표 수집 (캐시 적용)"""

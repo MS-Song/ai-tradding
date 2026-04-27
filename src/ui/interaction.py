@@ -25,6 +25,13 @@ def command_worker():
             log_error(f"Command Execution Error: {e}")
         finally:
             command_queue.task_done()
+            if 'dm' in locals() or 'dm' in globals():
+                try:
+                    # dm이 전역에 있거나 전달된 경우 결과 기록
+                    import __main__
+                    if hasattr(__main__, 'dm'):
+                        __main__.dm.worker_results["GLOBAL"] = "성공"
+                except: pass
 
 # 워커 스레드 시작
 threading.Thread(target=command_worker, daemon=True).start()
@@ -90,6 +97,8 @@ def draw_holdings_detail(strategy, dm, tw, th):
             strategy.refresh_holdings_opinion(progress_cb=lambda c, t: dm.set_busy(f"진단({c}/{t})"))
         finally:
             _is_running_analysis = False
+            with dm.data_lock:
+                dm.worker_results["GLOBAL"] = "성공"
             dm.clear_busy()
             time.sleep(0.2)
             flush_input()
@@ -668,16 +677,18 @@ def draw_performance_report(strategy, dm, tw, th):
                     return
             time.sleep(0.01)
 
-def get_input(dm, prompt, tw):
+def get_input(dm, prompt, tw, prompt_mode=None):
     """[Task 4] 입력 중에도 렌더링이 멈추지 않도록 콜백 연동"""
+    dm.current_prompt_mode = prompt_mode
     def cb(p, b):
         dm.input_prompt = p
         dm.input_buffer = b
         dm.is_input_active = bool(p)
         from src.ui.renderer import draw_tui
-        draw_tui(dm.strategy, dm, 0)
+        draw_tui(dm.strategy, dm, 0) # DataManager의 상태를 사용하므로 인자 제거
     res = input_with_esc(prompt, tw, callback=cb)
     dm.is_input_active = False
+    dm.current_prompt_mode = None
     return res
 
 def perform_interaction(key, api, strategy, dm, cycle):
@@ -733,7 +744,10 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw_r, th_r)
                     elif mode == 'a': draw_ai_logs_report(strategy, dm, tw_r, th_r)
                     elif mode == 'p': draw_performance_report(strategy, dm, tw_r, th_r)
-                    enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
+                    enter_alt_screen(); set_terminal_raw(); flush_input(); dm.last_size = (0, 0)
+                except Exception as display_e:
+                    from src.logger import log_error
+                    log_error(f"Display Task Error ({mode}): {display_e}")
                 finally: 
                     dm.clear_busy()
                     dm.is_full_screen_active = False
@@ -757,7 +771,10 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             restore_terminal_settings()
                             size = os.get_terminal_size(); tw_a, th_a = size.columns, size.lines
                             draw_stock_analysis(strategy, dm, t_code, tw_a, th_a)
-                            enter_alt_screen(); set_terminal_raw(); flush_input(); dm.strategy.last_size = (0, 0)
+                            enter_alt_screen(); set_terminal_raw(); flush_input(); dm.last_size = (0, 0)
+                        except Exception as analysis_e:
+                            from src.logger import log_error
+                            log_error(f"Analysis Task Error ({t_code}): {analysis_e}")
                         finally:
                             dm.clear_busy()
                             dm.is_full_screen_active = False
@@ -776,7 +793,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 ensure_env(force=True); load_dotenv(override=True); config = get_config()
                 new_auth = KISAuth(); api.auth = new_auth; api.domain = new_auth.domain; api.clear_cache(); strategy.api = api
                 strategy.reload_config(config)
-                enter_alt_screen(); set_terminal_raw(); dm.strategy.last_size = (0, 0)
+                enter_alt_screen(); set_terminal_raw(); dm.last_size = (0, 0)
                 dm.set_busy("데이터 동기화 중...")
                 is_v = getattr(api.auth, 'is_virtual', True)
                 dm.update_all_data(is_v, force=True)
@@ -810,7 +827,10 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                 trading_log.log_trade("수동매도", code, name, curr_p, qty, f"수동 매도 ({p_disp})", profit=profit, model_id="수동")
                                 dm.add_trading_log(f"✅ [{name}] {qty}주 매도 완료 ({p_disp})")
                                 dm.show_status(f"✅ 매도 성공: {name}"); dm.update_all_data(dm.api.auth.is_virtual, force=True)
-                            else: dm.show_status(f"❌ 매도 실패: {msg}", True)
+                            else:
+                                from src.logger import log_error
+                                log_error(f"수동 매도 실패 ({h['prdt_name']}): {msg}")
+                                dm.show_status(f"❌ 매도 실패: {msg}", True)
                         finally: dm.clear_busy()
                     threading.Thread(target=task_sell, daemon=True).start()
 
@@ -881,7 +901,10 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                         from src.logger import log_error
                                         log_error(f"AI 전략 할당 실패: {ai_e}")
                                 dm.update_all_data(dm.api.auth.is_virtual, force=True)
-                            else: dm.show_status(f"❌ 매수 실패: {msg}", True)
+                            else:
+                                from src.logger import log_error
+                                log_error(f"수동 매수 실패 ({top_ai['name']}): {msg}")
+                                dm.show_status(f"❌ 매수 실패: {msg}", True)
                         finally: dm.clear_busy()
                     threading.Thread(target=task_buy, daemon=True).start()
 
@@ -927,7 +950,10 @@ def perform_interaction(key, api, strategy, dm, cycle):
                         dm.show_status("✅ AI 분석 완료")
                         if strategy.parse_and_apply_ai_strategy():
                             if strategy.ai_config.get("auto_apply"): dm.show_status("🚀 전략 자동 반영됨")
-                    else: dm.show_status(f"❌ AI 분석 실패", True)
+                    else:
+                        from src.logger import log_error
+                        log_error(f"AI 시황 분석 실패 (결과 없음 또는 ⚠️ 포함) | Vibe: {strategy.current_market_vibe}")
+                        dm.show_status(f"❌ AI 분석 실패", True)
                 finally:
                     strategy.is_ready = True
                     dm.clear_busy()
@@ -966,7 +992,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     def task_bulk():
                         dm.set_busy("AI 통합 전략 진단")
                         try:
-                            batch_results = strategy.perform_portfolio_batch_review(skip_trade=True)
+                            batch_results = strategy.perform_portfolio_batch_review(skip_trade=True, include_manual=True)
                             
                             dm.show_status("✅ 일괄 전략 진단 완료")
                         finally: dm.clear_busy()
@@ -975,7 +1001,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 idx = int(res_code.strip())
                 if 0 < idx <= len(f_h):
                     h = f_h[idx - 1]; code, name = h['pdno'], h['prdt_name']
-                    res_strat = get_input(dm, f"> [{name}] 전략 번호 (엔터=AI): ", tw)
+                    res_strat = get_input(dm, f"> [{name}] 전략 번호 (엔터=AI): ", tw, prompt_mode='STRATEGY')
                     if res_strat is not None:
                         def task_single(sid_raw):
                             dm.set_busy("AI 전략 분석")
@@ -986,29 +1012,35 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                         dm.add_trading_log(f"✅ [{name}] {result['preset_name']} TP:{result['tp']:+.1f}% SL:{result['sl']:.1f}%")
                                         dm.show_status(f"✅ AI 추천 전략 적용")
                                     else:
+                                        from src.logger import log_error
+                                        log_error(f"AI 전략 추천 실패: {name}({code})")
                                         dm.add_trading_log(f"⚠️ [{name}] AI 전략 추천 실패")
                                         dm.show_status(f"❌ AI 전략 추천 실패", True)
-                                antis_id = sid_raw.strip().zfill(2)
-                                if antis_id in PRESET_STRATEGIES:
-                                    if antis_id == '00':
-                                        strategy.assign_preset(code, '00', name=name)
-                                        dm.add_trading_log(f"🔄 [{name}] 표준 전략 복귀")
-                                        dm.show_status(f"🔄 표준 복귀")
+                                else:
+                                    antis_id = sid_raw.strip().zfill(2)
+                                    if antis_id in PRESET_STRATEGIES:
+                                        if antis_id == '00':
+                                            strategy.assign_preset(code, '00', name=name)
+                                            dm.add_trading_log(f"🔄 [{name}] 표준 전략 복귀")
+                                            dm.show_status(f"🔄 표준 복귀")
+                                        else:
+                                            detail = api.get_naver_stock_detail(code); news = api.get_naver_stock_news(code)
+                                            try:
+                                                res = strategy.ai_advisor.simulate_preset_strategy(code, name, strategy.current_market_vibe, detail, news)
+                                            except Exception as ai_e:
+                                                from src.logger import log_error
+                                                log_error(f"AI 전략 시뮬레이션 실패: {ai_e}")
+                                                res = None
+                                            
+                                            tp = res['tp'] if res else PRESET_STRATEGIES[antis_id]['default_tp']
+                                            sl = res['sl'] if res else PRESET_STRATEGIES[antis_id]['default_sl']
+                                            strategy.assign_preset(code, antis_id, tp, sl, res['reason'] if res else '', name=name, is_manual=True)
+                                            dm.add_trading_log(f"✅ [{name}] {PRESET_STRATEGIES[antis_id]['name']} TP:{tp:+.1f}% SL:{sl:.1f}%")
+                                            dm.show_status(f"✅ {PRESET_STRATEGIES[antis_id]['name']} 적용")
                                     else:
-                                        detail = api.get_naver_stock_detail(code); news = api.get_naver_stock_news(code)
-                                        try:
-                                            res = strategy.ai_advisor.simulate_preset_strategy(code, name, strategy.current_market_vibe, detail, news)
-                                        except Exception as ai_e:
-                                            from src.logger import log_error
-                                            log_error(f"AI 전략 시뮬레이션 실패: {ai_e}")
-                                            res = None
-                                        
-                                        tp = res['tp'] if res else PRESET_STRATEGIES[antis_id]['default_tp']
-                                        sl = res['sl'] if res else PRESET_STRATEGIES[antis_id]['default_sl']
-                                        strategy.assign_preset(code, antis_id, tp, sl, res['reason'] if res else '', name=name)
-                                        dm.add_trading_log(f"✅ [{name}] {PRESET_STRATEGIES[antis_id]['name']} TP:{tp:+.1f}% SL:{sl:.1f}%")
-                                        dm.show_status(f"✅ {PRESET_STRATEGIES[antis_id]['name']} 적용")
-                                else: dm.show_status("⚠️ 무효한 번호", True)
+                                        from src.logger import log_error
+                                        log_error(f"무효한 프리셋 번호 입력: {antis_id}")
+                                        dm.show_status("⚠️ 무효한 번호", True)
                             finally: dm.clear_busy()
                         command_queue.put((task_single, (res_strat,), {}))
 

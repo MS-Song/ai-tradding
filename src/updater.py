@@ -19,10 +19,9 @@ def check_for_updates(current_version):
             data = response.json()
             latest_tag = data.get("tag_name", "").replace("v", "")
             
-            # 버전 비교 (단순 문자열 비교 또는 숫자 분할 비교)
-            # v1.2.7.42 형태이므로 '.' 기준으로 분할하여 비교
-            curr_parts = [int(p) for p in current_version.split('.') if p.isdigit()]
-            late_parts = [int(p) for p in latest_tag.split('.') if p.isdigit()]
+            # 버전 비교 (빌드 번호 무시하고 3단계까지만 비교: major.minor.patch)
+            curr_parts = [int(p) for p in current_version.split('.') if p.isdigit()][:3]
+            late_parts = [int(p) for p in latest_tag.split('.') if p.isdigit()][:3]
             
             has_update = False
             for i in range(min(len(curr_parts), len(late_parts))):
@@ -32,8 +31,8 @@ def check_for_updates(current_version):
                 elif late_parts[i] < curr_parts[i]:
                     break
             else:
-                if len(late_parts) > len(curr_parts):
-                    has_update = True
+                # 3단계까지 동일한데 최신 버전의 마디 수가 더 많다면(드문 경우) 업데이트 간주 안함 (사용자 요청에 따라 3단계까지만 관리)
+                pass
 
             if has_update:
                 # 플랫폼에 맞는 자산 찾기

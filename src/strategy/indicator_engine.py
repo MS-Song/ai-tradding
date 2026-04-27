@@ -113,7 +113,10 @@ class IndicatorEngine:
             daily_candles = api.get_daily_chart_price(code)
             if daily_candles:
                 # KIS 일봉은 최신순 (Index 0이 당일 또는 전일)
-                closes = [float(c.get('stck_clpr', 0)) for c in daily_candles]
+                def safe_float(v):
+                    try: return float(str(v).strip()) if v and str(v).strip() else 0.0
+                    except: return 0.0
+                closes = [safe_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in daily_candles]
                 ma_data = self.calculate_sma(closes, [5, 20, 60])
                 curr_price = closes[0]
                 
@@ -129,7 +132,10 @@ class IndicatorEngine:
             # 2. 분봉 분석 (최근 60분 데이터)
             minute_candles = api.get_minute_chart_price(code)
             if minute_candles:
-                closes = [float(c.get('stck_clpr', 0)) for c in minute_candles]
+                def safe_float(v):
+                    try: return float(str(v).strip()) if v and str(v).strip() else 0.0
+                    except: return 0.0
+                closes = [safe_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in minute_candles]
                 ma_data = self.calculate_sma(closes, [5, 20, 60])
                 curr_price = closes[0]
                 
@@ -166,7 +172,10 @@ class IndicatorEngine:
         if not candles: return {}
         
         # 종가(Close) 리스트 추출
-        closes = [float(c.get('stck_clpr', 0)) for c in candles]
+        def safe_float(v):
+            try: return float(str(v).strip()) if v and str(v).strip() else 0.0
+            except: return 0.0
+        closes = [safe_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in candles]
         if not closes: return {}
         
         return {

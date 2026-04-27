@@ -41,7 +41,8 @@ def get_config():
                 "budget_per_stock": int(env_data.get("STARTER_KIT_BUDGET", 1000000)),
                 "stocks": env_data.get("STARTER_KIT_STOCKS", "005930,000660,035420,005380").split(",")
             },
-            "base_seed_money": int(env_data.get("BASE_SEED_MONEY", 0))
+            "base_seed_money": int(env_data.get("BASE_SEED_MONEY", 0)),
+            "max_stock_count_config": env_data.get("MAX_STOCK_COUNT", "8")
         }
     }
 
@@ -91,6 +92,7 @@ def ensure_env(force=False):
             ("AI_DEBUG_MODE", "AI 디버그 모드 (장외 AI 강제실행) (Y/N)", "FALSE", "bool"),
             ("AUTO_APPLY_AI_STRATEGY", "AI 시황 분석 전략 자동 반영 여부 (Y/N)", "FALSE", "bool"),
             ("BASE_SEED_MONEY", "총 누적 입금액(초기 시드 + 추가 입금액) (원)", "0", "text"),
+            ("MAX_STOCK_COUNT", "최대 보유 종목 수 (1~8 또는 Y:AI자동)", "8", "text"),
             ("TELEGRAM_TOKEN", "텔레그램 봇 토큰 (Bot Token)", "", "text"),
             ("TELEGRAM_CHAT_ID", "텔레그램 채팅 ID (Chat ID)", "", "text")
         ]

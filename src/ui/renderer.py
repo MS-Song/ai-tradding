@@ -76,15 +76,19 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     busy_msg = dm.global_busy_msg
     busy_str = busy_msg if busy_msg else "-"
     
+    m_status = dm.market_info_status
+    m_color = "\033[92m" if m_status == "정상" else ("\033[91m" if m_status == "실패" else "\033[93m")
+    ai_status_text = f" | AI:{m_color}{m_status}\033[0;44m"
+
     if status_active:
         import re
         is_err = "[ERROR]" in dm.status_msg
         clean_msg = re.sub(r'\x1b\[[0-9;]*m', '', dm.status_msg).replace("[STATUS] ", "").strip()
         # 에러인 경우 빨간색, 일반 상태면 노란색
         msg_color = "\033[91m" if is_err else "\033[93m"
-        work_text = f"작업: {busy_str} | {msg_color}{clean_msg}\033[0;44m"
+        work_text = f"작업: {busy_str}{ai_status_text} | {msg_color}{clean_msg}\033[0;44m"
     else:
-        work_text = f"작업: {busy_str}"
+        work_text = f"작업: {busy_str}{ai_status_text}"
     
     thread_count = threading.active_count()
     
@@ -100,22 +104,50 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         if level == 3: return dt.strftime('%H:%M:%S')
         return ""
 
-    # 시간 정보 최적화 (공간 부족 시 단위 축소)
+    # 시간 정보 최적화 및 레이아웃 조정 (클락 잘림 방지)
     time_level = 0
-    time_text = ""
+    header_line = ""
     while time_level < 4:
         time_text = get_time_text(now_dt, time_level)
-        # 오른쪽 고정 영역: (쓰레드) 시간
         right_side = f" ({thread_count:02d}) {time_text} "
-        # [레이아웃 심플화] 버전 | 시장상태 | 작업상태(여러 작업 파이프로 연결)
-        left_side = f"{version_text} | {market_text} | {work_text}"
+        right_w = get_visual_width(right_side)
         
-        # 전체 길이 계산
-        header_line = left_side + " " * max(1, tw - get_visual_width(left_side) - get_visual_width(right_side)) + right_side
+        # 왼쪽 기본 요소: 버전 | 시장상태
+        base_left = f"{version_text} | {market_text}"
+        base_left_w = get_visual_width(base_left)
+        
+        # 작업 정보를 포함할 여유 공간 계산 (최소 1칸 여백 보장)
+        # 구조: [버전 | 시장] | [작업내용] (공백) [시간]
+        # 중간 구분자 ' | ' 너비 3 포함
+        avail_work_w = tw - base_left_w - 3 - right_w - 1
+        
+        if avail_work_w >= 10:
+            # 작업 정보를 표시할 공간이 어느 정도 있음
+            display_work = truncate_log_line(work_text, avail_work_w)
+            left_side = f"{base_left} | {display_work}"
+            left_w = get_visual_width(left_side)
+            spaces = " " * max(1, tw - left_w - right_w)
+            header_line = left_side + spaces + right_side
+        else:
+            # 작업 정보 표시 공간이 너무 부족하면 작업 정보 생략 시도
+            left_side = base_left
+            left_w = get_visual_width(left_side)
+            if left_w + 1 + right_w <= tw:
+                spaces = " " * (tw - left_w - right_w)
+                header_line = left_side + spaces + right_side
+            else:
+                # 시장 정보까지 생략 (극단적 상황)
+                left_side = version_text
+                left_w = get_visual_width(left_side)
+                spaces = " " * max(1, tw - left_w - right_w)
+                header_line = left_side + spaces + right_side
         
         if get_visual_width(header_line) <= tw:
             break
         time_level += 1
+    
+    if not header_line:
+        header_line = align_kr(version_text, tw)[:tw]
     
     header_line = header_line[:tw]
     # \033[44m: Blue BG, \033[37m: White FG
@@ -185,9 +217,21 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 P:성과 B:보유 D:추천 H:인기 A:AI로그 L:로그 | M:매뉴얼 | S:셋업 | Q:종료{cmd_update}", tw) + "\033[0m\n")
         
         # [Task 4] 입력 모드 또는 AI 브리핑 영역 (커맨드 바로 아래 고정 위치)
+        effective_mode = prompt_mode or dm.current_prompt_mode
         if dm.is_input_active:
             buf.write(f"\033[K \033[33m{dm.input_prompt}\033[0m{dm.input_buffer}\033[1;33m_\033[0m\n")
-            buf.write("\n" * 3) # 영역 보존
+            if effective_mode == 'STRATEGY':
+                from src.strategy import PRESET_STRATEGIES
+                # 전략 리스트를 6개씩 끊어서 2줄로 출력 (총 11개)
+                items = sorted(list(PRESET_STRATEGIES.items()))
+                for i in range(0, len(items), 6):
+                    chunk = items[i:i+6]
+                    line = "  ".join([f"\033[93m{k}\033[0m:{v['name']}" for k, v in chunk])
+                    buf.write("\033[96m" + align_kr(f"  └ {line}", tw) + "\033[0m\n")
+                # 총 4줄 영역 (입력 1 + 전략 2 = 3줄 사용)
+                buf.write("\n" * 1)
+            else:
+                buf.write("\n" * 3) # 영역 보존
         elif strategy.ai_briefing:
             all_lines = [line.strip() for line in strategy.ai_briefing.split('\n') if line.strip()]
             brief_map = {"시장": "", "전략": "", "액션": "", "추천": ""}
@@ -195,9 +239,23 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 for k in brief_map.keys():
                     if f"AI[{k}]:" in l: brief_map[k] = l; break
             for k in ["시장", "전략", "액션", "추천"]:
-                buf.write("\033[1;95m" + align_kr(f" {brief_map[k] if brief_map[k] else f'AI[{k}]: 분석 데이터 없음'}", tw) + "\033[0m\n")
-        else: buf.write("\n" * 4) 
-        
+                buf.write("\033[1;95m" + align_kr(f" {brief_map[k] if brief_map[k] else f'AI[{k}]: 데이터 없음'}", tw) + "\033[0m\n")
+        else:
+            if dm.market_info_status == "실패":
+                buf.write("\n")
+                buf.write("\033[91m" + align_kr("  [!] 시황 정보 갱신 실패 (Gemini API 오류 또는 네트워크 지연)", tw) + "\033[0m\n")
+                buf.write("\033[90m" + align_kr("  └ 시스템 기본 전략 및 TP/SL 감시는 정상 작동 중입니다.", tw) + "\033[0m\n")
+                buf.write("\n")
+            elif dm.market_info_status == "대기":
+                buf.write("\n")
+                buf.write("\033[93m" + align_kr("  [...] 최초 시황 분석 및 AI 전략 수립 중입니다...", tw) + "\033[0m\n")
+                buf.write("\n" * 2)
+            else:
+                # 시황 데이터가 아예 없는 경우 안내 문구 표시
+                buf.write("\n")
+                buf.write("\033[90m" + align_kr("  [💬] 상세 시황 브리핑 및 AI 전략 조언을 준비 중입니다...", tw) + "\033[0m\n")
+                buf.write("\033[90m" + align_kr("      (60분 주기 자동 갱신 또는 8번 키로 수동 갱신 가능)", tw) + "\033[0m\n")
+                buf.write("\n")        
         buf.write("=" * tw + "\n")
         asset = dm.cached_asset; tot_eval = asset.get('total_asset', 0); tot_prin = asset.get('total_principal', 0)
         tot_rt = ((tot_eval - tot_prin) / tot_prin * 100) if tot_prin > 0 else 0
@@ -298,6 +356,8 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 pnl_amt = (p_cu - p_a) * float(h.get('hldg_qty', 0)); pnl_rt = float(h.get('evlu_pfls_rt', 0))
                 pnl_txt = f"{int(pnl_amt):+,}({abs(pnl_rt):.2f}%)"; preset_label = strategy.get_preset_label(code); rem_txt = "-"
                 p_strat = strategy.preset_strategies.get(code)
+                if p_strat and p_strat.get('is_manual') and preset_label:
+                    preset_label += "(M)"
                 if p_strat and p_strat.get('deadline'):
                     try: rem_mins = int((datetime.strptime(p_strat['deadline'], '%Y-%m-%d %H:%M:%S') - datetime.now()).total_seconds() / 60); rem_txt = f"{rem_mins}M" if rem_mins > 0 else "EXP"
                     except: rem_txt = "ERR"
@@ -550,7 +610,7 @@ def draw_manual_page(tw, th):
             w("  \033[1m손절유예\033[0m : 물타기 직후 \033[93m30분\033[0m 동안 즉각 손절 유예")
             w("    └ 긴급 조건: 손실률 ≤ SL-1% | 글로벌패닉 | Defensive전환 | P4 → 즉시손절")
             w("  \033[1m쿨다운\033[0m   : 손절 후 \033[91m2시간\033[0m 이내 자동 물타기 재진입 금지 (핑퐁 방지)")
-            w("  \033[1mTUI 표시\033[0m : 🔵 BEAR 라인 (청색 계열)")
+            w("  \033[1m가이드\033[0m   : 🔵 BEAR 라인 (청색 계열)")
             w("")
             w("\033[1;93m [불타기 엔진 (BULL — 상승 추종, 6번 키)]\033[0m")
             w("-" * tw)
@@ -559,7 +619,7 @@ def draw_manual_page(tw, th):
             w("  \033[1m추가조건\033[0m : 직전 불타기가 대비 \033[91m+2.0%\033[0m 이상 추가 상승 시에만 허용")
             w("  \033[1m작동조건\033[0m : \033[91mBull(상승장)\033[0m 또는 \033[93m거래량 폭발(vol_spike)\033[0m 시에만 작동")
             w("  \033[1m쿨다운\033[0m   : 익절 후 \033[91m2시간\033[0m 이내 자동 불타기 재진입 금지")
-            w("  \033[1mTUI 표시\033[0m : 🔴 BULL 라인 (적색 계열)")
+            w("  \033[1m가이드\033[0m   : 🔴 BULL 라인 (적색 계열)")
             w("")
             w("\033[1;93m [AI 자율 매매 (8번/3번 키)]\033[0m")
             w("-" * tw)
@@ -735,7 +795,8 @@ def draw_trading_logs(strategy, dm, tw, th):
                     
         elif current_tab == 2:
             dm.set_busy("실시간 모니터링 중", "GLOBAL")
-            buf.write("\033[1;92m [시스템 실시간 모니터링 (MONITORING)]\033[0m\n")
+            active_threads = threading.active_count()
+            buf.write(f"\033[1;92m [시스템 실시간 모니터링 (MONITORING)]\033[0m | 활성 스레드: \033[92m{active_threads}개\033[0m (정상)\n")
             buf.write("-" * tw + "\n")
             
             curr_time = time.time()
@@ -754,6 +815,7 @@ def draw_trading_logs(strategy, dm, tw, th):
             with dm.data_lock:
                 last_times = dict(dm.last_times)
                 worker_status = dict(dm._worker_statuses)
+                worker_results = dict(dm.worker_results)
             
             buf.write(" \033[1m[주요 워커 상태 및 갱신 주기]\033[0m\n")
             
@@ -762,9 +824,15 @@ def draw_trading_logs(strategy, dm, tw, th):
                 "INDEX": "시황/지수 분석",
                 "DATA": "잔고/매매 동기화",
                 "RANKING": "인기 종목 탐색",
+                "ASSET": "계좌 실시간 수집",
+                "BILLING": "API 사용료 정산",
                 "UPDATE": "최신 버전 감지",
                 "GLOBAL": "수동 지시 처리",
-                "TELEGRAM": "텔레그램 알림 엔진"
+                "TELEGRAM": "텔레그램 알림 엔진",
+                "AI_ENGINE": "AI 전략 엔진",
+                "THEME": "테마 데이터 수집",
+                "CLEANUP": "로그 자동 정리",
+                "RETRO": "투자 복기 엔진"
             }
             
             # 모든 알려진 워커와 현재 활성화된 워커 키 수집
@@ -772,12 +840,12 @@ def draw_trading_logs(strategy, dm, tw, th):
             all_workers.update([k.upper() for k in last_times.keys()])
             all_workers.update(worker_status.keys())
             
-            header = f"  {align_kr('워커명(Task)', 18)} | {align_kr('최근 갱신 시간 (경과)', 25)} | 현재 작업 상태"
+            header = f"  {align_kr('워커명(Task)', 18)} | {align_kr('최근 갱신 시간 (경과)', 25)} | {align_kr('현재 작업 상태', 28)} | 최종 결과 | 마지막 실행 작업"
             buf.write("\033[1m" + header + "\033[0m\n")
-            buf.write("  " + "-" * (tw - 4) + "\n")
+            buf.write("  " + "-" * (tw - 6) + "\n")
             
             # 우선순위 정렬 (기본 4개 먼저, 나머지는 알파벳 순)
-            sort_order = {"INDEX": 1, "DATA": 2, "RANKING": 3, "GLOBAL": 4, "TELEGRAM": 5}
+            sort_order = {"INDEX": 1, "AI_ENGINE": 2, "DATA": 3, "RANKING": 4, "GLOBAL": 5, "TELEGRAM": 6, "ASSET": 7}
             sorted_workers = sorted(list(all_workers), key=lambda x: (sort_order.get(x, 99), x))
             
             # [추가] 텔레그램 상태를 모니터링 목록에 강제 추가
@@ -805,30 +873,49 @@ def draw_trading_logs(strategy, dm, tw, th):
                 status = worker_status.get(w, '대기 중 (IDLE)')
                 if w == "TELEGRAM" and hasattr(dm, 'notifier'):
                     status = dm.notifier.status_msg
-                    # 텔레그램은 별도 시각 기록이 없으므로 필요시 현재 시각 표시 가능
                     if not ts: ts_aligned = align_kr("실시간 작동 중", 25, 'center')
-                # GLOBAL 워커가 단순히 UI를 "조회 중"인 경우는 사용자에게 노이즈이므로 대기 중으로 표시
+                
                 display_status = status
                 if w == 'GLOBAL' and "조회 중" in status:
                     display_status = '대기 중 (IDLE)'
                 
-                if display_status == '대기 중 (IDLE)':
-                    status_fmt = f"\033[90m{display_status}\033[0m"
-                else:
-                    status_fmt = f"\033[93m{display_status}\033[0m"
+                # AI_ENGINE 특별 처리
+                if w == "AI_ENGINE":
+                    display_status = getattr(strategy, 'current_action', '대기 중 (IDLE)')
+                    ts_aligned = align_kr(get_time_info(getattr(strategy, 'last_market_analysis_time', 0)), 25, 'center')
                 
-                buf.write(f"  \033[1;94m{name_col_kr}\033[0m | {ts_aligned} | {status_fmt}\n")
+                status_aligned = align_kr(display_status, 28)
+                if display_status == '대기 중 (IDLE)':
+                    status_fmt = f"\033[90m{status_aligned}\033[0m"
+                else:
+                    status_fmt = f"\033[93m{status_aligned}\033[0m"
+                
+                # 최종 결과 표시
+                res = worker_results.get(w, "-")
+                if w == "AI_ENGINE":
+                    res = "성공" if strategy.is_ready else "실패"
+                elif w == "TELEGRAM" and hasattr(dm, 'notifier'):
+                    res = getattr(dm.notifier, 'last_result', '-')
+                
+                res_color = "\033[92m" if res == "성공" else ("\033[91m" if res == "실패" else "")
+                res_fmt = f"{res_color}{align_kr(res, 9)}\033[0m"
+                
+                # [추가] 마지막 실행 작업
+                last_task = dm.worker_last_tasks.get(w, "-")
+                if w == "TELEGRAM" and hasattr(dm, 'notifier'):
+                    last_task = getattr(dm.notifier, 'last_task', '-')
+                
+                last_task_fmt = truncate_log_line(last_task, tw - 90) # 남은 공간 계산
+                
+                buf.write(f"  \033[1;94m{name_col_kr}\033[0m | {ts_aligned} | {status_fmt} | {res_fmt} | {last_task_fmt}\n")
             
-            buf.write("\n \033[1m[AI 전략 엔진 상태]\033[0m\n")
-            is_ready = "\033[92mReady\033[0m" if strategy.is_ready else "\033[91mNot Ready\033[0m"
-            buf.write(f"  - 연결 상태: {is_ready}\n")
-            cur_act = getattr(strategy, 'current_action', '')
-            act_msg = f"\033[93m{cur_act}\033[0m" if cur_act else "\033[90m대기 중\033[0m"
-            buf.write(f"  - 진행 작업: {act_msg}\n\n")
-            
-            buf.write(" \033[1m[시스템 건전성]\033[0m\n")
-            active_threads = threading.active_count()
-            buf.write(f"  - 활성 스레드: \033[92m{active_threads}개\033[0m (정상 동작 중)\n")
+            buf.write("\n \033[1m[AI 시스템 건강 점수]\033[0m\n")
+            score = 100
+            if not strategy.is_ready: score -= 30
+            if dm.market_info_status == "실패": score -= 20
+            if dm.cached_panic: score -= 10
+            score_color = "\033[92m" if score >= 80 else ("\033[93m" if score >= 50 else "\033[91m")
+            buf.write(f"  - AI 가동 가용성: {score_color}{score}점\033[0m\n")
 
         elif current_tab == 3:
             dm.set_busy("에러 로그 분석 중", "GLOBAL")

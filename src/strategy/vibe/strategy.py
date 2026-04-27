@@ -21,18 +21,42 @@ from src.strategy.vibe.analysis import AnalysisMixin
 from src.strategy.vibe.execution import ExecutionMixin
 
 class VibeStrategy(AnalysisMixin, ExecutionMixin):
-    def get_max_stock_count(self) -> int:
-        """현재 장세(Vibe)에 따른 최대 보유 종목 수 반환 (지키는 투자)"""
+    def get_max_stock_count(self, total_asset: float = 0) -> int:
+        """현재 장세(Vibe)와 사용자 설정에 따른 최대 보유 종목 수 반환"""
+        cfg = getattr(self, "max_stock_count_config", "8").upper()
+        
+        # 1. 베이스라인(천장) 결정
+        if cfg == "Y":
+            # [AI 자동화 로직] 예수금 규모에 따른 포트폴리오 최적화
+            # 1천만원 미만: 3종목 | 3천만원 미만: 5종목 | 그 이상: 8종목
+            if total_asset <= 0: # 자산 정보가 아직 없으면 기본 5개
+                base_ceiling = 5
+            elif total_asset < 10000000:
+                base_ceiling = 3
+            elif total_asset < 30000000:
+                base_ceiling = 5
+            else:
+                base_ceiling = 8
+        else:
+            try:
+                base_ceiling = min(8, max(1, int(cfg)))
+            except:
+                base_ceiling = 8
+
+        # 2. 장세(Vibe)에 따른 최종 압축
         v = self.current_market_vibe.upper()
-        if v == "BULL": return 8
-        if v == "NEUTRAL": return 6
-        if v == "BEAR": return 3      # 하락장: 3종목으로 압축
-        if v == "DEFENSIVE": return 1  # 방어모드: 1종목 또는 현금화
-        return 6
+        if v == "BEAR": return min(base_ceiling, 3)     # 하락장: 최대 3종목
+        if v == "DEFENSIVE": return min(base_ceiling, 1) # 방어모드: 최대 1종목
+        
+        # Bull/Neutral은 베이스라인 유지 (단, Neutral에서 약간의 압축을 원하면 여기서 조정 가능)
+        if v == "NEUTRAL": return min(base_ceiling, 6)
+        
+        return base_ceiling
     def __init__(self, api, config):
         self.api = api
         self.base_config = config.get("vibe_strategy", {})
         v_cfg = self.base_config
+        self.max_stock_count_config = v_cfg.get("max_stock_count_config", "8")
         
         self.analyzer = MarketAnalyzer(api)
         self.exit_mgr = ExitManager(v_cfg.get("take_profit_threshold", 5.0), v_cfg.get("stop_loss_threshold", -5.0))
@@ -90,6 +114,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         }
         
         self.is_ready = not self.ai_config.get("auto_mode", False)
+        self.first_analysis_attempted = False # [추가] 최초 분석 시도 완료 여부
         self.is_analyzing = False
         self.last_market_analysis_time = 0.0
         self.analysis_interval = 20
@@ -117,10 +142,11 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             self.last_buy_models[code] = self.ai_advisor.last_used_advisor.model_id
         self._save_all_states()
 
-    def record_sell(self, code):
+    def record_sell(self, code, is_full_exit=True):
         self.last_sell_times[code] = time.time()
         # 매도 시 해당 종목에 할당된 프리셋 전략 설정도 함께 삭제 (상태 파일 최적화)
-        if code in self.preset_eng.preset_strategies:
+        # [Fix] 부분 익절 시에는 전략을 삭제하지 않도록 is_full_exit 체크 추가
+        if is_full_exit and code in self.preset_eng.preset_strategies:
             del self.preset_eng.preset_strategies[code]
             logger.info(f"🗑️ 프리셋 전략 데이터 정리: [{code}]")
         self._save_all_states()
@@ -154,6 +180,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
                 "debug_mode": v_cfg.get("ai_config", {}).get("debug_mode", False),
                 "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview")
             })
+            self.max_stock_count_config = v_cfg.get("max_stock_count_config", "8")
             llm_seq = v_cfg.get("ai_config", {}).get("llm_sequence", [("GEMINI", self.ai_config.get("preferred_model", "gemini-3.1-flash-lite-preview"))])
             self.ai_advisor = MultiLLMAdvisor(self.api, llm_seq)
             self.alpha_eng.ai_advisor = self.ai_advisor
@@ -222,8 +249,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         res = self.preset_eng.auto_assign_preset(code, name)
         return res
 
-    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = "", name: str = "", lifetime_mins: int = None):
-        return self.preset_eng.assign_preset(code, preset_id, tp, sl, reason, lifetime_mins, name)
+    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = "", name: str = "", lifetime_mins: int = None, is_manual: bool = False):
+        return self.preset_eng.assign_preset(code, preset_id, tp, sl, reason, lifetime_mins, name, is_manual)
 
     def get_preset_label(self, code: str) -> str:
         if code in self.exit_mgr.manual_thresholds: return "수동"
@@ -233,7 +260,11 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
     @property
     def current_market_vibe(self): return self.analyzer.kr_vibe
     @property
-    def max_stock_count(self): return self.get_max_stock_count()
+    def max_stock_count(self):
+        # 자산 정보를 넘겨주기 위해 DataManager나 현재 계좌 상태를 참조해야 함
+        # 여기서는 Strategy 클래스 내에 캐시된 자산이 있을 수 있으므로 확인
+        total_asset = getattr(self, 'last_known_asset', 0)
+        return self.get_max_stock_count(total_asset)
     @property
     def global_panic(self): return self.analyzer.is_panic
     @property

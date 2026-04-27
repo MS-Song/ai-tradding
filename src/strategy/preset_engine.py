@@ -29,7 +29,7 @@ class PresetStrategyEngine:
             log_error(f"Deadline 계산 실패: {e}")
             return None
             
-    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = "", lifetime_mins: int = None, name: str = ""):
+    def assign_preset(self, code: str, preset_id: str, tp: float = None, sl: float = None, reason: str = "", lifetime_mins: int = None, name: str = "", is_manual: bool = False):
         preset = PRESET_STRATEGIES.get(preset_id)
         if not preset: return False
             
@@ -60,7 +60,8 @@ class PresetStrategyEngine:
                 "reason": reason or preset["desc"],
                 "buy_time": now_str,
                 "deadline": self._calculate_deadline(preset_id, now_str, lifetime_mins),
-                "is_p3_processed": False
+                "is_p3_processed": False,
+                "is_manual": is_manual
             }
             trading_log.log_config(f"전략 할당: [{code}]{name} -> {preset['name']} | TP:{use_tp}% SL:{use_sl}%")
             

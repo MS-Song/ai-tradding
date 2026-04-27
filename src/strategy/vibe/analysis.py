@@ -25,6 +25,7 @@ class AnalysisMixin:
             self.is_ready = True 
             return False
         finally:
+            self.first_analysis_attempted = True
             # 상위에서 이미 플래그를 관리 중인 경우(run_scheduled_analysis 등) 건드리지 않음
             if not was_analyzing:
                 self.is_analyzing = False
@@ -87,7 +88,8 @@ class AnalysisMixin:
                 ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, r['code'])
                 if r['code'] not in candidate_indicators: candidate_indicators[r['code']] = {}
                 candidate_indicators[r['code']]['ma_analysis'] = ma_analysis
-            except: pass
+            except Exception as e:
+                log_error(f"지표 분석 수집 오류 ({r['code']}): {e}")
 
         for h in holdings:
             code = h['pdno']
@@ -102,11 +104,20 @@ class AnalysisMixin:
             future_detailed = executor.submit(self.ai_advisor.get_detailed_report_advice, self.ai_recommendations, self.analyzer.kr_vibe, progress_cb=progress_cb)
             future_holdings = executor.submit(self.ai_advisor.get_holdings_report_advice, holdings, self.analyzer.kr_vibe, self.analyzer.current_data, progress_cb=progress_cb) if holdings else None
             
-            self.ai_briefing = future_briefing.result()
-            self.ai_detailed_opinion = future_detailed.result()
+            new_briefing = future_briefing.result()
+            if new_briefing:
+                self.ai_briefing = new_briefing
+            else:
+                log_error("AI 시황 브리핑 수집 실패 (기존 데이터 유지)")
+
+            new_detailed = future_detailed.result()
+            if new_detailed: self.ai_detailed_opinion = new_detailed
+
             if future_holdings:
-                self.ai_holdings_opinion = future_holdings.result()
-                self.ai_holdings_update_time = time.time()
+                new_holdings = future_holdings.result()
+                if new_holdings:
+                    self.ai_holdings_opinion = new_holdings
+                    self.ai_holdings_update_time = time.time()
         return self.ai_briefing
 
     def refresh_holdings_opinion(self, progress_cb: Optional[Callable] = None):

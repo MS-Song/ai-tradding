@@ -27,7 +27,7 @@ def setup_logger(name="VibeTrader"):
     )
 
     # 1. 거래 및 일반 로그 (ONLY INFO)
-    trade_handler = logging.FileHandler("trading.log", encoding="utf-8")
+    trade_handler = logging.FileHandler("trading.log", encoding="utf-8", delay=True)
     trade_handler.setLevel(logging.INFO)
     # INFO 레벨만 허용하고 그 이상의 레벨(WARNING, ERROR)은 거르는 필터 추가
     class InfoOnlyFilter(logging.Filter):
@@ -37,17 +37,28 @@ def setup_logger(name="VibeTrader"):
     trade_handler.setFormatter(formatter)
 
     # 2. 에러 전용 로그 (ERROR 이상)
-    error_handler = logging.FileHandler("error.log", encoding="utf-8")
+    error_handler = logging.FileHandler("error.log", encoding="utf-8", delay=True)
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(formatter)
 
     if not logger.handlers:
         logger.addHandler(trade_handler)
         logger.addHandler(error_handler)
+    
+    return logger
         
+# 3. 텔레그램 발송 로그 (별도 관리)
+def setup_telegram_logger():
+    logger = logging.getLogger("TelegramLog")
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        handler = logging.FileHandler("telegram.log", encoding="utf-8", delay=True)
+        handler.setFormatter(logging.Formatter('%(asctime)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+        logger.addHandler(handler)
     return logger
 
 logger = setup_logger()
+telegram_logger = setup_telegram_logger()
 
 # --- 2. 구조화된 JSON 로그 관리 (Spec: Group 2 반영) ---
 class TradingLogManager:
@@ -339,15 +350,18 @@ def log_error(msg):
     logger.error(msg)
 
 def cleanup_text_log(file_path, days_to_keep=2):
-    """텍스트 로그 파일을 영업일 기준 n일치만 남기고 정리"""
+    """텍스트 로그 파일을 영업일 기준 n일치만 남기고 정리 (윈도우 파일 잠금 대응)"""
     from src.utils import get_business_days_ago
+    import uuid
+    import logging
     if not os.path.exists(file_path): return False
     
     threshold_date = get_business_days_ago(days_to_keep).strftime('%Y-%m-%d')
     cleaned = False
     
+    tmp_path = f"{file_path}.{uuid.uuid4().hex[:6]}.tmp"
     try:
-        # FileHandler가 파일을 잡고 있을 수 있으므로 주의해서 처리
+        # 1. 기존 파일 읽기
         with open(file_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
         
@@ -358,11 +372,49 @@ def cleanup_text_log(file_path, days_to_keep=2):
                 if date_part >= threshold_date:
                     new_lines.append(line)
         
-        if len(new_lines) != len(lines):
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.writelines(new_lines)
+        if len(new_lines) == len(lines):
+            return False
+
+        # 2. 임시 파일에 기록
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+            
+        # 3. 파일 교체 (Windows 대응: 해당 파일을 사용하는 핸들러를 찾아 잠시 닫음)
+        target_abs = os.path.abspath(file_path)
+        active_handlers = []
+        
+        # 메인 로거와 텔레그램 로거 모두 확인
+        for log_obj in [logging.getLogger("VibeTrader"), logging.getLogger("TelegramLog")]:
+            for h in log_obj.handlers[:]:
+                if isinstance(h, logging.FileHandler) and os.path.abspath(h.baseFilename) == target_abs:
+                    active_handlers.append((log_obj, h))
+                    h.close()
+                    log_obj.removeHandler(h)
+
+        success = False
+        try:
+            os.replace(tmp_path, file_path)
+            success = True
+        except OSError as e:
+            print(f"DEBUG: 로그 교체 실패 ({file_path}): {e}")
+        
+        # 4. 핸들러 복구
+        for log_obj, old_h in active_handlers:
+            new_h = logging.FileHandler(old_h.baseFilename, encoding=old_h.encoding, delay=old_h.delay)
+            new_h.setLevel(old_h.level)
+            new_h.setFormatter(old_h.formatter)
+            for f in old_h.filters:
+                new_h.addFilter(f)
+            log_obj.addHandler(new_h)
+
+        if success:
             cleaned = True
+                
     except Exception as e:
-        log_error(f"로그 정리 실패 ({file_path}): {e}")
+        print(f"DEBUG: 로그 정리 중 예외 발생 ({file_path}): {e}")
+    finally:
+        if os.path.exists(tmp_path):
+            try: os.remove(tmp_path)
+            except: pass
     
     return cleaned
