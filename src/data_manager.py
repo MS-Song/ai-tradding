@@ -1081,6 +1081,71 @@ class DataManager:
             # 1시간 대기 (장중에는 1시간마다 체크)
             time.sleep(3600)
 
+    def telegram_status_worker(self):
+        """30분 단위 정기 상태 보고 워커"""
+        # 시작 후 첫 보고까지 약간의 여유(30초)를 두어 데이터가 충분히 쌓이게 함
+        time.sleep(30)
+        from datetime import time as dtime
+        
+        while self.is_running:
+            try:
+                # 1. 설정 확인 (전략 엔진의 설정값 참조)
+                config_enabled = getattr(self.strategy, 'config', {}).get('vibe_strategy', {}).get('telegram_report_enabled', True)
+                if not config_enabled:
+                    time.sleep(600) # 10분 후 재확인
+                    continue
+
+                now = datetime.now()
+                # 2. 장 운영 시간 제한 (09:00 ~ 15:30)
+                market_start = dtime(9, 0)
+                market_end = dtime(15, 30)
+                is_market_time = market_start <= now.time() <= market_end
+                
+                # 주말 제외
+                if now.weekday() >= 5:
+                    time.sleep(3600)
+                    continue
+
+                if not is_market_time:
+                    # 장외 시간에는 루프 주기를 짧게 가져가며 대기 (장 시작 전후 체크 위함)
+                    time.sleep(300)
+                    continue
+                
+                with self.data_lock:
+                    vibe = self.cached_vibe
+                    asset = self.cached_asset
+                    holdings = self.cached_holdings
+                    last_time = self.last_update_time or now.strftime('%H:%M:%S')
+
+                # 자산 정보가 있는 경우에만 보고
+                if asset.get('total_asset', 0) > 0:
+                    vibe_emoji = "🟢" if "BULL" in vibe.upper() else "🔴" if "BEAR" in vibe.upper() else "🟡" if "NEUTRAL" in vibe.upper() else "⚪"
+                    
+                    # notify_alert가 내부적으로 제목과 구분선을 추가하므로 본문만 구성
+                    msg = f"• *장세:* {vibe_emoji} {vibe}\n"
+                    msg += f"• *자산:* {asset['total_asset']:,.0f}원\n"
+                    msg += f"• *수익:* {asset.get('daily_pnl_rate', 0.0):+.2f}% ({asset.get('daily_pnl_amt', 0):+,.0f}원)\n"
+                    
+                    if holdings:
+                        msg += f"• *보유 종목 ({len(holdings)}개):*\n"
+                        # 수익률 기준 내림차순 정렬하여 전체 종목 표시
+                        sorted_h = sorted(holdings, key=lambda x: float(x.get('evlu_pfls_rt', 0)), reverse=True)
+                        for h in sorted_h:
+                            rt = float(h.get('evlu_pfls_rt', 0))
+                            qty = int(float(h.get('hldg_qty', 0)))
+                            price = float(h.get('prpr', 0))
+                            msg += f"  - {h['prdt_name']}: `{rt:+.2f}%` ({qty}주, {price:,.0f}원)\n"
+                    else:
+                        msg += f"• *보유 종목:* 없음\n"
+                    
+                    self.notifier.notify_alert(f"정기 상태 보고 ({last_time})", msg)
+                
+            except Exception as e:
+                log_error(f"Telegram Status Worker Error: {e}")
+            
+            # 30분 대기 (1800초)
+            time.sleep(1800)
+
     def start_workers(self, is_virtual):
         threading.Thread(target=self.index_update_worker, daemon=True).start()
         threading.Thread(target=self.data_update_worker, args=(is_virtual,), daemon=True).start()
@@ -1088,3 +1153,4 @@ class DataManager:
         threading.Thread(target=self.log_cleanup_worker, daemon=True).start()
         threading.Thread(target=self.retrospective_worker, daemon=True).start()
         threading.Thread(target=self.updater_worker, daemon=True).start()
+        threading.Thread(target=self.telegram_status_worker, daemon=True).start()

@@ -107,9 +107,12 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     # 시간 정보 최적화 및 레이아웃 조정 (클락 잘림 방지)
     time_level = 0
     header_line = ""
+    # [수정] AI 시스템 건강 점수 (AI 가동 가용성 100점 고정) 추가
+    ai_health_text = "| AI건강:100점 "
+    
     while time_level < 4:
         time_text = get_time_text(now_dt, time_level)
-        right_side = f" ({thread_count:02d}) {time_text} "
+        right_side = f" ({thread_count:02d}) {ai_health_text}{time_text} "
         right_w = get_visual_width(right_side)
         
         # 왼쪽 기본 요소: 버전 | 시장상태

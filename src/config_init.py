@@ -42,7 +42,8 @@ def get_config():
                 "stocks": env_data.get("STARTER_KIT_STOCKS", "005930,000660,035420,005380").split(",")
             },
             "base_seed_money": int(env_data.get("BASE_SEED_MONEY", 0)),
-            "max_stock_count_config": env_data.get("MAX_STOCK_COUNT", "8")
+            "max_stock_count_config": env_data.get("MAX_STOCK_COUNT", "8"),
+            "telegram_report_enabled": env_data.get("TELEGRAM_REPORT", "Y") == "Y"
         }
     }
 
@@ -94,7 +95,8 @@ def ensure_env(force=False):
             ("BASE_SEED_MONEY", "총 누적 입금액(초기 시드 + 추가 입금액) (원)", "0", "text"),
             ("MAX_STOCK_COUNT", "최대 보유 종목 수 (1~8 또는 Y:AI자동)", "8", "text"),
             ("TELEGRAM_TOKEN", "텔레그램 봇 토큰 (Bot Token)", "", "text"),
-            ("TELEGRAM_CHAT_ID", "텔레그램 채팅 ID (Chat ID)", "", "text")
+            ("TELEGRAM_CHAT_ID", "텔레그램 채팅 ID (Chat ID)", "", "text"),
+            ("TELEGRAM_REPORT", "30분 정기 상태 보고 활성화", "Y", "choice", ["Y", "N"])
         ]
 
         def handle_input(key, label, default, input_type, current_env):
