@@ -17,3 +17,5 @@ ai_usage.json
 activate_venv.sh
 run.sh
 .worktrees/
+telegram.log
+theme_data.json
