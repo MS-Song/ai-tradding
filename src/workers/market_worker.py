@@ -5,10 +5,12 @@ from src.utils import is_ai_enabled_time, is_market_open
 from src.theme_engine import analyze_popular_themes
 
 class MarketWorker(BaseWorker):
-    def __init__(self, state, api, strategy):
+    def __init__(self, state, api, strategy, notifier=None):
         super().__init__("INDEX", state, interval=5.0)
         self.api = api
         self.strategy = strategy
+        self.notifier = notifier
+        self.themes = []
 
     def run(self):
         curr_t = time.time()
@@ -37,7 +39,7 @@ class MarketWorker(BaseWorker):
         except Exception as e:
             self.set_result("실패", last_task=f"시장분석 오류: {e}")
 
-        # 2. VIBE 변화 및 장 개시 알림 로직 (DataManager에서 이관)
+        # 2. VIBE 변화 및 장 개시 알림 로직
         self._handle_notifications()
 
         # 3. 네이버 인기/거래량 종목 수집
@@ -45,7 +47,7 @@ class MarketWorker(BaseWorker):
             self.set_busy("종목 수집")
             h_raw = self.api.get_naver_hot_stocks()
             v_raw = self.api.get_naver_volume_stocks()
-            analyze_popular_themes(h_raw, v_raw)
+            self.themes = analyze_popular_themes(h_raw, v_raw)
             
             shared_info = self._extract_price_info(h_raw + v_raw)
             
@@ -75,11 +77,18 @@ class MarketWorker(BaseWorker):
             curr_time_str = datetime.now().strftime('%H:%M')
             today_str = datetime.now().strftime('%Y-%m-%d')
             
-            # VIBE 변화 감지
+            # 1. VIBE 변화 알림
             if curr_vibe != self.state.last_notified_vibe:
-                # 알림은 DM이 처리하므로 상태만 업데이트하거나 콜백 호출 필요
-                # 여기서는 상태만 변경하고 알림은 DM에서 처리하도록 유지 (기존 구조 준수)
-                pass
+                if self.notifier:
+                    self.notifier.notify_alert("시장 VIBE 변화", f"🔄 `{self.state.last_notified_vibe}` → `{curr_vibe}`")
+                self.state.last_notified_vibe = curr_vibe
+            
+            # 2. 장 개시 알림
+            if "09:00" <= curr_time_str <= "09:05" and self.state.notified_dates.get("market_start") != today_str:
+                if self.state.is_kr_market_active:
+                    if self.notifier:
+                        self.notifier.notify_market_start(curr_vibe)
+                    self.state.notified_dates["market_start"] = today_str
 
     def _extract_price_info(self, items):
         info_map = {}
@@ -101,13 +110,27 @@ class MarketWorker(BaseWorker):
         try:
             # AI 실행 가능 시간 체크
             if is_ai_enabled_time() or getattr(self.strategy, "debug_mode", False):
-                # 추천 리스트 업데이트 (DataManager 로직 이관)
-                pass
+                # 5분 주기로 AI 추천 업데이트
+                if curr_t - self.state.last_times.get("recommendation", 0) > 300:
+                    def rec_prog_cb(c, t, msg=""):
+                        self.set_busy(f"AI분석({c}/{t})")
+                    
+                    self.strategy.update_ai_recommendations(
+                        themes=[], # themes는 h_raw/v_raw 분석에서 가져와야 함
+                        hot_raw=self.state.hot_raw,
+                        vol_raw=self.state.vol_raw,
+                        progress_cb=rec_prog_cb
+                    )
+                    
+                    with self.state.lock:
+                        self.state.recommendations = self.strategy.ai_recommendations
+                        self.state.last_times["recommendation"] = curr_t
             
             # 비용 업데이트 (5초 주기)
             if curr_t - self.state.last_times.get("billing", 0) > 5:
                 costs = self.strategy.get_ai_costs()
                 with self.state.lock:
                     self.state.ai_costs = costs
+                    self.state.last_times["billing"] = curr_t
                 self.state.update_worker_status("BILLING", result="성공", last_task="AI API 비용 집계")
         except: pass

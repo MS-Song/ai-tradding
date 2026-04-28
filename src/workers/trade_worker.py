@@ -19,8 +19,11 @@ class TradeWorker(BaseWorker):
             self.set_busy("매매 검토", friendly_name="TRADE_EXECUTION")
             
             # strategy.run_cycle은 내부적으로 API를 호출하고 로깅함
-            # DataManager의 인스턴스를 전달하여 필요한 정보를 참조하게 함
-            self.strategy.run_cycle(self.state)
+            self.strategy.run_cycle(
+                market_trend=self.state.vibe.lower(),
+                holdings=self.state.holdings,
+                asset_info=self.state.asset
+            )
             
             self.set_result("성공", last_task="전략 매매 사이클 수행 완료")
         except Exception as e:

@@ -24,7 +24,7 @@ class DataManager:
         
         # --- 워커 인스턴스 (Phase 2) ---
         self.workers = {
-            "MARKET": MarketWorker(self.state, api, strategy),
+            "MARKET": MarketWorker(self.state, api, strategy, self.notifier),
             "DATA": DataSyncWorker(self.state, api, strategy),
             "TRADE": TradeWorker(self.state, api, strategy)
         }

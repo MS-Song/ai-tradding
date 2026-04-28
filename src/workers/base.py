@@ -1,5 +1,6 @@
 import threading
 import time
+from typing import Optional, List
 import traceback
 from src.logger import log_error
 
