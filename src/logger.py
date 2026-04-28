@@ -310,7 +310,7 @@ class TradingLogManager:
         
         if "gemini-3.1-pro" in m_id_low: return "G3.1P"
         if "gemini-3.1-flash-lite" in m_id_low: return "G3.1FL"
-        if "gemini-3-flash" in m_id_low: return "G3.0F"
+        if "gemini-3-flash" in m_id_low or "g3fp" in m_id_low: return "G3FP"
         if "gemini-2.5-flash-lite" in m_id_low: return "G2.5FL"
         if "gemini-2.5-flash" in m_id_low: return "G2.5F"
         if "gemini-2.1-flash-lite" in m_id_low: return "G2.1FL"

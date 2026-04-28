@@ -3,6 +3,7 @@ import sys
 import time
 import threading
 import queue
+import re
 from datetime import datetime
 from src.utils import *
 from src.theme_engine import get_cached_themes
@@ -337,6 +338,16 @@ def draw_ai_logs_report(strategy, dm):
                     m_id = item.get('model_id', '')
                     m_name = trading_log._normalize_model_name(m_id)
                     reason = item['reason'].replace('\n', ' ')
+                    
+                    # [Architect 개선] 사유 내 모델 식별자([...]) 추출 및 모델 컬럼 이동
+                    match = re.match(r'^\[([^\]]+)\]\s*(.*)', reason)
+                    if match:
+                        extracted_model = match.group(1)
+                        reason = match.group(2)
+                        # AI가 명시한 모델이 있으면 m_name(TP/SL) 대신 사용
+                        if m_name == "TP/SL" or not m_name:
+                            m_name = extracted_model
+
                     # 가용 너비 계산 (시간 10 + 코드 8 + 종목명 14 + 모델 8 + 구분자 12 = 52)
                     avail_w = max(20, tw - 55)
                     if get_visual_width(reason) > avail_w:
@@ -386,6 +397,16 @@ def draw_ai_logs_report(strategy, dm):
                     m_id = item.get('model_id', '')
                     m_name = trading_log._normalize_model_name(m_id)
                     reason = item['reason'].replace('\n', ' ')
+                    
+                    # [Architect 개선] 사유 내 모델 식별자([...]) 추출 및 모델 컬럼 이동
+                    match = re.match(r'^\[([^\]]+)\]\s*(.*)', reason)
+                    if match:
+                        extracted_model = match.group(1)
+                        reason = match.group(2)
+                        # AI가 명시한 모델이 있으면 m_name(TP/SL) 대신 사용
+                        if m_name == "TP/SL" or not m_name:
+                            m_name = extracted_model
+
                     avail_w = max(20, tw - 55)
                     if get_visual_width(reason) > avail_w:
                         while get_visual_width(reason) > avail_w - 2: reason = reason[:-1]

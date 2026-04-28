@@ -737,7 +737,7 @@ def draw_trading_logs(strategy, dm):
     from src.logger import trading_log
     
     current_tab = 1
-    total_tabs = 3
+    total_tabs = 4
     
     while True:
         try:
@@ -754,8 +754,9 @@ def draw_trading_logs(strategy, dm):
         t1 = "\033[7m" if current_tab == 1 else ""
         t2 = "\033[7m" if current_tab == 2 else ""
         t3 = "\033[7m" if current_tab == 3 else ""
+        t4 = "\033[7m" if current_tab == 4 else ""
         
-        menu = f" {t1} 1.시스템로그(거래/설정) \033[0m | {t2} 2.모니터링(워커/상태) \033[0m | {t3} 3.에러로그(error.log) \033[0m "
+        menu = f" {t1} 1.시스템로그(거래/설정) \033[0m | {t2} 2.모니터링(워커/상태) \033[0m | {t3} 3.에러로그(error.log) \033[0m | {t4} 4.TRADING LOG \033[0m "
         buf.write(align_kr(menu, tw, 'center') + "\n")
         buf.write("=" * tw + "\n\n")
 
@@ -881,8 +882,28 @@ def draw_trading_logs(strategy, dm):
                 else: buf.write("  error.log 파일이 존재하지 않습니다.\n")
             except Exception as e: buf.write(f"  로그 읽기 오류: {e}\n")
 
+        elif current_tab == 4:
+            dm.set_busy("거래 로그 분석 중", "GLOBAL")
+            buf.write("\033[1;92m [최근 거래 로그 (TRADING LOG)]\033[0m\n" + "-" * tw + "\n")
+            trade_log_file = "trading.log"
+            try:
+                if os.path.exists(trade_log_file):
+                    with open(trade_log_file, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    if not lines: buf.write("  기록된 거래 로그가 없습니다.\n")
+                    else:
+                        lines.reverse()
+                        for line in lines[:available_h-2]:
+                            line_str = truncate_log_line(line.strip(), tw - 4)
+                            if "[TRADE]" in line_str: line_str = line_str.replace("[TRADE]", "\033[92m[TRADE]\033[0m")
+                            elif "[CONFIG]" in line_str: line_str = line_str.replace("[CONFIG]", "\033[96m[CONFIG]\033[0m")
+                            elif "[REJECT]" in line_str: line_str = line_str.replace("[REJECT]", "\033[91m[REJECT]\033[0m")
+                            buf.write(f"  {line_str}\n")
+                else: buf.write("  trading.log 파일이 존재하지 않습니다.\n")
+            except Exception as e: buf.write(f"  로그 읽기 오류: {e}\n")
+
         buf.write("\n" + "-" * tw + "\n")
-        buf.write(align_kr(" [1, 2, 3]: 탭 전환 | Q, ESC, SPACE: 메인으로 복귀 ", tw, 'center') + "\n")
+        buf.write(align_kr(" [1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 메인으로 복귀 ", tw, 'center') + "\n")
         sys.stdout.write(buf.getvalue()); sys.stdout.flush()
         
         inner_cycle = 0
@@ -893,5 +914,6 @@ def draw_trading_logs(strategy, dm):
                 if kl == '1': current_tab = 1; break
                 elif kl == '2': current_tab = 2; break
                 elif kl == '3': current_tab = 3; break
+                elif kl == '4': current_tab = 4; break
                 elif kl in ['q', 'esc', ' ', '\r']: return
             time.sleep(0.01); inner_cycle += 1
