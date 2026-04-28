@@ -815,10 +815,11 @@ def draw_trading_logs(strategy, dm):
             }
             all_workers = set(worker_desc.keys()); all_workers.update([k.upper() for k in last_times.keys()]); all_workers.update(worker_status.keys())
             
-            h_name = align_kr('워커명(Task)', 18); h_desc = align_kr('설명', 14)
-            h_time = align_kr('갱신시간', 10); h_elap = align_kr('경과', 12, 'right')
-            h_stat = align_kr('현재 작업 상태', 20); h_res  = align_kr('결과', 6, 'center')
-            header = f"  {h_name} | {h_desc} | {h_time} | {h_elap} | {h_stat} | {h_res} | 마지막 실행 작업"
+            # [수정] 컬럼 너비 최소화: 마지막 행동 필드 공간 최대 확보를 위해 앞쪽 컬럼 대폭 축소
+            h_name = align_kr('워커명', 12); h_desc = align_kr('설명(Task)', 12)
+            h_time = align_kr('시간', 8); h_elap = align_kr('경과', 12, 'right')
+            h_stat = align_kr('상태', 14); h_res  = align_kr('결과', 4, 'center')
+            header = f"  {h_name} | {h_desc} | {h_time} | {h_elap} | {h_stat} | {h_res} | 마지막 행동"
             buf.write("\033[1m" + header + "\033[0m\n" + "  " + "-" * (tw - 6) + "\n")
             
             sort_order = {"INDEX": 1, "AI_ENGINE": 2, "DATA": 3, "RANKING": 4, "GLOBAL": 5, "TELEGRAM": 6, "ASSET": 7}
@@ -836,7 +837,7 @@ def draw_trading_logs(strategy, dm):
                     dt = datetime.fromtimestamp(ts); t_str = dt.strftime('%H:%M:%S')
                     diff = int(curr_time - ts); e_str = f"{diff}초 전" if diff < 60 else f"{diff//60}분 {diff%60}초 전"
                 
-                t_fmt = align_kr(t_str, 10, 'center'); e_fmt = align_kr(e_str, 12, 'right')
+                t_fmt = align_kr(t_str, 8, 'center'); e_fmt = align_kr(e_str, 12, 'right')
                 if ts: e_fmt = f"\033[96m{e_fmt}\033[0m"
                 else: t_fmt = f"\033[90m{t_fmt}\033[0m"
 
@@ -848,7 +849,7 @@ def draw_trading_logs(strategy, dm):
                 if w == "AI_ENGINE": status = getattr(strategy, 'current_action', '대기 중 (IDLE)')
                 if w == 'GLOBAL' and "조회 중" in status: status = '대기 중 (IDLE)'
                 
-                status_fmt = align_kr(status, 20)
+                status_fmt = align_kr(status, 14)
                 status_fmt = f"\033[90m{status_fmt}\033[0m" if status == '대기 중 (IDLE)' else f"\033[93m{status_fmt}\033[0m"
                 
                 res = worker_results.get(w, "-")
@@ -859,7 +860,11 @@ def draw_trading_logs(strategy, dm):
                 last_task = dm.worker_last_tasks.get(w, "-")
                 if w == "TELEGRAM" and hasattr(dm, 'notifier'): last_task = getattr(dm.notifier, 'last_task', '-')
                 
-                buf.write(f"  \033[1;94m{align_kr(name_col, 18)}\033[0m | {align_kr(desc, 14)} | {t_fmt} | {e_fmt} | {status_fmt} | {res_color}{align_kr(res, 6, 'center')}\033[0m | {truncate_log_line(last_task, max(10, tw-108))}\n")
+                # [수정] 마지막 행동 필드 내 개행 문자( \n, \r, <br> )를 공백으로 대체하여 줄바꿈 방지
+                last_task = str(last_task).replace('\n', ' ').replace('\r', ' ').replace('<br>', ' ').replace('<BR>', ' ')
+                
+                # [수정] 마지막 행동 필드 가용 너비 공간 극대화 (tw-95 -> tw-85)
+                buf.write(f"  \033[1;94m{align_kr(name_col, 12)}\033[0m | {align_kr(desc, 12)} | {t_fmt} | {e_fmt} | {status_fmt} | {res_color}{align_kr(res, 4, 'center')}\033[0m | {truncate_log_line(last_task, max(20, tw-85))}\n")
             
             skipped = len(sorted_workers) - display_limit
             if skipped > 0: buf.write(f"  \033[90m... 외 {skipped}건 생략됨 (터미널 높이 부족)\033[0m\n")

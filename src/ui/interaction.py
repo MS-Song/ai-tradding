@@ -1010,29 +1010,29 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     def task_buy():
                         dm.set_busy("매수 처리")
                         try:
-                            detail = api.get_naver_stock_detail(code); name = detail.get('name', code)
+                            detail = api.get_naver_stock_detail(code); buy_name = detail.get('name', code)
                             p_disp = f"{price:,}원" if price > 0 else "시장가"
-                            dm.add_trading_log(f"[{code}] {name} {p_disp} {qty}주 매입시도")
+                            dm.add_trading_log(f"[{code}] {buy_name} {p_disp} {qty}주 매입시도")
                             is_new = not any(h['pdno'] == code for h in dm.cached_holdings)
                             success, msg = api.order_market(code, qty, True, price)
                             if success:
                                 curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
-                                trading_log.log_trade("수동매수", code, name, curr_p, qty, f"수동 매수 ({p_disp})", model_id="수동")
-                                dm.add_trading_log(f"✅ [{name}] {qty}주 매수 완료 ({p_disp})")
-                                dm.show_status(f"✅ 매수 성공: {name}")
+                                trading_log.log_trade("수동매수", code, buy_name, curr_p, qty, f"수동 매수 ({p_disp})", model_id="수동")
+                                dm.add_trading_log(f"✅ [{buy_name}] {qty}주 매수 완료 ({p_disp})")
+                                dm.show_status(f"✅ 매수 성공: {buy_name}")
                                 if is_new:
                                     try:
-                                        strategy.auto_assign_preset(code, name)
+                                        strategy.auto_assign_preset(code, buy_name)
                                     except Exception as ai_e:
                                         from src.logger import log_error
                                         log_error(f"AI 전략 할당 실패: {ai_e}")
                                 dm.update_all_data(dm.api.auth.is_virtual, force=True)
                             else:
                                 from src.logger import log_error
-                                log_error(f"수동 매수 실패 ({top_ai['name']}): {msg}")
+                                log_error(f"수동 매수 실패 ({buy_name}): {msg}")
                                 dm.show_status(f"❌ 매수 실패: {msg}", True)
                         finally: dm.clear_busy()
-                    threading.Thread(target=task_buy, name=f"[{code}_{name}_매수]", daemon=True).start()
+                    threading.Thread(target=task_buy, name=f"[{code}_매수]", daemon=True).start()
 
         elif mode == '3':
             res = get_input(dm, "> 수정 [번호 TP SL] 또는 [TP SL]: ", tw)

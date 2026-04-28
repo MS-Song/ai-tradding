@@ -74,6 +74,8 @@ class ExecutionMixin:
 
         for item in holdings:
             code, name = item['pdno'], item['prdt_name']
+            m_id = "" # 초기화 추가
+
             p_strat = self.preset_strategies.get(code)
             
             if p_strat:
@@ -168,6 +170,7 @@ class ExecutionMixin:
                                             p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                                             msg = f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)"
                                             results.append(msg)
+                                            m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else "AI"
                                             trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit, model_id=m_id)
                                             self.record_sell(code, is_full_exit=True)
                                             trading_log.log_config(f"{msg} | 사유: {reason}")
@@ -207,7 +210,7 @@ class ExecutionMixin:
                         is_full = action in ["손절", "긴급손절"]
                         self.record_sell(code, is_full_exit=is_full)
                         m_id = self.last_buy_models.get(code, "")
-                        trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id="TL/SP")
+                        trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id=m_id or "TL/SP")
                         self._save_all_states()
                         results.append(f"자동 {action}{f'({action_reason})' if action_reason else ''}: {item.get('prdt_name')} {sell_qty}주")
                     else:

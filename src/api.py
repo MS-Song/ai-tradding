@@ -137,12 +137,12 @@ class KISAPI:
                     vrss = prpr - bfdy
                     ctrt = (vrss / bfdy) * 100
                 else:
-                    # 부호 보정
+                    # KIS 부호 코드: 1:상한, 2:상승, 3:보합, 4:하한, 5:하락
                     sign = h.get('prdy_vrss_sign', '3')
-                    if sign == '5': # 하락
+                    if sign in ['4', '5']: # 하한, 하락
                         vrss = -abs(vrss)
                         if ctrt > 0: ctrt = -ctrt
-                    elif sign == '2': # 상승
+                    elif sign in ['1', '2']: # 상한, 상승
                         vrss = abs(vrss)
                         if ctrt < 0: ctrt = abs(ctrt)
 
@@ -196,10 +196,24 @@ class KISAPI:
         try:
             res = self._request("GET", url, headers=headers, params=params, timeout=5)
             d = res.json().get("output", {})
+            
+            price = self._safe_float(d.get("stck_prpr"))
+            vrss = self._safe_float(d.get("prdy_vrss"))
+            ctrt = self._safe_float(d.get("prdy_ctrt"))
+            
+            # 부호 보정 (1:상한, 2:상승, 3:보합, 4:하한, 5:하락)
+            sign = d.get("prdy_vrss_sign", "3")
+            if sign in ["4", "5"]:
+                vrss = -abs(vrss)
+                ctrt = -abs(ctrt)
+            elif sign in ["1", "2"]:
+                vrss = abs(vrss)
+                ctrt = abs(ctrt)
+                
             return {
-                "price": self._safe_float(d.get("stck_prpr")), 
-                "vrss": self._safe_float(d.get("prdy_vrss")),
-                "ctrt": self._safe_float(d.get("prdy_ctrt")),
+                "price": price, 
+                "vrss": vrss,
+                "ctrt": ctrt,
                 "vol": self._safe_float(d.get("acml_vol")),
                 "prev_vol": self._safe_float(d.get("prdy_vol")), 
                 "high": self._safe_float(d.get("stck_hgpr")), 
@@ -662,14 +676,22 @@ class KISAPI:
                         
                         price = float(item.get('nv', 0))
                         raw_rate = float(item.get('cr', 0.0))
+                        raw_cv = float(item.get('cv', 0))
                         rf_code = str(item.get('rf', ''))
-                        rate = -abs(raw_rate) if rf_code in ['4', '5'] else abs(raw_rate)
+                        
+                        # 네이버 부호: 1:상한, 2:상승, 3:보합, 4:하락, 5:하한
+                        if rf_code in ['4', '5']:
+                            rate = -abs(raw_rate)
+                            cv = -abs(raw_cv)
+                        else:
+                            rate = abs(raw_rate)
+                            cv = abs(raw_cv)
                         
                         results[code] = {
                             "name": item.get('nm'),
                             "price": price,
                             "rate": rate,
-                            "cv": float(item.get('cv', 0)), # 전일대비 변동액
+                            "cv": cv, # 전일대비 변동액 부호 보정 완료
                             "ov": float(item.get('ov', 0)), # 시가
                             "hv": float(item.get('hv', 0)), # 고가
                             "lv": float(item.get('lv', 0)), # 저가
