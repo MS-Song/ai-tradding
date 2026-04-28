@@ -39,7 +39,7 @@ def main():
             is_v = getattr(strategy.api.auth, 'is_virtual', True)
             interval = 20 if not is_v else 60
             if not strategy.is_analyzing and (time.time() - strategy.last_market_analysis_time) > (interval * 60):
-                threading.Thread(target=strategy.run_scheduled_analysis, daemon=True).start()
+                threading.Thread(target=strategy.run_scheduled_analysis, args=(dm,), daemon=True).start()
             
             # 5초 = 100 tick × 0.05s / TUI는 10tick(0.5s)마다 1번 렌더링
             for i in range(100):
@@ -82,7 +82,9 @@ def main():
                         def _run_cmd(key=k):
                             nonlocal _command_busy
                             try:
-                                perform_interaction(key, api, strategy, dm, cycle)
+                                # [개선] 매매 로직 실행 전 busy 체크 (GLOBAL 작업 중이 아닌 경우에만 실행)
+                                if not dm.is_blocking_busy():
+                                    perform_interaction(key, api, strategy, dm, cycle)
                             finally:
                                 _command_busy = False
                                 # 동작이 끝났을 때 '준비 중' 메시지가 남아있으면 제거 (다른 상태 메시지가 없는 경우만)

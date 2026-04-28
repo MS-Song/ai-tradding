@@ -88,6 +88,34 @@ class IndicatorEngine:
         }
 
     @staticmethod
+    def calculate_dema(prices: List[float], period: int = 20) -> float:
+        """이중 지수 이동 평균(DEMA)을 계산합니다.
+        DEMA = 2 * EMA(n) - EMA(EMA(n))
+        """
+        if len(prices) < period * 2: 
+            return prices[0] if prices else 0.0
+            
+        data = list(reversed(prices)) # 과거 -> 현재
+        
+        def get_ema_list(values, n):
+            if len(values) < n: return values
+            ema = [sum(values[:n]) / n]
+            multiplier = 2 / (n + 1)
+            for i in range(n, len(values)):
+                ema.append((values[i] - ema[-1]) * multiplier + ema[-1])
+            return ema
+
+        ema1 = get_ema_list(data, period)
+        ema2 = get_ema_list(ema1, period)
+        
+        # ema2는 ema1보다 period-1 만큼 짧음
+        curr_ema1 = ema1[-1]
+        curr_ema2 = ema2[-1]
+        
+        dema = (2 * curr_ema1) - curr_ema2
+        return dema
+
+    @staticmethod
     def calculate_sma(prices: List[float], periods: List[int] = [5, 10, 20, 60]) -> Dict[str, float]:
         """단순이동평균선(SMA)을 계산합니다."""
         result = {}
@@ -98,6 +126,40 @@ class IndicatorEngine:
             else:
                 result[f"sma_{p}"] = 0.0
         return result
+
+    @staticmethod
+    def calculate_ema(prices: List[float], period: int = 20) -> List[float]:
+        """지수이동평균(EMA)을 계산하여 리스트로 반환합니다. (과거 -> 현재 순서)"""
+        if len(prices) < period: return []
+        
+        # KIS 데이터는 최신순이므로 계산을 위해 뒤집음 (과거 -> 현재)
+        data = list(reversed(prices))
+        
+        ema = [sum(data[:period]) / period] # 초기값은 SMA
+        multiplier = 2 / (period + 1)
+        
+        for i in range(period, len(data)):
+            ema_val = (data[i] - ema[-1]) * multiplier + ema[-1]
+            ema.append(ema_val)
+            
+        return ema
+
+    @staticmethod
+    def calculate_dema(prices: List[float], period: int = 20) -> float:
+        """이중 지수이동평균(DEMA)의 현재값을 계산합니다.
+        DEMA = 2 * EMA(n) - EMA(EMA(n))
+        """
+        ema1 = IndicatorEngine.calculate_ema(prices, period)
+        if not ema1: return 0.0
+        
+        # EMA1의 결과(리스트)를 다시 EMA 취함
+        # calculate_ema는 내부에서 reversed를 하므로, 이미 과거->현재인 ema1을 넘기기 전에 다시 뒤집어줌
+        ema2 = IndicatorEngine.calculate_ema(list(reversed(ema1)), period)
+        if not ema2: return ema1[-1] # fallback to EMA if DEMA cannot be calculated
+        
+        # DEMA = 2 * EMA1 - EMA2
+        dema_val = (2 * ema1[-1]) - ema2[-1]
+        return dema_val
 
     def get_dual_timeframe_analysis(self, api, code: str) -> Dict[str, any]:
         """일봉(중기) + 분봉(단기) 이중 타임프레임 분석을 수행합니다."""

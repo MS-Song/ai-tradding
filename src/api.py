@@ -257,6 +257,43 @@ class KISAPI:
         except: 
             return self._get_naver_daily_chart_fallback(code)
 
+    @retry_api(max_retries=2, delay=1.2)
+    def get_index_chart_price(self, code: str, period_div: str = "D", start_date: str = "", end_date: str = "") -> List[dict]:
+        """국내지수 일봉/분봉 차트 조회 (FHKUP03500100)"""
+        # KOSPI: 0001, KOSDAQ: 1001
+        cache_key = f"idx_{code}_{period_div}_{start_date}_{end_date}"
+        cached = self._get_cached_chart(cache_key, ttl=3600)
+        if cached: return cached
+
+        time.sleep(random.uniform(0.1, 0.3))
+        
+        url = f"{self.domain}/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice"
+        headers = self.auth.get_auth_headers()
+        headers.update({"tr_id": "FHKUP03500100"})
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "U",
+            "FID_INPUT_ISCD": code,
+            "FID_INPUT_DATE_1": start_date,
+            "FID_INPUT_DATE_2": end_date,
+            "FID_PERIOD_DIV_CODE": period_div, # D: 일봉, W: 주봉, M: 월봉
+        }
+        try:
+            res = self._request("GET", url, headers=headers, params=params, timeout=10)
+            data = res.json()
+            if data.get("rt_cd") != "0": 
+                # 지수 이름 매핑 (KIS 코드 -> 네이버 심볼)
+                symbol_map = {"0001": "KOSPI", "1001": "KOSDAQ", "2001": "KPI200"}
+                return self._get_naver_daily_chart_fallback(symbol_map.get(code, code))
+            result = data.get("output2", [])
+            if not result:
+                symbol_map = {"0001": "KOSPI", "1001": "KOSDAQ", "2001": "KPI200"}
+                return self._get_naver_daily_chart_fallback(symbol_map.get(code, code))
+            if result: self._set_cached_chart(cache_key, result)
+            return result
+        except:
+            symbol_map = {"0001": "KOSPI", "1001": "KOSDAQ", "2001": "KPI200"}
+            return self._get_naver_daily_chart_fallback(symbol_map.get(code, code))
+
     def _get_naver_daily_chart_fallback(self, code: str, count: int = 60) -> List[dict]:
         """KIS API 실패 시 네이버 금융 XML API를 통해 일봉 데이터를 가져옵니다."""
         import xml.etree.ElementTree as ET

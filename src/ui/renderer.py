@@ -58,7 +58,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         except: tw, th = 110, 30
 
         buf = io.StringIO()
-        if (tw, th) != dm.last_size: buf.write("\033[2J"); dm.last_size = (tw, th)
+        if (tw, th) != dm.last_size:
+            buf.write("\033[2J\033[3J") # 화면 및 스크롤백 버퍼 전체 소거
+            dm.last_size = (tw, th)
         buf.write("\033[H")
     
     now_dt = datetime.now()
@@ -75,10 +77,6 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg
     busy_str = busy_msg if busy_msg else "-"
-    
-    m_status = dm.market_info_status
-    m_color = "\033[92m" if m_status == "정상" else ("\033[91m" if m_status == "실패" else "\033[93m")
-    ai_status_text = f" | AI:{m_color}{m_status}\033[0;44m"
 
     if status_active:
         import re
@@ -86,9 +84,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         clean_msg = re.sub(r'\x1b\[[0-9;]*m', '', dm.status_msg).replace("[STATUS] ", "").strip()
         # 에러인 경우 빨간색, 일반 상태면 노란색
         msg_color = "\033[91m" if is_err else "\033[93m"
-        work_text = f"작업: {busy_str}{ai_status_text} | {msg_color}{clean_msg}\033[0;44m"
+        work_text = f"작업: {busy_str} | {msg_color}{clean_msg}\033[0;44m"
     else:
-        work_text = f"작업: {busy_str}{ai_status_text}"
+        work_text = f"작업: {busy_str}"
     
     thread_count = threading.active_count()
     
@@ -107,12 +105,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     # 시간 정보 최적화 및 레이아웃 조정 (클락 잘림 방지)
     time_level = 0
     header_line = ""
-    # [수정] AI 시스템 건강 점수 (AI 가동 가용성 100점 고정) 추가
-    ai_health_text = "| AI건강:100점 "
-    
     while time_level < 4:
         time_text = get_time_text(now_dt, time_level)
-        right_side = f" ({thread_count:02d}) {ai_health_text}{time_text} "
+        right_side = f" ({thread_count:02d}) {time_text} "
         right_w = get_visual_width(right_side)
         
         # 왼쪽 기본 요소: 버전 | 시장상태
@@ -153,8 +148,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         header_line = align_kr(version_text, tw)[:tw]
     
     header_line = header_line[:tw]
-    # \033[44m: Blue BG, \033[37m: White FG
-    buf.write("\033[44;37m" + header_line + "\033[0m\n")
+    # 모의 거래인 경우 보라색(45), 실 거래인 경우 파란색(44) 적용
+    header_bg = "45" if is_v else "44"
+    buf.write(f"\033[{header_bg};37m{header_line}\033[0m\n")
     
     with dm.data_lock:
         import re
@@ -213,7 +209,15 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         vibe_desc = f"(하락장 대응[\033[94m{b_cfg.get('min_loss_to_buy')}% / {b_cfg.get('average_down_amount')/10000:,.0f}만/ 자동:{auto_st}\033[0m])" if "Bear" in dm.cached_vibe else ("(\033[91m상승장 수익 극대화 모드 [+3.0%]\033[0m)" if "Bull" in dm.cached_vibe else "(보합장 기본 전략 유지)")
         ai_msg = strategy.analyzer.ai_override_msg if hasattr(strategy.analyzer, "ai_override_msg") else ""
         ai_msg_formatted = f" \033[92m{ai_msg}\033[0m" if "일치" in ai_msg else (f" \033[93m{ai_msg}\033[0m" if ai_msg else "")
-        status_line = f" VIBE: {v_c}{dm.cached_vibe}\033[0m{panic_txt} {vibe_desc}{phase_txt}{ai_msg_formatted}"
+        # DEMA 정보 포맷팅
+        dema_parts = []
+        for name, info in dm.cached_dema_info.items():
+            diff = ((info['price'] / info['dema'] - 1) * 100) if info.get('dema', 0) > 0 else 0
+            d_c = "\033[91m↑" if diff > 0 else "\033[94m↓"
+            dema_parts.append(f"{name}{d_c}\033[0m")
+        dema_txt = f" [DEMA: {' '.join(dema_parts)}]" if dema_parts else ""
+
+        status_line = f" VIBE: {v_c}{dm.cached_vibe}\033[0m{panic_txt}{dema_txt} {vibe_desc}{phase_txt}{ai_msg_formatted}"
         buf.write(align_kr(status_line, tw) + "\n")
         # 업데이트 알림이 있는 경우 커맨드 바에 U:업데이트 추가
         cmd_update = " | U:업데이트" if dm.update_info.get("has_update") else ""
@@ -344,7 +348,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         buf.write("-" * tw + "\n")
 
         eff_w = tw - 4; w = [max(4, int(eff_w * 0.03)), max(5, int(eff_w * 0.04)), max(15, int(eff_w * 0.15)), max(10, int(eff_w * 0.09)), max(14, int(eff_w * 0.12)), max(10, int(eff_w * 0.08)), max(8, int(eff_w * 0.07)), max(10, int(eff_w * 0.08)), max(18, int(eff_w * 0.12)), max(10, int(eff_w * 0.07)), max(12, int(eff_w * 0.10)), max(6, int(eff_w * 0.05))]
-        buf.write("\033[1m" + align_kr(align_kr("NO",w[0])+align_kr("시장",w[1])+align_kr("종목코드/명",w[2])+align_kr("현재가",w[3],'right')+align_kr("전일대비",w[4],'right')+align_kr("평단가",w[5],'right')+align_kr("수량",w[6],'right')+align_kr("평가금액",w[7],'right')+align_kr("수익금(률)",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+"  "+align_kr("전략",w[10],'center')+align_kr("잔여",w[11],'right'), tw) + "\033[0m\n")
+        buf.write("\033[1m" + align_kr(align_kr("NO",w[0])+align_kr("시장",w[1])+align_kr("종목코드/명",w[2])+align_kr("현재가",w[3],'right')+align_kr("전일대비",w[4],'right')+align_kr("평단가",w[5],'right')+align_kr("수량",w[6],'right')+align_kr("평가금액",w[7],'right')+align_kr("수익금(수익률)",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+"  "+align_kr("전략",w[10],'center')+align_kr("잔여",w[11],'right'), tw) + "\033[0m\n")
         
         f_h = dm.cached_holdings if dm.ranking_filter == "ALL" else [h for h in dm.cached_holdings if get_market_name(h.get('pdno','')) == dm.ranking_filter]
         base_fixed = 23; ranking_target = 10; asset_count = len(f_h); max_h_display = max(1, th - base_fixed - ranking_target)
@@ -504,11 +508,16 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         sys.stdout.flush()
     buf.close()
 
-def draw_manual_page(tw, th):
+def draw_manual_page():
     current_tab = 1
     total_tabs = 5
     
     while True:
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except:
+            tw, th = 80, 24
         buf = io.StringIO(); buf.write("\033[H\033[2J")
         buf.write("\033[46;37m" + align_kr(" [KIS-VIBE-TRADER SYSTEM MANUAL] ", tw, 'center') + "\033[0m\n")
         
@@ -719,7 +728,7 @@ def draw_manual_page(tw, th):
                     return
             time.sleep(0.01)
 
-def draw_trading_logs(strategy, dm, tw, th):
+def draw_trading_logs(strategy, dm):
     import io
     import os
     import copy
@@ -731,8 +740,15 @@ def draw_trading_logs(strategy, dm, tw, th):
     total_tabs = 3
     
     while True:
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except:
+            tw, th = 80, 24
         buf = io.StringIO(); buf.write("\033[H\033[2J")
-        buf.write("\033[44;37m" + align_kr(" [SYSTEM LOGS & MONITORING DASHBOARD] ", tw, 'center') + "\033[0m\n")
+        is_v = getattr(strategy.api.auth, 'is_virtual', True)
+        header_bg = "45" if is_v else "44"
+        buf.write(f"\033[{header_bg};37m" + align_kr(" [SYSTEM LOGS & MONITORING DASHBOARD] ", tw, 'center') + "\033[0m\n")
         
         # 탭 메뉴 바
         t1 = "\033[7m" if current_tab == 1 else ""
@@ -743,12 +759,11 @@ def draw_trading_logs(strategy, dm, tw, th):
         buf.write(align_kr(menu, tw, 'center') + "\n")
         buf.write("=" * tw + "\n\n")
 
-        available_h = max(5, th - 8)
+        available_h = max(5, th - 10)
+        curr_time = time.time()
 
-        # [추가] 현재 탭에 따라 GLOBAL 워커 상태를 더 상세하게 표시
         if current_tab == 1:
             dm.set_busy("시스템 로그 조회 중", "GLOBAL")
-            # 고정 라인(약 15줄)을 제외한 나머지 영역을 trade와 config가 7:3 비율로 나눠가짐
             log_area_h = max(4, th - 15)
             trade_h = int(log_area_h * 0.7)
             config_h = max(1, log_area_h - trade_h)
@@ -759,8 +774,11 @@ def draw_trading_logs(strategy, dm, tw, th):
             if not trades:
                 buf.write("  최근 거래 내역이 없습니다.\n")
             else:
-                header = f"{align_kr('시간', 20)} | {align_kr('구분', 10)} | {align_kr('종목명(코드)', 22)} | {align_kr('체결가', 10)} | {align_kr('수량', 6)} | {align_kr('수익금', 12)} | 메모"
-                buf.write("\033[1m" + header + "\033[0m\n" + "-" * tw + "\n")
+                h_time = align_kr('시간', 20); h_type = align_kr('구분', 10)
+                h_name = align_kr('종목명(코드)', 22); h_price = align_kr('체결가', 10)
+                h_qty = align_kr('수량', 6); h_pnl = align_kr('수익금', 12)
+                header = f"  {h_time} | {h_type} | {h_name} | {h_price} | {h_qty} | {h_pnl} | 메모"
+                buf.write("\033[1m" + header + "\033[0m\n" + "  " + "-" * (tw - 4) + "\n")
                 
                 for t in trades[:trade_h]:
                     t_type = t.get('type', 'Unknown')
@@ -768,20 +786,12 @@ def draw_trading_logs(strategy, dm, tw, th):
                     p_val = t.get('profit', 0)
                     p_color = "\033[91m" if p_val > 0 else "\033[94m" if p_val < 0 else ""
                     p_str = f"{p_color}{int(p_val):+,}원\033[0m" if p_val != 0 else "-"
-                    name_val = t.get('name', '-')
-                    code_val = t.get('code', '')
-                    name_code_txt = f"[{code_val}] {name_val}" if code_val else name_val
+                    name_code = f"[{t.get('code', '')}] {t.get('name', '-')}"
                     
-                    memo = t.get('memo', '')
-                    avail_w = max(10, tw - 90)
-                    if get_visual_width(memo) > avail_w:
-                        while get_visual_width(memo) > avail_w - 2: memo = memo[:-1]
-                        memo += ".."
-                        
-                    line = f"{t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(name_code_txt, 22)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {memo}"
+                    line = f"  {t.get('time', '-')} | {t_color}{align_kr(t_type, 10)}\033[0m | {align_kr(name_code, 22)} | {align_kr(f'{int(t.get('price',0)):,}', 10, 'right')} | {align_kr(str(t.get('qty',0)), 6, 'right')} | {align_kr(p_str, 12, 'right')} | {t.get('memo', '')}"
                     buf.write(truncate_log_line(line, tw - 2) + "\n")
                     
-            buf.write("\n" + "=" * tw + "\n\n")
+            buf.write("\n" + "  " + "=" * (tw - 4) + "\n\n")
             buf.write("\033[1;96m [시스템 설정 및 전략 변경 (CONFIG)]\033[0m\n")
             with trading_log.lock:
                 configs = copy.deepcopy(trading_log.data.get("configs", []))
@@ -789,177 +799,92 @@ def draw_trading_logs(strategy, dm, tw, th):
                 buf.write("  변경 이력이 없습니다.\n")
             else:
                 for c in configs[:config_h]:
-                    content = c.get('content', '')
-                    avail_w = max(10, tw - 25)
-                    if get_visual_width(content) > avail_w:
-                        while get_visual_width(content) > avail_w - 2: content = content[:-1]
-                        content += ".."
-                    buf.write(f"  [{c.get('time', '-')}] {truncate_log_line(content, tw - 25)}\n")
+                    buf.write(f"  [{c.get('time', '-')}] {truncate_log_line(c.get('content', ''), tw - 25)}\n")
                     
         elif current_tab == 2:
             dm.set_busy("실시간 모니터링 중", "GLOBAL")
-            active_threads = threading.active_count()
-            buf.write(f"\033[1;92m [시스템 실시간 모니터링 (MONITORING)]\033[0m | 활성 스레드: \033[92m{active_threads}개\033[0m (정상)\n")
-            buf.write("-" * tw + "\n")
-            
-            curr_time = time.time()
-            from datetime import datetime
-            
-            def get_time_info(ts):
-                if not ts: return "미갱신 (-)"
-                dt = datetime.fromtimestamp(ts)
-                diff = int(curr_time - ts)
-                if diff < 60:
-                    ago = f"{diff}초 전"
-                else:
-                    ago = f"{diff//60}분 {diff%60}초 전"
-                return f"{dt.strftime('%H:%M:%S')} ({ago})"
-                
             with dm.data_lock:
-                last_times = dict(dm.last_times)
-                worker_status = dict(dm._worker_statuses)
-                worker_results = dict(dm.worker_results)
+                last_times = dict(dm.last_times); worker_status = dict(dm._worker_statuses); worker_results = dict(dm.worker_results)
             
-            buf.write(" \033[1m[주요 워커 상태 및 갱신 주기]\033[0m\n")
-            
-            # 워커 이름 맵 (사용자 친화적 표시용)
             worker_desc = {
-                "INDEX": "시황/지수 분석",
-                "DATA": "잔고/매매 동기화",
-                "RANKING": "인기 종목 탐색",
-                "ASSET": "계좌 실시간 수집",
-                "BILLING": "API 사용료 정산",
-                "UPDATE": "최신 버전 감지",
-                "GLOBAL": "수동 지시 처리",
-                "TELEGRAM": "텔레그램 알림 엔진",
-                "AI_ENGINE": "AI 전략 엔진",
-                "THEME": "테마 데이터 수집",
-                "CLEANUP": "로그 자동 정리",
-                "RETRO": "투자 복기 엔진"
+                "INDEX": "시황/지수 분석", "DATA": "데이터 동기화", "RANKING": "인기 종목 탐색",
+                "ASSET": "계좌 정보 수집", "BILLING": "API 비용 정산", "UPDATE": "최신 버전 확인",
+                "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 알림", "AI_ENGINE": "AI 전략 엔진",
+                "THEME": "테마 정보 수집", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진", "TRADE": "실시간 매매"
             }
+            all_workers = set(worker_desc.keys()); all_workers.update([k.upper() for k in last_times.keys()]); all_workers.update(worker_status.keys())
             
-            # 모든 알려진 워커와 현재 활성화된 워커 키 수집
-            all_workers = set(worker_desc.keys())
-            all_workers.update([k.upper() for k in last_times.keys()])
-            all_workers.update(worker_status.keys())
+            h_name = align_kr('워커명(Task)', 18); h_desc = align_kr('설명', 14)
+            h_time = align_kr('갱신시간', 10); h_elap = align_kr('경과', 12, 'right')
+            h_stat = align_kr('현재 작업 상태', 20); h_res  = align_kr('결과', 6, 'center')
+            header = f"  {h_name} | {h_desc} | {h_time} | {h_elap} | {h_stat} | {h_res} | 마지막 실행 작업"
+            buf.write("\033[1m" + header + "\033[0m\n" + "  " + "-" * (tw - 6) + "\n")
             
-            header = f"  {align_kr('워커명(Task)', 18)} | {align_kr('최근 갱신 시간 (경과)', 25)} | {align_kr('현재 작업 상태', 28)} | 최종 결과 | 마지막 실행 작업"
-            buf.write("\033[1m" + header + "\033[0m\n")
-            buf.write("  " + "-" * (tw - 6) + "\n")
-            
-            # 우선순위 정렬 (기본 4개 먼저, 나머지는 알파벳 순)
             sort_order = {"INDEX": 1, "AI_ENGINE": 2, "DATA": 3, "RANKING": 4, "GLOBAL": 5, "TELEGRAM": 6, "ASSET": 7}
-            sorted_workers = sorted(list(all_workers), key=lambda x: (sort_order.get(x, 99), x))
+            def get_sort_key(x): return (sort_order.get(x, 99), x) if not x.startswith("STOCK_") else (100, x)
+            sorted_workers = sorted([w for w in all_workers if w and w != "..."], key=get_sort_key)
+            if "TELEGRAM" not in sorted_workers: sorted_workers.append("TELEGRAM")
             
-            # [추가] 텔레그램 상태를 모니터링 목록에 강제 추가
-            if "TELEGRAM" not in sorted_workers:
-                sorted_workers.append("TELEGRAM")
-            
-            for w in sorted_workers:
+            display_limit = max(5, available_h - 2)
+            for w in sorted_workers[:display_limit]:
                 ts = last_times.get(w.lower(), 0)
-                if not ts and w == 'GLOBAL': 
-                    ts_raw = "-"
+                if w == "AI_ENGINE": ts = getattr(strategy, 'last_market_analysis_time', 0)
+                
+                if not ts: t_str, e_str = "미갱신", "-"
                 else:
-                    ts_raw = get_time_info(ts)
+                    dt = datetime.fromtimestamp(ts); t_str = dt.strftime('%H:%M:%S')
+                    diff = int(curr_time - ts); e_str = f"{diff}초 전" if diff < 60 else f"{diff//60}분 {diff%60}초 전"
                 
-                ts_aligned = align_kr(ts_raw, 25, 'center')
-                # 괄호 안의 시간 부분만 시안색으로 하이라이트
-                if "(" in ts_aligned and ")" in ts_aligned:
-                    ts_aligned = ts_aligned.replace("(", "(\033[96m").replace(")", "\033[0m)")
-                elif ts_raw == "미갱신 (-)":
-                    ts_aligned = f"\033[90m{ts_aligned}\033[0m"
-                
-                desc = worker_desc.get(w, "기타 백그라운드 작업")
-                name_col = f"[{w}]"
-                name_col_kr = align_kr(name_col, 18)
+                t_fmt = align_kr(t_str, 10, 'center'); e_fmt = align_kr(e_str, 12, 'right')
+                if ts: e_fmt = f"\033[96m{e_fmt}\033[0m"
+                else: t_fmt = f"\033[90m{t_fmt}\033[0m"
+
+                desc = worker_desc.get(w, "종목 상세" if w.startswith("STOCK_") else "배경 작업")
+                name_col = f"[{dm.worker_names.get(w, w)}]"
                 
                 status = worker_status.get(w, '대기 중 (IDLE)')
-                if w == "TELEGRAM" and hasattr(dm, 'notifier'):
-                    status = dm.notifier.status_msg
-                    if not ts: ts_aligned = align_kr("실시간 작동 중", 25, 'center')
+                if w == "TELEGRAM" and hasattr(dm, 'notifier'): status = dm.notifier.status_msg
+                if w == "AI_ENGINE": status = getattr(strategy, 'current_action', '대기 중 (IDLE)')
+                if w == 'GLOBAL' and "조회 중" in status: status = '대기 중 (IDLE)'
                 
-                display_status = status
-                if w == 'GLOBAL' and "조회 중" in status:
-                    display_status = '대기 중 (IDLE)'
+                status_fmt = align_kr(status, 20)
+                status_fmt = f"\033[90m{status_fmt}\033[0m" if status == '대기 중 (IDLE)' else f"\033[93m{status_fmt}\033[0m"
                 
-                # AI_ENGINE 특별 처리
-                if w == "AI_ENGINE":
-                    display_status = getattr(strategy, 'current_action', '대기 중 (IDLE)')
-                    ts_aligned = align_kr(get_time_info(getattr(strategy, 'last_market_analysis_time', 0)), 25, 'center')
-                
-                status_aligned = align_kr(display_status, 28)
-                if display_status == '대기 중 (IDLE)':
-                    status_fmt = f"\033[90m{status_aligned}\033[0m"
-                else:
-                    status_fmt = f"\033[93m{status_aligned}\033[0m"
-                
-                # 최종 결과 표시
                 res = worker_results.get(w, "-")
-                if w == "AI_ENGINE":
-                    res = "성공" if strategy.is_ready else "실패"
-                elif w == "TELEGRAM" and hasattr(dm, 'notifier'):
-                    res = getattr(dm.notifier, 'last_result', '-')
-                
+                if w == "AI_ENGINE": res = "성공" if strategy.is_ready else "실패"
+                elif w == "TELEGRAM" and hasattr(dm, 'notifier'): res = getattr(dm.notifier, 'last_result', '-')
                 res_color = "\033[92m" if res == "성공" else ("\033[91m" if res == "실패" else "")
-                res_fmt = f"{res_color}{align_kr(res, 9)}\033[0m"
                 
-                # [추가] 마지막 실행 작업
                 last_task = dm.worker_last_tasks.get(w, "-")
-                if w == "TELEGRAM" and hasattr(dm, 'notifier'):
-                    last_task = getattr(dm.notifier, 'last_task', '-')
+                if w == "TELEGRAM" and hasattr(dm, 'notifier'): last_task = getattr(dm.notifier, 'last_task', '-')
                 
-                last_task_fmt = truncate_log_line(last_task, tw - 90) # 남은 공간 계산
-                
-                buf.write(f"  \033[1;94m{name_col_kr}\033[0m | {ts_aligned} | {status_fmt} | {res_fmt} | {last_task_fmt}\n")
+                buf.write(f"  \033[1;94m{align_kr(name_col, 18)}\033[0m | {align_kr(desc, 14)} | {t_fmt} | {e_fmt} | {status_fmt} | {res_color}{align_kr(res, 6, 'center')}\033[0m | {truncate_log_line(last_task, max(10, tw-108))}\n")
             
-            buf.write("\n \033[1m[AI 시스템 건강 점수]\033[0m\n")
-            score = 100
-            if not strategy.is_ready: score -= 30
-            if dm.market_info_status == "실패": score -= 20
-            if dm.cached_panic: score -= 10
-            score_color = "\033[92m" if score >= 80 else ("\033[93m" if score >= 50 else "\033[91m")
-            buf.write(f"  - AI 가동 가용성: {score_color}{score}점\033[0m\n")
+            skipped = len(sorted_workers) - display_limit
+            if skipped > 0: buf.write(f"  \033[90m... 외 {skipped}건 생략됨 (터미널 높이 부족)\033[0m\n")
 
         elif current_tab == 3:
             dm.set_busy("에러 로그 분석 중", "GLOBAL")
-            buf.write("\033[1;91m [최근 에러 로그 (ERROR LOG)]\033[0m\n")
-            buf.write("-" * tw + "\n")
-            
+            buf.write("\033[1;91m [최근 에러 로그 (ERROR LOG)]\033[0m\n" + "-" * tw + "\n")
             error_file = "error.log"
             try:
                 if os.path.exists(error_file):
                     with open(error_file, "r", encoding="utf-8") as f:
                         lines = f.readlines()
-                    
-                    if not lines:
-                        buf.write("  기록된 에러가 없습니다.\n")
+                    if not lines: buf.write("  기록된 에러가 없습니다.\n")
                     else:
-                        # 최신순 (역순) 정렬 후 최대 출력 라인 제한
                         lines.reverse()
-                        max_lines = available_h - 2
-                        
-                        for line in lines[:max_lines]:
-                            line_str = line.strip()
-                            if not line_str: continue
-                            
-                            # ANSI 보존하며 너비 제한 (흔들림 방지)
-                            line_str = truncate_log_line(line_str, tw - 4)
-                            
-                            # ERROR 문자열 하이라이트 (만약 있다면)
-                            if "ERROR" in line_str:
-                                line_str = line_str.replace("ERROR", "\033[91mERROR\033[0m")
-                                
+                        for line in lines[:available_h-2]:
+                            line_str = truncate_log_line(line.strip(), tw - 4)
+                            if "ERROR" in line_str: line_str = line_str.replace("ERROR", "\033[91mERROR\033[0m")
                             buf.write(f"  {line_str}\n")
-                else:
-                    buf.write("  error.log 파일이 존재하지 않습니다.\n")
-            except Exception as e:
-                buf.write(f"  에러 로그를 읽는 중 문제가 발생했습니다: {e}\n")
+                else: buf.write("  error.log 파일이 존재하지 않습니다.\n")
+            except Exception as e: buf.write(f"  로그 읽기 오류: {e}\n")
 
         buf.write("\n" + "-" * tw + "\n")
         buf.write(align_kr(" [1, 2, 3]: 탭 전환 | Q, ESC, SPACE: 메인으로 복귀 ", tw, 'center') + "\n")
         sys.stdout.write(buf.getvalue()); sys.stdout.flush()
         
-        # 실시간 자동 갱신을 위해 1초(0.01 * 100) 대기하며 입력 체크
         inner_cycle = 0
         while inner_cycle < 100:
             k = get_key_immediate()
@@ -968,12 +893,5 @@ def draw_trading_logs(strategy, dm, tw, th):
                 if kl == '1': current_tab = 1; break
                 elif kl == '2': current_tab = 2; break
                 elif kl == '3': current_tab = 3; break
-                elif kl == '8': # [추가] 모니터링 화면에서도 시황 분석 실행 가능하게 개선
-                    from src.ui.interaction import perform_interaction
-                    threading.Thread(target=perform_interaction, args=('8', strategy.api, strategy, dm, 0), daemon=True).start()
-                    break
-                elif kl in ['q', 'esc', ' ', '\r']:
-                    buf.close()
-                    return
-            time.sleep(0.01)
-            inner_cycle += 1
+                elif kl in ['q', 'esc', ' ', '\r']: return
+            time.sleep(0.01); inner_cycle += 1

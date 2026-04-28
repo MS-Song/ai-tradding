@@ -31,9 +31,11 @@ class AnalysisMixin:
                 self.is_analyzing = False
                 self.current_action = "대기중"
 
-    def run_scheduled_analysis(self):
+    def run_scheduled_analysis(self, dm=None):
         """백그라운드에서 주기적으로 호출되어 시황 분석, AI 조언 수집, 전략 반영을 일괄 수행"""
         if self.is_analyzing: return
+        
+        if dm: dm.update_worker_status("AI_ENGINE", last_task="정기 시황 및 포트폴리오 분석 중")
         
         # [추가] AI 토큰 절약을 위한 시간 기반 차단 (디버그 모드 제외)
         if not is_ai_enabled_time() and not getattr(self, "debug_mode", False):
@@ -56,8 +58,10 @@ class AnalysisMixin:
             # 3. AI 전략 파싱 및 전역 설정 반영
             self.parse_and_apply_ai_strategy()
             
+            if dm: dm.update_worker_status("AI_ENGINE", result="성공", last_task="정기 AI 시황 분석 완료")
             logger.info("✅ 주기적 AI 시황 분석 완료")
         except Exception as e:
+            if dm: dm.update_worker_status("AI_ENGINE", result="실패", last_task=f"분석 오류: {str(e)[:20]}")
             log_error(f"주기적 분석 오류: {e}")
         finally:
             self.is_analyzing = False
@@ -99,8 +103,13 @@ class AnalysisMixin:
             else:
                 h['tp'], h['sl'], _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
 
+        # [개선] DEMA 정보를 포함하여 AI 브리핑 요청
+        ai_market_context = {
+            "indices": self.analyzer.current_data,
+            "dema_trend": self.analyzer.dema_info
+        }
         with ThreadPoolExecutor(max_workers=3) as executor:
-            future_briefing = executor.submit(self.ai_advisor.get_advice, self.analyzer.current_data, self.analyzer.kr_vibe, holdings, current_cfg, self.ai_recommendations, indicators=candidate_indicators)
+            future_briefing = executor.submit(self.ai_advisor.get_advice, ai_market_context, self.analyzer.kr_vibe, holdings, current_cfg, self.ai_recommendations, indicators=candidate_indicators)
             future_detailed = executor.submit(self.ai_advisor.get_detailed_report_advice, self.ai_recommendations, self.analyzer.kr_vibe, progress_cb=progress_cb)
             future_holdings = executor.submit(self.ai_advisor.get_holdings_report_advice, holdings, self.analyzer.kr_vibe, self.analyzer.current_data, progress_cb=progress_cb) if holdings else None
             

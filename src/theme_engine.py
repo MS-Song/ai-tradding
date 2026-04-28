@@ -18,6 +18,7 @@ THEME_KEYWORDS = {
 
 THEME_DATA_FILE = "theme_data.json"
 _dynamic_theme_map = {} # {theme_name: [{"name": stock_name, "code": stock_code}, ...]}
+_code_to_theme_map = {} # {code: theme_name} (Reverse map for O(1) lookup)
 _cached_themes = []
 
 def load_theme_data():
@@ -27,8 +28,10 @@ def load_theme_data():
         try:
             with open(THEME_DATA_FILE, "r", encoding="utf-8") as f:
                 _dynamic_theme_map = json.load(f)
+                _rebuild_reverse_map()
         except:
             _dynamic_theme_map = {}
+            _code_to_theme_map = {}
 
 # 모듈 로드 시 최초 1회 로드
 load_theme_data()
@@ -39,24 +42,24 @@ BROAD_THEMES = [
     "코스피 200", "코스닥 150", "KOSPI", "KOSDAQ", "KRX300", "지주사", "코스피200건설", "철강 주요종목"
 ]
 
-def get_theme_for_stock(code: str, name: str) -> str:
-    """종목 코드 또는 이름을 기반으로 테마명을 반환 (동적 데이터 우선)"""
-    candidate_themes = []
-    
-    # 1. 동적 데이터베이스 검색
+def _rebuild_reverse_map():
+    """역방향 매핑 테이블 재구축 (O(1) 조회를 위함)"""
+    global _code_to_theme_map
+    new_map = {}
     for theme, stocks in _dynamic_theme_map.items():
-        if any(s['code'] == code for s in stocks):
-            candidate_themes.append(theme)
-            
-    if candidate_themes:
-        # 광범위한 테마보다 구체적인 테마 우선 (예: 'IT 대표주'보다 '2차전지' 선호)
-        specific_themes = [t for t in candidate_themes if t not in BROAD_THEMES]
-        if specific_themes: 
-            # 2차전지나 자동차 키워드가 포함된 구체적 테마를 더 선호
-            priority_themes = [t for t in specific_themes if any(kw in t for kw in ["전지", "자동차", "반도체", "로봇", "AI", "바이오"])]
-            if priority_themes: return priority_themes[0]
-            return specific_themes[0]
-        return candidate_themes[0]
+        for s in stocks:
+            code = s.get('code')
+            if code:
+                # 이미 구체적인 테마가 할당되어 있다면 광범위한 테마로 덮어쓰지 않음
+                if code in new_map and theme in BROAD_THEMES:
+                    continue
+                new_map[code] = theme
+    _code_to_theme_map = new_map
+
+def get_theme_for_stock(code: str, name: str) -> str:
+    # 1. 동적 데이터베이스 검색 (역매핑 테이블 활용 - O(1))
+    if code in _code_to_theme_map:
+        return _code_to_theme_map[code]
             
     # 2. 폴백: 하드코딩된 키워드 검색
     for theme, keywords in THEME_KEYWORDS.items():
@@ -74,6 +77,7 @@ def save_theme_data(theme_map: dict):
     """테마 데이터를 파일에 안전하게 저장 (Atomic Write)"""
     global _dynamic_theme_map
     _dynamic_theme_map = theme_map
+    _rebuild_reverse_map()
     temp_file = THEME_DATA_FILE + ".tmp"
     try:
         with open(temp_file, "w", encoding="utf-8") as f:

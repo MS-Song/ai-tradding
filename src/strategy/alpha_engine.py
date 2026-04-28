@@ -67,7 +67,7 @@ class VibeAlphaEngine:
 
             with lock:
                 current += 1
-                if progress_cb:
+                if progress_cb and (current % 5 == 0 or current == total):
                     progress_cb(current, total, f"분석 중: {item['name']}")
 
             if item_score >= dynamic_min_score:

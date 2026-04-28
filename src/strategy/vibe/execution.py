@@ -166,14 +166,16 @@ class ExecutionMixin:
                                     if should_sell:
                                         if self.api.order_market(code, sell_qty, False)[0]:
                                             p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
-                                            results.append(f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
-                                            m_id = self.last_buy_models.get(code, "")
+                                            msg = f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)"
+                                            results.append(msg)
                                             trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit, model_id=m_id)
                                             self.record_sell(code, is_full_exit=True)
-                                            trading_log.log_config(f"🤖 P4 AI 매도: [{code}]{item.get('prdt_name')} | {reason}")
+                                            trading_log.log_config(f"{msg} | 사유: {reason}")
                                             self._save_all_states()
                                     else:
-                                        trading_log.log_config(f"🔒 P4 AI 유지: [{code}]{item.get('prdt_name')} | {reason}")
+                                        msg = f"🔒 P4 AI 유지: {item.get('prdt_name')}"
+                                        results.append(msg)
+                                        trading_log.log_config(f"{msg} | {reason}")
                                 else:
                                     self._p3_global_processed[p4_ai_key] = True
                                     logger.info(f"P4 AI판단 건너뜀 (Market closed/AI Disabled): {item.get('prdt_name')}")
@@ -223,13 +225,23 @@ class ExecutionMixin:
             code = item.get("pdno")
             tp, sl, spike = self.get_dynamic_thresholds(code, market_trend)
             
-            # [추가] 기술적 지표 분석 (MA) 정보 추출
+            # [핵심 최적화] 기술적 지표 분석 (MA) 캐싱 적용 (60초 주기)
+            if not hasattr(self, '_ma_analysis_cache'): self._ma_analysis_cache = {}
+            cache_key = f"ma_{code}"
+            cached = self._ma_analysis_cache.get(cache_key)
+            
             ma_info = ""
-            try:
-                ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+            if cached and (time.time() - cached['time'] < 60):
+                ma_analysis = cached['data']
                 sig = ma_analysis.get('signal', 'NEUTRAL')
                 ma_info = f" [MA:{sig}]"
-            except: pass
+            else:
+                try:
+                    ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+                    self._ma_analysis_cache[cache_key] = {'data': ma_analysis, 'time': time.time()}
+                    sig = ma_analysis.get('signal', 'NEUTRAL')
+                    ma_info = f" [MA:{sig}]"
+                except: pass
 
             # 1. 물타기 체크
             rec_bear = self.recovery_eng.get_recommendation(item, self.global_panic, sl, vibe=market_trend)
@@ -370,7 +382,9 @@ class ExecutionMixin:
                     continue
 
                 # [매매 시도 기록] 실제 주문 전 AI의 결정을 먼저 로그에 남김
-                trading_log.log_config(f"🤖 AI 자율 매도 결정: [{code}]{name} | 사유: {reason}")
+                msg = f"🤖 AI 자율 매도 결정: {name}"
+                results.append(msg)
+                trading_log.log_config(f"{msg} | 사유: {reason}")
                 
                 if can_sell:
                     # [즉시 매매 실행]

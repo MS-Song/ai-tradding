@@ -82,8 +82,9 @@ def draw_recommendation_report(strategy, dm, tw, th):
     while not get_key_immediate(): time.sleep(0.1)
     buf.close()
 
-def draw_holdings_detail(strategy, dm, tw, th):
+def draw_holdings_detail(strategy, dm):
     import io
+    import os
     import threading
     from datetime import datetime
     
@@ -104,8 +105,15 @@ def draw_holdings_detail(strategy, dm, tw, th):
             flush_input()
 
     while True:
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except:
+            tw, th = 80, 24
         buf = io.StringIO(); buf.write("\033[H\033[2J")
-        buf.write("\033[44;37m" + align_kr(" [AI HOLDINGS PORTFOLIO REPORT] ", tw, 'center') + "\033[0m\n")
+        is_v = getattr(strategy.api.auth, 'is_virtual', True)
+        header_bg = "45" if is_v else "44"
+        buf.write(f"\033[{header_bg};37m" + align_kr(" [AI HOLDINGS PORTFOLIO REPORT] ", tw, 'center') + "\033[0m\n")
         buf.write("=" * tw + "\n")
 
         # 자산 요약
@@ -179,41 +187,71 @@ def draw_holdings_detail(strategy, dm, tw, th):
             inner_cycle += 1
 
 def draw_hot_stocks_detail(strategy, dm, tw, th):
-    sys.stdout.write("\033[H\033[2J")
-    sys.stdout.write("\033[45;37m" + align_kr(" [AI HOT THEME TREND REPORT] ", tw, 'center') + "\033[0m\n\n")
+    import io
+    buf = io.StringIO()
+    buf.write("\033[H\033[2J")
+    buf.write("\033[45;37m" + align_kr(" [AI HOT THEME TREND REPORT] ", tw, 'center') + "\033[0m\n\n")
+    
     themes = get_cached_themes()
     if themes:
         theme_line = " [오늘의 인기 테마] "
         for t in themes[:8]: theme_line += f"{t['name']}({t['count']}) | "
-        sys.stdout.write("\033[1;93m" + theme_line.rstrip(" | ") + "\033[0m\n")
-    sys.stdout.write("-" * tw + "\n\n")
+        buf.write("\033[1;93m" + theme_line.rstrip(" | ") + "\033[0m\n")
+    buf.write("-" * tw + "\n\n")
+    
     hot = dm.cached_hot_raw[:10]
-    if not hot: sys.stdout.write(align_kr("인기 검색 데이터가 없습니다.", tw, 'center') + "\n")
+    if not hot:
+        buf.write(align_kr("인기 검색 데이터가 없습니다.", tw, 'center') + "\n")
     else:
-        sys.stdout.write("\033[1m" + f"{align_kr('NO', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 10)} | {align_kr('등락률', 8)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('업종PER', 7)}" + "\033[0m\n")
-        sys.stdout.write("-" * tw + "\n")
+        buf.write("\033[1m" + f"{align_kr('NO', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 10)} | {align_kr('등락률', 8)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('업종PER', 7)}" + "\033[0m\n")
+        buf.write("-" * tw + "\n")
+        
+        # [Architect 개선] 종목 상세 정보를 벌크로 미리 가져와 루프 내 지연 최소화
+        codes = [item.get('code', '') for item in hot if item.get('code')]
+        realtime_data = strategy.api.get_naver_stocks_realtime(codes)
+        
         for idx, item in enumerate(hot, 1):
-            code = item.get('code', ''); rate = float(item.get('rate', 0)); color = "\033[91m" if rate >= 0 else "\033[94m"
+            code = item.get('code', '')
+            r_item = realtime_data.get(code, {})
+            price = r_item.get('price', float(item.get('price', 0)))
+            rate = r_item.get('rate', float(item.get('rate', 0)))
+            color = "\033[91m" if rate >= 0 else "\033[94m"
+            
+            # 펀더멘털 데이터는 캐시된 정보를 우선 활용 (HTML 크롤링 방지)
             detail = strategy.api.get_naver_stock_detail(code)
-            sys.stdout.write(f"{align_kr(str(idx), 4)} | {align_kr(code, 8)} | {align_kr(item.get('name','')[:10], 14)} | {align_kr(f'{int(float(item.get("price",0))):,}', 10, 'right')} | {color}{align_kr(f'{rate:+.2f}%', 8, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')}\n")
-    sys.stdout.flush()
+            name = r_item.get('name') or item.get('name', '')
+            
+            buf.write(f"{align_kr(str(idx), 4)} | {align_kr(code, 8)} | {align_kr(name[:10], 14)} | {align_kr(f'{int(float(price)):,}', 10, 'right')} | {color}{align_kr(f'{rate:+.2f}%', 8, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')}\n")
     
     # [Task 10] 인기 테마 리포트 캐싱 (5분/300초 기준)
     curr_t = time.time()
     if not strategy.hot_report_cache or (curr_t - strategy.hot_report_time > 300):
-        sys.stdout.write("\n" + "-" * tw + "\n\033[1;95m" + " [트렌드 분석 중... 잠시 기다려주세요]" + "\033[0m\n"); sys.stdout.flush()
+        # 분석 중임을 알리기 위해 현재까지의 내용을 먼저 출력
+        buf.write("\n" + "-" * tw + "\n\033[1;95m" + " [트렌드 분석 중... 잠시 기다려주세요]" + "\033[0m\n")
+        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+        
+        # 실제 AI 분석 수행 (지연 발생)
         report = strategy.ai_advisor.get_hot_stocks_report_advice(hot, themes, strategy.current_market_vibe)
         strategy.hot_report_cache = report
         strategy.hot_report_time = curr_t
+        
+        # 분석 완료 후 캐시된 데이터를 포함하여 처음부터 다시 그리기 (재귀 호출로 깔끔하게 처리)
+        buf.close()
+        return draw_hot_stocks_detail(strategy, dm, tw, th)
     
-    sys.stdout.write("\033[1;95m" + " [AI 트렌드 분석가의 인기 테마 진단 (초압축)]" + "\033[0m\n")
+    buf.write("\n\033[1;95m" + " [AI 트렌드 분석가의 인기 테마 진단 (초압축)]" + "\033[0m\n")
     if strategy.hot_report_cache:
         cleaned_hot = clean_ai_text(strategy.hot_report_cache)
         for line in cleaned_hot.split('\n'):
-            if line.strip(): sys.stdout.write(f"  {line.strip()}\n")
-    else: sys.stdout.write("  ⚠️ 리포트를 생성할 수 없습니다.\n")
-    sys.stdout.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n"); sys.stdout.flush()
+            if line.strip(): buf.write(f"  {line.strip()}\n")
+    else:
+        buf.write("  ⚠️ 리포트를 생성할 수 없습니다.\n")
+        
+    buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
+    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
     while not get_key_immediate(): time.sleep(0.1)
+    buf.close()
+
 
 def draw_stock_analysis(strategy, dm, code, tw, th):
     sys.stdout.write("\033[H\033[2J")
@@ -253,15 +291,23 @@ def draw_stock_analysis(strategy, dm, code, tw, th):
     while not get_key_immediate(): time.sleep(0.1)
     dm.show_status("✅ 분석 완료")
 
-def draw_ai_logs_report(strategy, dm, tw, th):
+def draw_ai_logs_report(strategy, dm):
     import io
+    import os
     import copy
     from src.logger import trading_log
     
     current_tab = 1
     while True:
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except:
+            tw, th = 80, 24
         buf = io.StringIO(); buf.write("\033[H\033[2J")
-        buf.write("\033[44;37m" + align_kr(" [AI DECISION & LOG REPORT] ", tw, 'center') + "\033[0m\n")
+        is_v = getattr(strategy.api.auth, 'is_virtual', True)
+        header_bg = "45" if is_v else "44"
+        buf.write(f"\033[{header_bg};37m" + align_kr(" [AI DECISION & LOG REPORT] ", tw, 'center') + "\033[0m\n")
         
         # 탭 메뉴 바
         tab1_s = "\033[7m" if current_tab == 1 else ""
@@ -401,14 +447,22 @@ def draw_ai_logs_report(strategy, dm, tw, th):
                     return
             time.sleep(0.01)
 
-def draw_performance_report(strategy, dm, tw, th):
+def draw_performance_report(strategy, dm):
     import io
+    import os
     from src.logger import trading_log
     
     current_tab = 1
     while True:
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except:
+            tw, th = 80, 24
         buf = io.StringIO(); buf.write("\033[H\033[2J")
-        buf.write("\033[44;37m" + align_kr(" [AI TRADING PERFORMANCE DASHBOARD] ", tw, 'center') + "\033[0m\n")
+        is_v = getattr(strategy.api.auth, 'is_virtual', True)
+        header_bg = "45" if is_v else "44"
+        buf.write(f"\033[{header_bg};37m" + align_kr(" [AI TRADING PERFORMANCE DASHBOARD] ", tw, 'center') + "\033[0m\n")
         
         # 탭 메뉴 바
         t1 = "\033[7m" if current_tab == 1 else ""
@@ -520,7 +574,7 @@ def draw_performance_report(strategy, dm, tw, th):
             k_color = "\033[91m" if kospi_rate >= 0 else "\033[94m"
             kd_color = "\033[91m" if kosdaq_rate >= 0 else "\033[94m"
             buf.write("\033[1;96m" + " [금일 투자 성과 브리핑]" + "\033[0m\n")
-            buf.write(f" 📋 {today} | 실현: {r_color}{realized_profit:+,}원\033[0m | 평가: {d_color}{int(daily_pnl_amt):+,}원({daily_pnl_rate:+.2f}%)\033[0m | KOSPI: {k_color}{kospi_rate:+.2f}%\033[0m | KOSDAQ: {kd_color}{kosdaq_rate:+.2f}%\033[0m\n")
+            buf.write(f" 📋 {today} | 실현: {r_color}{realized_profit:+,}원\033[0m | 평가: {d_color}{int(daily_pnl_amt):+,}원 ({abs(daily_pnl_rate):.2f}%)\033[0m | KOSPI: {k_color}{kospi_rate:+.2f}%\033[0m | KOSDAQ: {kd_color}{kosdaq_rate:+.2f}%\033[0m\n")
             buf.write("-" * tw + "\n")
 
             # ② [순서 변경] 투자 성과 진단 (2번째 배치)
@@ -551,13 +605,37 @@ def draw_performance_report(strategy, dm, tw, th):
 
             def format_trade_row(info, is_buy):
                 code = info['code']; name = info['name']
-                price = info['avg_price']; cur = get_current_price(code)
+                # [개선] 오늘 매수평단가가 아닌, 계좌 실제 평단가(Cost Basis)를 우선 표시하여 사용자 혼선 방지
+                price = info['avg_price'] 
+                cur = get_current_price(code)
                 ma_20 = dm.ma_20_cache.get(code, 0)
-                pnl = info['total_pnl'] if not is_buy else (cur - price) * info['total_qty']
+                
+                # 손익 계산
+                if is_buy:
+                    # 매수 쪽은 현재 들고 있는 비중의 평가손익 (계좌 평단 기준)
+                    pnl = (cur - price) * info['total_qty']
+                else:
+                    # 매도 쪽은 오늘 확정된 실현손익
+                    pnl = info['total_pnl']
                 
                 p_color = "\033[91m" if pnl > 0 else "\033[94m" if pnl < 0 else ""
-                v_color = "\033[91m" if (cur >= price if is_buy else cur <= price) else "\033[94m"
-                verdict = ("✅성공" if cur >= price else "❌실패") if is_buy else ("✅성공" if cur <= price else "❌일찍")
+                
+                # [개선] Verdict(평가) 로직 고도화: 단순 가격 비교가 아닌 손익과 시황을 결합하여 입체적 진단
+                if is_buy:
+                    # 매수(Entry) 평가: 현재 수익권인가?
+                    if pnl > 0: verdict = "✅성공"
+                    elif pnl < 0: verdict = "❌실패"
+                    else: verdict = "➖보합"
+                    v_color = "\033[91m" if pnl > 0 else ("\033[94m" if pnl < 0 else "")
+                else:
+                    # 매도(Exit) 평가: 타이밍이 적절했는가?
+                    if pnl > 0:
+                        if cur <= price: verdict = "✅완벽" # 최고가 매도 또는 매도 후 하락 (익절 성공)
+                        else: verdict = "❌일찍" # 매도 후 더 오름 (수익 극대화 실패)
+                    else:
+                        if cur <= price: verdict = "🛡️방어" # 손절 후 더 하락 (추가 손실 방어 성공)
+                        else: verdict = "❌손절" # 손절 후 반등 (최악의 타이밍 손절)
+                    v_color = "\033[91m" if verdict in ["✅완벽", "🛡️방어"] else "\033[94m"
                 
                 ma_str = f"{int(ma_20):,}" if ma_20 > 0 else "-"
                 
@@ -570,17 +648,41 @@ def draw_performance_report(strategy, dm, tw, th):
                        f"{v_color}{align_kr(verdict, 6)}\033[0m")
                 return row
 
-            # 데이터 요약
+            # 데이터 요약 (계좌 평단가 및 실현 손익 기반 역추산 평단가 적용)
             buy_summary = {}
             for t in buy_trades:
                 c = t['code']; q = int(t['qty']); p = float(t['price'])
-                if c not in buy_summary: buy_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "type": t['type']}
-                buy_summary[c]["total_amt"] += p * q; buy_summary[c]["total_qty"] += q; buy_summary[c]["avg_price"] = buy_summary[c]["total_amt"] / buy_summary[c]["total_qty"]
+                if c not in buy_summary:
+                    # 계좌에서 실제 보유 중인 종목이라면 평단가(Cost Basis)를 가져옴
+                    acc_avg = 0.0
+                    for h in dm.cached_holdings:
+                        if h.get('pdno') == c:
+                            acc_avg = float(h.get('pchs_avg_pric', 0))
+                            break
+                    buy_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "type": t['type'], "acc_avg": acc_avg}
+                
+                buy_summary[c]["total_amt"] += p * q; buy_summary[c]["total_qty"] += q
+                # 계좌 정보가 있으면 계좌 평단 사용, 없으면 오늘 매수 평균 사용
+                if buy_summary[c]["acc_avg"] > 0:
+                    buy_summary[c]["avg_price"] = buy_summary[c]["acc_avg"]
+                else:
+                    buy_summary[c]["avg_price"] = buy_summary[c]["total_amt"] / buy_summary[c]["total_qty"]
+
             sell_summary = {}
             for t in sell_trades:
                 c = t['code']; q = int(t['qty']); p = float(t['price']); pr = float(t.get('profit', 0))
-                if c not in sell_summary: sell_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "total_pnl": 0, "type": t['type']}
+                if c not in sell_summary: 
+                    sell_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "total_pnl": 0, "type": t['type']}
                 sell_summary[c]["total_amt"] += p * q; sell_summary[c]["total_qty"] += q; sell_summary[c]["total_pnl"] += pr; sell_summary[c]["avg_price"] = sell_summary[c]["total_amt"] / sell_summary[c]["total_qty"]
+
+            # [추가] 매도된 종목 중 오늘 매수 이력이 있는 경우, 매수 섹션의 평단가도 실현 손익 기준으로 보정 (이미 잔고에 없을 때)
+            for c, b_info in buy_summary.items():
+                if b_info["acc_avg"] == 0 and c in sell_summary:
+                    # 실현 손익 기반으로 원래의 평단가 역추산: (매도가 - (수익금 / 수량))
+                    s_info = sell_summary[c]
+                    if s_info["total_qty"] > 0:
+                        derived_buy_p = s_info["avg_price"] - (s_info["total_pnl"] / s_info["total_qty"])
+                        b_info["avg_price"] = derived_buy_p
             
             buy_list = list(buy_summary.values()); sell_list = list(sell_summary.values()); max_rows = max(len(buy_list), len(sell_list))
             
@@ -735,16 +837,18 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 try:
                     restore_terminal_settings()
                     size = os.get_terminal_size(); tw_r, th_r = size.columns, size.lines
-                    if mode == 'm': draw_manual_page(tw_r, th_r)
+                    if mode == 'm': draw_manual_page()
                     elif mode == 'l':
                         from src.ui.renderer import draw_trading_logs
-                        draw_trading_logs(strategy, dm, tw_r, th_r)
-                    elif mode == 'b': draw_holdings_detail(strategy, dm, tw_r, th_r)
+                        draw_trading_logs(strategy, dm)
+                    elif mode == 'b': draw_holdings_detail(strategy, dm)
                     elif mode == 'd': draw_recommendation_report(strategy, dm, tw_r, th_r)
                     elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw_r, th_r)
-                    elif mode == 'a': draw_ai_logs_report(strategy, dm, tw_r, th_r)
-                    elif mode == 'p': draw_performance_report(strategy, dm, tw_r, th_r)
-                    enter_alt_screen(); set_terminal_raw(); flush_input(); dm.last_size = (0, 0)
+                    elif mode == 'a': draw_ai_logs_report(strategy, dm)
+                    elif mode == 'p': draw_performance_report(strategy, dm)
+                    # 복귀 시 화면 깨짐 방지: alt screen을 새로 여는 대신 현재 화면을 확실히 청소
+                    sys.stdout.write("\033[H\033[2J"); sys.stdout.flush()
+                    set_terminal_raw(); flush_input(); dm.last_size = (0, 0)
                 except Exception as display_e:
                     from src.logger import log_error
                     log_error(f"Display Task Error ({mode}): {display_e}")
@@ -771,14 +875,15 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             restore_terminal_settings()
                             size = os.get_terminal_size(); tw_a, th_a = size.columns, size.lines
                             draw_stock_analysis(strategy, dm, t_code, tw_a, th_a)
-                            enter_alt_screen(); set_terminal_raw(); flush_input(); dm.last_size = (0, 0)
+                            sys.stdout.write("\033[H\033[2J"); sys.stdout.flush()
+                            set_terminal_raw(); flush_input(); dm.last_size = (0, 0)
                         except Exception as analysis_e:
                             from src.logger import log_error
                             log_error(f"Analysis Task Error ({t_code}): {analysis_e}")
                         finally:
                             dm.clear_busy()
                             dm.is_full_screen_active = False
-                    threading.Thread(target=run_analysis_task, args=(target_code,), daemon=True).start()
+                    threading.Thread(target=run_analysis_task, args=(target_code,), name=f"[{target_code}_분석]", daemon=True).start()
             return
     
         if mode == 's':
@@ -832,7 +937,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                 log_error(f"수동 매도 실패 ({h['prdt_name']}): {msg}")
                                 dm.show_status(f"❌ 매도 실패: {msg}", True)
                         finally: dm.clear_busy()
-                    threading.Thread(target=task_sell, daemon=True).start()
+                    threading.Thread(target=task_sell, name=f"[{code}_{name}_매도]", daemon=True).start()
 
         elif mode == 'u':
             if not dm.update_info.get("has_update"):
@@ -906,7 +1011,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                 log_error(f"수동 매수 실패 ({top_ai['name']}): {msg}")
                                 dm.show_status(f"❌ 매수 실패: {msg}", True)
                         finally: dm.clear_busy()
-                    threading.Thread(target=task_buy, daemon=True).start()
+                    threading.Thread(target=task_buy, name=f"[{code}_{name}_매수]", daemon=True).start()
 
         elif mode == '3':
             res = get_input(dm, "> 수정 [번호 TP SL] 또는 [TP SL]: ", tw)

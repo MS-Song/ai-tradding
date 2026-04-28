@@ -5,11 +5,13 @@ from src.logger import log_error
 from src.utils import is_ai_enabled_time
 
 class MarketAnalyzer:
-    def __init__(self, api):
+    def __init__(self, api, indicator_eng=None):
         self.api = api
+        self.indicator_eng = indicator_eng
         self.current_data = {}
         self.is_panic = False
         self.kr_vibe = "Neutral"
+        self.dema_info = {} # [추가] 지수별 DEMA 정보 저장
         
         # AI 검증 연동용
         self.ai_advisor = None
@@ -85,7 +87,12 @@ class MarketAnalyzer:
             self.last_kospi_rate = cur_kospi_rate
             self.last_kosdaq_rate = cur_kosdaq_rate
             
-            ai_result = self.ai_advisor.verify_market_vibe(self.current_data, heuristic_vibe)
+            # [개선] DEMA 정보를 포함하여 AI에게 전달
+            ai_context = {
+                "indices": self.current_data,
+                "dema_trend": self.dema_info
+            }
+            ai_result = self.ai_advisor.verify_market_vibe(ai_context, heuristic_vibe)
             if ai_result:
                 self.finalized_ai_vibe = ai_result
                 if ai_result.upper() != heuristic_vibe.upper():
@@ -135,10 +142,46 @@ class MarketAnalyzer:
         return False
 
     def _check_kr_vibe(self) -> str:
-        kr_targets = ["KOSPI", "KOSDAQ"]
+        kr_targets = {"KOSPI": "0001", "KOSDAQ": "1001"}
         active_kr = [self.current_data.get(k) for k in kr_targets if self.current_data.get(k)]
         if not active_kr: return "Neutral"
+        
         avg_rate = sum(idx['rate'] for idx in active_kr) / len(active_kr)
-        if avg_rate >= 0.5: return "Bull"
-        if avg_rate <= -0.5: return "Bear"
+        
+        # [신규] DEMA 추세 분석
+        dema_signals = []
+        if self.indicator_eng:
+            for name, code in kr_targets.items():
+                try:
+                    # 최근 60일 데이터 수집 (DEMA 계산용)
+                    candles = self.api.get_index_chart_price(code, period_div="D")
+                    if candles and len(candles) >= 40: # 최소 데이터 확보
+                        prices = [float(c.get('stck_clpr', 0)) for c in candles]
+                        dema_20 = self.indicator_eng.calculate_dema(prices, 20)
+                        curr_p = prices[0]
+                        
+                        self.dema_info[name] = {"price": curr_p, "dema": dema_20}
+                        
+                        if curr_p > dema_20:
+                            dema_signals.append("BULL")
+                        elif curr_p < dema_20:
+                            dema_signals.append("BEAR")
+                except Exception as e:
+                    log_error(f"지수 DEMA 계산 오류 ({name}): {e}")
+
+        # 종합 판단: 당일 등락률 + DEMA 추세
+        # 1. 강력한 상승 (평균 0.5% 이상 & DEMA 지지)
+        if avg_rate >= 0.5 and "BULL" in dema_signals:
+            return "Bull"
+        # 2. 강력한 하락 (평균 -0.5% 이하 & DEMA 저항)
+        if avg_rate <= -0.5 and "BEAR" in dema_signals:
+            return "Bear"
+        
+        # 3. 추세는 상승인데 오늘만 조종이거나, 추세는 하락인데 오늘만 반등인 경우 -> 중립 또는 기존 유지
+        # 여기서는 좀 더 보수적으로 접근
+        if avg_rate > 0 and dema_signals.count("BULL") == len(kr_targets):
+            return "Bull"
+        if avg_rate < 0 and dema_signals.count("BEAR") == len(kr_targets):
+            return "Bear"
+            
         return "Neutral"

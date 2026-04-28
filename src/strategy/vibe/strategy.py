@@ -58,7 +58,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         v_cfg = self.base_config
         self.max_stock_count_config = v_cfg.get("max_stock_count_config", "8")
         
-        self.analyzer = MarketAnalyzer(api)
+        self.indicator_eng = IndicatorEngine()
+        self.analyzer = MarketAnalyzer(api, self.indicator_eng)
         self.exit_mgr = ExitManager(v_cfg.get("take_profit_threshold", 5.0), v_cfg.get("stop_loss_threshold", -5.0))
         self.recovery_eng = RecoveryEngine(v_cfg.get("bear_market", {}))
         
@@ -123,7 +124,6 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
 
         self.state_mgr = StateManager(self, "trading_state.json")
         self.risk_mgr = RiskManager(api, v_cfg.get("risk_config", {}))
-        self.indicator_eng = IndicatorEngine()
         self.rebalance_eng = RebalanceEngine(api, self.ai_advisor)
         self.preset_eng = PresetStrategyEngine(self.ai_advisor, api, lambda: self.current_market_vibe, self._save_all_states)
         self.analyzer.debug_mode = self.debug_mode # [추가]

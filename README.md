@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/AI-Gemini%20|%20Groq-blueviolet.svg" alt="Powered by AI">
   <img src="https://img.shields.io/badge/Market-Korea%20Stock-red.svg" alt="Market">
   <a href="https://github.com/MS-Song/ai-tradding/releases">
-    <img src="https://img.shields.io/badge/version-1.4.2-green.svg" alt="Version">
+    <img src="https://img.shields.io/badge/version-1.5.0-green.svg" alt="Version">
   </a>
 </p>
 

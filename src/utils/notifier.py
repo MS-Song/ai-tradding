@@ -7,9 +7,10 @@ from datetime import datetime
 from src.logger import log_error, telegram_logger
 
 class TelegramNotifier:
-    def __init__(self, token=None, chat_id=None):
+    def __init__(self, token=None, chat_id=None, dm=None):
         self.token = token or os.getenv("TELEGRAM_TOKEN")
         self.chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+        self.dm = dm  # DataManager 참조 저장
         self.is_active = bool(self.token and self.chat_id)
         
         self.msg_queue = queue.Queue()
@@ -43,11 +44,15 @@ class TelegramNotifier:
                 try:
                     msg, parse_mode = self.msg_queue.get(timeout=1.0)
                 except queue.Empty:
+                    # 대기 중에도 주기적으로 갱신하여 살아있음을 알림 (선택 사항)
                     continue
 
                 # 메시지 전송
                 self.status_msg = "전송중"
                 self.last_task = f"메시지 전송: {msg[:20]}..."
+                if self.dm:
+                    self.dm.update_worker_status("TELEGRAM", last_task=self.last_task)
+                
                 await bot.send_message(
                     chat_id=self.chat_id,
                     text=msg,
@@ -57,6 +62,9 @@ class TelegramNotifier:
                 # 발송 내역 로깅
                 clean_msg = msg.replace('\n', ' ')
                 telegram_logger.info(f"SENT | {clean_msg[:100]}...")
+                
+                if self.dm:
+                    self.dm.update_worker_status("TELEGRAM", result="성공", last_task=self.last_task)
                 
                 self.msg_queue.task_done()
                 self.status_msg = "대기중"
@@ -68,6 +76,9 @@ class TelegramNotifier:
                 self.status_msg = "에러"
                 self.last_result = "실패"
                 self.last_task = f"전송 실패: {str(e)[:30]}"
+                if self.dm:
+                    self.dm.update_worker_status("TELEGRAM", result="실패", last_task=self.last_task)
+                
                 log_error(f"Telegram Send Error (ID: {self.chat_id}): {e}")
                 await asyncio.sleep(2) # 에러 발생 시 잠시 대기
 
@@ -133,7 +144,7 @@ class TelegramNotifier:
         msg = (
             f"🏁 **장 마감 리포트 (15:30)**\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"{emoji} **당일 손익**: {int(pnl):+,}원 ({rate:+.2f}%)\n"
+            f"{emoji} **수익금 (수익률)**: {int(pnl):+,}원 ({abs(rate):.2f}%)\n"
             f"💰 **현재 자산**: {int(asset_info.get('total_asset', 0)):,}원\n"
             f"💵 **예수금**: {int(asset_info.get('cash', 0)):,}원\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"

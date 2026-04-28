@@ -137,6 +137,13 @@ class BaseLLMAdvisor(BaseAdvisor):
                     m = ma.get('minute', {})
                     ma_info += f"\n        [{code} MA] 일봉:{d.get('trend','?')} | 분봉20MA:{int(m.get('ma',{}).get('sma_20',0)):,}원 (Signal:{ma.get('signal','?')})"
 
+        dema_txt = ""
+        if isinstance(market_data, dict) and "dema_trend" in market_data:
+            dema_txt = f" | DEMA Trend: {json.dumps(market_data['dema_trend'], ensure_ascii=False)}"
+            m_data = market_data.get("indices", market_data)
+        else:
+            m_data = market_data
+
         prompt = f"""
         현재 시각: {now_str}
         당신은 시장의 흐름에 민감한 초단기 데이트레이더(Scalper)입니다. 오늘의 변동성만을 수익의 원천으로 삼습니다. 아래 정보로 간결한 전략을 제시하세요. 불필요한 공백/수식어 금지.
@@ -146,16 +153,17 @@ class BaseLLMAdvisor(BaseAdvisor):
         2. 특히 **AI[추천]** 섹션의 **권장가**는 반드시 위에서 제공된 해당 종목의 **현재가와 1원도 틀리지 않게 동일하게 작성**하십시오. 당신의 판단으로 가격을 낮게 잡거나 과거의 가격으로 수정하는 것을 엄격히 금지합니다.
         3. 수량(M주)은 제공된 [현재가]를 기준으로 당신의 [매수 설정금액]을 넘지 않도록 계산하여 제안하십시오.
 
-        - 지수: {json.dumps(market_data)} | Vibe: {vibe}
+        - 지수: {json.dumps(m_data, ensure_ascii=False)}{dema_txt} | Vibe: {vibe}
         - 포트: {holdings_txt if holdings else "None"}
         - 추천: {recs_txt if recs_txt else "None"} {indicators_txt} {ma_info}
         - 매수: {current_config.get('ai_amt'):,}원
         
         [전략 가이드라인]
-        1. 이동평균선(MA) 데이터를 적극 참고하십시오. 일봉 상승추세(UP)이면서 현재가가 분봉 20MA에 근접(BUY_ZONE)한 경우 적극 매수를 검토하세요.
-        2. 분봉 20MA 대비 괴리율이 과도하게 높으면(OVERBOUGHT) 추격 매수를 지양하고 눌림목을 기다리도록 조언하세요.
-        3. 장기적 기업 가치나 모호한 불확실성에 매몰되지 마세요. 
-        4. 지금 당장의 수급, 거래량, 차트 에너지가 확인되면 적극적으로 매수를 제안하세요. 
+        1. 이동평균선(MA/DEMA) 데이터를 적극 참고하십시오. 지수가 DEMA선 위에 있으면 긍정적, 아래에 있으면 부정적으로 봅니다.
+        2. 일봉 상승추세(UP)이면서 현재가가 분봉 20MA에 근접(BUY_ZONE)한 경우 적극 매수를 검토하세요.
+        3. 분봉 20MA 대비 괴리율이 과도하게 높으면(OVERBOUGHT) 추격 매수를 지양하고 눌림목을 기다리도록 조언하세요.
+        4. 장기적 기업 가치나 모호한 불확실성에 매몰되지 마세요. 
+        5. 지금 당장의 수급, 거래량, 차트 에너지가 확인되면 적극적으로 매수를 제안하세요. 
         
         [형식 - 엄수]
         AI[시장]: 요약 (15자 이내)
@@ -371,7 +379,15 @@ class BaseLLMAdvisor(BaseAdvisor):
         return False, "API 호출 실패"
 
     def verify_market_vibe(self, current_data, heuristic_vibe):
-        prompt = f"Data: {json.dumps(current_data)} | Heuristic: {heuristic_vibe}. One word: Bull, Bear, Neutral, Defensive."
+        prompt = f"""
+        시장 지표: {json.dumps(current_data, ensure_ascii=False)}
+        현재 알고리즘 판정: {heuristic_vibe}
+        
+        [지침]
+        1. 위 데이터를 바탕으로 현재 시장 장세를 Bull, Bear, Neutral, Defensive 중 하나로 최종 확정하세요.
+        2. 특히 지수(KOSPI/KOSDAQ)의 현재가가 DEMA 지표보다 위에 있으면(추세 지지) 긍정적, 아래에 있으면(추세 저항) 보수적으로 판단하십시오.
+        3. 한 단어로만 대답하세요.
+        """
         answer = self._call_api(prompt, timeout=30)
         if answer:
             for v in ["BULL", "BEAR", "NEUTRAL", "DEFENSIVE"]:
