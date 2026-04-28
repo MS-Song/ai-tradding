@@ -720,8 +720,7 @@ class DataManager:
                             self.notified_dates["market_end"] = today_str
                         
                         # (D) 물타기/불타기 및 AI 자율 매수 실행
-                        # (기존 data_update_worker에 있던 로직을 여기서 통합 실행)
-                        # ... [긴급] 지면상 생략된 로직들은 run_cycle이 이미 처리하므로 상태 업데이트 위주로 구성 ...
+                        # (모든 매매 로직은 run_cycle 내에서 통합 처리됨)
                         
                         self.worker_results["TRADE"] = "성공"
                         self.worker_last_tasks["TRADE"] = "매매 사이클 실행 완료"

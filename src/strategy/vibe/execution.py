@@ -216,11 +216,116 @@ class ExecutionMixin:
                     logger.error(f"⚠️ {action} 실행 중 예외 발생: {e}")
                 finally:
                     self.current_action = "대기중"
+
+        # --- [추가] 신규 진입 및 추가 매수 엔진 (Bear/Bull/AI) ---
+        if not skip_trade and not self.global_panic and phase['id'] in ["P1", "P2"]:
+            # (A) 물타기/불타기 집행 (기존 종목 비중 조절)
+            if self.recovery_eng.config.get("auto_mode") or self.bull_config.get("auto_mode"):
+                # [Cash Ratio Check] 하락장 30%, 방어모드 80% 현금 비중 유지 원칙
+                total_asset = asset_info.get('total_asset', 0)
+                cash = asset_info.get('cash', 0)
+                cash_ratio = (cash / total_asset * 100) if total_asset > 0 else 0
+                
+                buy_recs = self.get_buy_recommendations(market_trend, holdings=holdings)
+                for rec in buy_recs:
+                    # [Safety] 루프당 최대 1종목 제한
+                    if any(x for x in results if "매수" in x or "익절" in x or "손절" in x): break
+                    
+                    code, name, amt, b_type = rec['code'], rec['name'], rec['suggested_amt'], rec['type']
+                    
+                    # [Cooldown] 익절/손절 후 2시간 이내 재진입 금지 (핑퐁 방지)
+                    if (time.time() - self.last_sell_times.get(code, 0)) < 7200: continue
+                    
+                    # 현금 비중 보호
+                    if b_type == "물타기":
+                        if market_trend == "bear" and cash_ratio < 30: continue
+                        if market_trend == "defensive" and cash_ratio < 80: continue
+                    
+                    if cash < amt: continue
+                    
+                    # 투자 한도 확인 (max_investment_per_stock)
+                    h_item = next((h for h in holdings if h['pdno'] == code), None)
+                    if h_item:
+                        curr_inv = float(h_item.get('pchs_amt', 0))
+                        limit = self.bear_config.get("max_investment_per_stock") if b_type == "물타기" else self.bull_config.get("max_investment_per_stock")
+                        if curr_inv + amt > limit: continue
+                        
+                        price = float(h_item.get('prpr', 0))
+                        qty = math.floor(amt / price) if price > 0 else 0
+                        if qty > 0:
+                            success, msg = self.api.order_market(code, qty, True)
+                            if success:
+                                self.record_buy(code, price)
+                                results.append(f"🤖 {b_type}: {name} {qty}주")
+                                trading_log.log_trade(f"자동{b_type}", code, name, price, qty, rec.get('reason', ''), model_id="TL/SP")
+                                self._save_all_states()
+
+            # (B) AI 자율 매수 집행 (신규 종목 진입)
+            if self.auto_ai_trade and self.ai_recommendations:
+                max_cnt = self.get_max_stock_count(asset_info.get('total_asset', 0))
+                curr_cnt = len(holdings)
+                
+                # [Cash Ratio Check] 신규 진입 시에도 현금 비중 유지
+                total_asset = asset_info.get('total_asset', 0)
+                cash = asset_info.get('cash', 0)
+                cash_ratio = (cash / total_asset * 100) if total_asset > 0 else 0
+                
+                for rec in self.ai_recommendations:
+                    # [Safety] 루프당 최대 1종목 제한
+                    if any(x for x in results if "매수" in x or "익절" in x or "손절" in x): break
+                    
+                    code, name, score = rec['code'], rec['name'], rec.get('score', 0.0)
+                    if any(h.get('pdno') == code for h in holdings): continue
+                    
+                    # [Cooldown] 익절/손절 후 2시간 이내 재진입 금지 (핑퐁 방지)
+                    if (time.time() - self.last_sell_times.get(code, 0)) < 7200: continue
+                    
+                    # 현금 비중 보호
+                    if market_trend == "bear" and cash_ratio < 30: continue
+                    if market_trend == "defensive" and cash_ratio < 80: continue
+                    
+                    # [Step 1] 최종 구매 컨펌 (Gemini)
+                    is_ok, reason = self.confirm_buy_decision(code, name, score)
+                    if not is_ok: continue
+                    
+                    # [Step 2] 한도 및 교체 판단
+                    target_code = None
+                    if curr_cnt >= max_cnt:
+                        is_superior, t_code, t_reason = self.get_replacement_target(code, name, score, holdings)
+                        if is_superior and t_code:
+                            target_code = t_code
+                        else:
+                            continue
+                            
+                    # [Step 3] 매수 집행
+                    amt = self.ai_config["amount_per_trade"]
+                    if cash < amt: continue
+                    
+                    # 교체 대상 전량 매도
+                    if target_code:
+                        t_item = next((h for h in holdings if h['pdno'] == target_code), None)
+                        if t_item:
+                            self.api.order_market(target_code, int(float(t_item['hldg_qty'])), False)
+                            self.record_sell(target_code, is_full_exit=True)
+                            results.append(f"🔄 교체매도: {t_item['prdt_name']}")
+                    
+                    price = float(rec.get('price', 0)) or self.api.get_inquire_price(code).get('price', 0)
+                    qty = math.floor(amt / price) if price > 0 else 0
+                    if qty > 0:
+                        success, msg = self.api.order_market(code, qty, True)
+                        if success:
+                            self.record_buy(code, price)
+                            self.auto_assign_preset(code, name)
+                            results.append(f"🚀 AI자율매수: {name} {qty}주")
+                            m_id = self.last_buy_models.get(code, "AI")
+                            trading_log.log_trade("AI자율매수", code, name, price, qty, reason, model_id=m_id)
+                            self._save_all_states()
+                            
         return results
 
-    def get_buy_recommendations(self, market_trend="neutral"):
+    def get_buy_recommendations(self, market_trend="neutral", holdings=None):
         recs = []
-        holdings = self.api.get_balance()
+        if holdings is None: holdings = self.api.get_balance()
         for item in holdings:
             code = item.get("pdno")
             tp, sl, spike = self.get_dynamic_thresholds(code, market_trend)
