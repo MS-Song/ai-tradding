@@ -17,7 +17,7 @@ class MarketWorker(BaseWorker):
         
         # 1. 시장 트렌드 및 지수 패치
         try:
-            self.set_busy("시장분석", friendly_name="MARKET_ANALYSIS")
+            self.set_busy("시장분석", friendly_name="MARKET_ANAL")
             self.strategy.determine_market_trend()
             
             with self.state.lock:
@@ -34,10 +34,14 @@ class MarketWorker(BaseWorker):
                     self.state.is_kr_market_active = is_market_open()
                 
             self.set_result("성공", last_task="시장 지수 및 VIBE 분석")
+            self.state.update_worker_status("INDEX", result="성공", last_task="시장 지수 및 VIBE 분석", friendly_name="MARKET_ANAL")
         except RuntimeError:
             self.stop() # 시스템 종료 시
         except Exception as e:
+            from src.logger import log_error
+            log_error(f"MarketWorker Analysis Error: {e}")
             self.set_result("실패", last_task=f"시장분석 오류: {e}")
+            self.state.update_worker_status("INDEX", result="실패", last_task=f"시장분석 오류: {e}", friendly_name="MARKET_ANAL")
 
         # 2. VIBE 변화 및 장 개시 알림 로직
         self._handle_notifications()
@@ -65,11 +69,17 @@ class MarketWorker(BaseWorker):
                         self.state.stock_info[c] = base
                 
             self.set_result("성공", last_task="인기/거래량 종목 수집")
+            self.state.update_worker_status("RANKING", result="성공", last_task="인기 종목 탐색 완료", friendly_name="RANKING")
+            self.state.update_worker_status("THEME", result="성공", last_task="테마 분석 완료", friendly_name="THEME")
         except Exception as e:
             self.set_result("실패", last_task=f"랭킹 수집 오류: {e}")
+            self.state.update_worker_status("RANKING", result="실패", last_task=f"랭킹 수집 오류: {e}")
 
         # 4. AI 추천 및 비용 갱신
         self._update_ai_data(curr_t)
+        
+        # 5. 복기 엔진 상태 (장 마감 후 체크용)
+        self.state.update_worker_status("RETRO", result="성공", last_task="투자 복기 엔진 대기 중", friendly_name="RETRO")
 
     def _handle_notifications(self):
         with self.state.lock:
@@ -116,7 +126,7 @@ class MarketWorker(BaseWorker):
                         self.set_busy(f"AI분석({c}/{t})")
                     
                     self.strategy.update_ai_recommendations(
-                        themes=[], # themes는 h_raw/v_raw 분석에서 가져와야 함
+                        themes=self.themes,
                         hot_raw=self.state.hot_raw,
                         vol_raw=self.state.vol_raw,
                         progress_cb=rec_prog_cb

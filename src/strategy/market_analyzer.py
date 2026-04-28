@@ -20,7 +20,8 @@ class MarketAnalyzer:
         self.last_kosdaq_rate = 0.0
         self.ai_override_msg = ""
         self.finalized_ai_vibe = None # 캐시된 마지막 AI 판정
-        self.debug_mode = False       # [추가]
+        self.debug_mode = False
+        self.last_dema_update = 0     # [추가] DEMA 갱신 주기 관리
 
     def update(self, force_ai: bool = False) -> Tuple[str, bool]:
         symbol_map = {
@@ -148,9 +149,9 @@ class MarketAnalyzer:
         
         avg_rate = sum(idx['rate'] for idx in active_kr) / len(active_kr)
         
-        # [신규] DEMA 추세 분석
-        dema_signals = []
-        if self.indicator_eng:
+        # [최적화] DEMA 추세 분석 (30분 주기로 갱신)
+        now = time.time()
+        if self.indicator_eng and (now - self.last_dema_update > 1800 or not self.dema_info):
             for name, code in kr_targets.items():
                 try:
                     # 최근 60일 데이터 수집 (DEMA 계산용)
@@ -159,15 +160,17 @@ class MarketAnalyzer:
                         prices = [float(c.get('stck_clpr', 0)) for c in candles]
                         dema_20 = self.indicator_eng.calculate_dema(prices, 20)
                         curr_p = prices[0]
-                        
                         self.dema_info[name] = {"price": curr_p, "dema": dema_20}
-                        
-                        if curr_p > dema_20:
-                            dema_signals.append("BULL")
-                        elif curr_p < dema_20:
-                            dema_signals.append("BEAR")
                 except Exception as e:
                     log_error(f"지수 DEMA 계산 오류 ({name}): {e}")
+            self.last_dema_update = now
+
+        dema_signals = []
+        for name in kr_targets.keys():
+            if name in self.dema_info:
+                info = self.dema_info[name]
+                if info['price'] > info['dema']: dema_signals.append("BULL")
+                elif info['price'] < info['dema']: dema_signals.append("BEAR")
 
         # 종합 판단: 당일 등락률 + DEMA 추세
         # 1. 강력한 상승 (평균 0.5% 이상 & DEMA 지지)

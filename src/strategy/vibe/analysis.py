@@ -39,8 +39,19 @@ class AnalysisMixin:
         
         # [추가] AI 토큰 절약을 위한 시간 기반 차단 (디버그 모드 제외)
         if not is_ai_enabled_time() and not getattr(self, "debug_mode", False):
-            logger.info("AI 기능을 호출하지 않습니다. (Market closed)")
+            if not getattr(self, "_ai_disabled_logged", False):
+                logger.info("AI 기능을 호출하지 않습니다. (Market closed)")
+                self._ai_disabled_logged = True
+            
+            # [수정] 중단 상태를 UI에 명시적으로 표시하고 체크 시간 갱신
+            self.current_action = "중단(장마감)"
+            if dm: dm.update_worker_status("AI_ENGINE", result="대기", last_task="장외 시간 (AI 비활성)")
+            self.last_market_analysis_time = time.time()
             return
+        
+        # 장 중이거나 디버그 모드인 경우 플래그 초기화
+        if getattr(self, "_ai_disabled_logged", False):
+            self._ai_disabled_logged = False
 
         self.is_analyzing = True
         try:
@@ -81,19 +92,29 @@ class AnalysisMixin:
         current_cfg = {"base_tp": self.exit_mgr.base_tp, "base_sl": base_sl, "bear_trig": max(self.recovery_eng.config.get("min_loss_to_buy"), base_sl + 1.0), "bull_trig": self.bull_config.get("min_profit_to_pyramid", 3.0), "ai_amt": self.ai_config["amount_per_trade"]}
         
         candidate_indicators = {}
-        for r in self.ai_recommendations[:5]:
+        
+        def fetch_indicators(r):
+            code = r['code']
             try:
-                # 기존 RSI/BB/MACD 지표 수집
-                candles = self.api.get_minute_chart_price(r['code'])
-                if candles: 
-                    candidate_indicators[r['code']] = self.indicator_eng.get_all_indicators(candles)
+                # 1. 분봉 지표 수집
+                candles = self.api.get_minute_chart_price(code)
+                inds = {}
+                if candles:
+                    inds = self.indicator_eng.get_all_indicators(candles)
                 
-                # [추가] 일봉+분봉 이중 MA 분석 수집
-                ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, r['code'])
-                if r['code'] not in candidate_indicators: candidate_indicators[r['code']] = {}
-                candidate_indicators[r['code']]['ma_analysis'] = ma_analysis
+                # 2. 이중 이평선 분석 수집
+                ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+                inds['ma_analysis'] = ma_analysis
+                return code, inds
             except Exception as e:
-                log_error(f"지표 분석 수집 오류 ({r['code']}): {e}")
+                log_error(f"지표 분석 수집 오류 ({code}): {e}")
+                return code, None
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            results = list(executor.map(fetch_indicators, self.ai_recommendations[:5]))
+            for code, inds in results:
+                if inds:
+                    candidate_indicators[code] = inds
 
         for h in holdings:
             code = h['pdno']

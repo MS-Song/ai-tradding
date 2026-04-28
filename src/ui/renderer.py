@@ -253,16 +253,17 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 buf.write("\033[91m" + align_kr("  [!] 시황 정보 갱신 실패 (Gemini API 오류 또는 네트워크 지연)", tw) + "\033[0m\n")
                 buf.write("\033[90m" + align_kr("  └ 시스템 기본 전략 및 TP/SL 감시는 정상 작동 중입니다.", tw) + "\033[0m\n")
                 buf.write("\n")
-            elif dm.market_info_status == "대기":
+            elif dm.market_info_status == "대기" or strategy.is_analyzing:
                 buf.write("\n")
-                buf.write("\033[93m" + align_kr("  [...] 최초 시황 분석 및 AI 전략 수립 중입니다...", tw) + "\033[0m\n")
+                status_text = "최초 시황 분석 및 AI 전략 수립 중입니다..." if not strategy.first_analysis_attempted else "실시간 시황 및 추천 종목을 심층 분석 중입니다..."
+                buf.write("\033[93m" + align_kr(f"  [...] {status_text}", tw) + "\033[0m\n")
                 buf.write("\n" * 2)
             else:
-                # 시황 데이터가 아예 없는 경우 안내 문구 표시
+                # 시황 데이터가 아예 없는 경우 안내 문구 표시 (분석 중이 아닐 때)
                 buf.write("\n")
                 buf.write("\033[90m" + align_kr("  [💬] 상세 시황 브리핑 및 AI 전략 조언을 준비 중입니다...", tw) + "\033[0m\n")
                 buf.write("\033[90m" + align_kr("      (60분 주기 자동 갱신 또는 8번 키로 수동 갱신 가능)", tw) + "\033[0m\n")
-                buf.write("\n")        
+                buf.write("\n")
         buf.write("=" * tw + "\n")
         asset = dm.cached_asset; tot_eval = asset.get('total_asset', 0); tot_prin = asset.get('total_principal', 0)
         tot_rt = ((tot_eval - tot_prin) / tot_prin * 100) if tot_prin > 0 else 0
@@ -815,9 +816,9 @@ def draw_trading_logs(strategy, dm):
             }
             all_workers = set(worker_desc.keys()); all_workers.update([k.upper() for k in last_times.keys()]); all_workers.update(worker_status.keys())
             
-            # [수정] 컬럼 너비 최소화: 마지막 행동 필드 공간 최대 확보를 위해 앞쪽 컬럼 대폭 축소
-            h_name = align_kr('워커명', 12); h_desc = align_kr('설명(Task)', 12)
-            h_time = align_kr('시간', 8); h_elap = align_kr('경과', 12, 'right')
+            # [수정] 설명(Task) 컬럼 너비 확장 (12 -> 18) 및 전체 레이아웃 조정
+            h_name = align_kr('워커명', 12); h_desc = align_kr('설명(Task)', 18)
+            h_time = align_kr('시간', 8); h_elap = align_kr('경과', 10, 'right')
             h_stat = align_kr('상태', 14); h_res  = align_kr('결과', 4, 'center')
             header = f"  {h_name} | {h_desc} | {h_time} | {h_elap} | {h_stat} | {h_res} | 마지막 행동"
             buf.write("\033[1m" + header + "\033[0m\n" + "  " + "-" * (tw - 6) + "\n")
@@ -830,7 +831,7 @@ def draw_trading_logs(strategy, dm):
             display_limit = max(5, available_h - 2)
             for w in sorted_workers[:display_limit]:
                 ts = last_times.get(w.lower(), 0)
-                if w == "AI_ENGINE": ts = getattr(strategy, 'last_market_analysis_time', 0)
+                # AI_ENGINE의 경우 전략의 분석 시간과 연동되어 있으나, 체크 시점 자체를 보여주기 위해 ts 사용 유지
                 
                 if not ts: t_str, e_str = "미갱신", "-"
                 else:
@@ -853,7 +854,8 @@ def draw_trading_logs(strategy, dm):
                 status_fmt = f"\033[90m{status_fmt}\033[0m" if status == '대기 중 (IDLE)' else f"\033[93m{status_fmt}\033[0m"
                 
                 res = worker_results.get(w, "-")
-                if w == "AI_ENGINE": res = "성공" if strategy.is_ready else "실패"
+                if w == "AI_ENGINE" and strategy.is_analyzing: res = "분석중"
+                elif w == "AI_ENGINE" and not ts: res = "실패" if not strategy.is_ready else "-"
                 elif w == "TELEGRAM" and hasattr(dm, 'notifier'): res = getattr(dm.notifier, 'last_result', '-')
                 res_color = "\033[92m" if res == "성공" else ("\033[91m" if res == "실패" else "")
                 
@@ -863,8 +865,8 @@ def draw_trading_logs(strategy, dm):
                 # [수정] 마지막 행동 필드 내 개행 문자( \n, \r, <br> )를 공백으로 대체하여 줄바꿈 방지
                 last_task = str(last_task).replace('\n', ' ').replace('\r', ' ').replace('<br>', ' ').replace('<BR>', ' ')
                 
-                # [수정] 마지막 행동 필드 가용 너비 공간 극대화 (tw-95 -> tw-85)
-                buf.write(f"  \033[1;94m{align_kr(name_col, 12)}\033[0m | {align_kr(desc, 12)} | {t_fmt} | {e_fmt} | {status_fmt} | {res_color}{align_kr(res, 4, 'center')}\033[0m | {truncate_log_line(last_task, max(20, tw-85))}\n")
+                # [수정] 데이터 행 컬럼 너비 동기화 (Desc: 18, Elap: 10) 및 가용 너비 재계산 (tw-91)
+                buf.write(f"  \033[1;94m{align_kr(name_col, 12)}\033[0m | {align_kr(desc, 18)} | {t_fmt} | {e_fmt} | {status_fmt} | {res_color}{align_kr(res, 4, 'center')}\033[0m | {truncate_log_line(last_task, max(20, tw-91))}\n")
             
             skipped = len(sorted_workers) - display_limit
             if skipped > 0: buf.write(f"  \033[90m... 외 {skipped}건 생략됨 (터미널 높이 부족)\033[0m\n")

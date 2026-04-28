@@ -70,9 +70,15 @@ class DataManager:
     @property
     def cached_hot_raw(self): return self.state.hot_raw
     @property
+    def hot_stocks(self): return self.state.hot_raw
+    @property
     def cached_vol_raw(self): return self.state.vol_raw
     @property
+    def vol_stocks(self): return self.state.vol_raw
+    @property
     def cached_recommendations(self): return self.state.recommendations
+    @property
+    def recommendations(self): return self.state.recommendations
     @property
     def cached_dema_info(self): return self.state.dema_info
     @property
@@ -94,7 +100,66 @@ class DataManager:
     @property
     def worker_last_tasks(self): return self.state.worker_last_tasks
     @property
+    def last_times(self): return self.state.last_times
+    @property
+    def _worker_statuses(self): return self.state.worker_statuses
+    @property
+    def worker_names(self): return self.state.worker_names
+    @property
     def global_busy_msg(self): return self.state.get_global_busy_msg()
+    @property
+    def vibe(self): return self.state.vibe
+    @property
+    def is_panic(self): return self.state.is_panic
+    @property
+    def dema_info(self): return self.state.dema_info
+    @property
+    def asset_info(self): return self.state.asset
+    @property
+    def update_time(self): return self.state.last_update_time
+    @property
+    def last_size(self): return self.state.last_terminal_size
+    @last_size.setter
+    def last_size(self, val): self.state.last_terminal_size = val
+    @property
+    def update_info(self): return self.state.update_info
+    @property
+    def ai_costs(self): return self.state.ai_costs
+    @property
+    def chart_data(self): return self.state.chart_data
+    @property
+    def input_prompt(self): return self.state.input_prompt
+    @input_prompt.setter
+    def input_prompt(self, val): self.state.input_prompt = val
+    @property
+    def input_buffer(self): return self.state.input_buffer
+    @input_buffer.setter
+    def input_buffer(self, val): self.state.input_buffer = val
+    @property
+    def current_prompt_mode(self): return self.state.current_prompt_mode
+    @current_prompt_mode.setter
+    def current_prompt_mode(self, val): self.state.current_prompt_mode = val
+    @property
+    def market_info_status(self):
+        res = self.state.worker_results.get("INDEX")
+        if res == "실패": return "실패"
+        if res == "성공": return "성공"
+        return "대기"
+
+    @property
+    def ranking_filter(self): return self.state.ranking_filter
+    @ranking_filter.setter
+    def ranking_filter(self, val): self.state.ranking_filter = val
+
+    @property
+    def last_log_msg(self): return self.state.last_log_msg
+    @last_log_msg.setter
+    def last_log_msg(self, val):
+        self.state.last_log_msg = val
+        self.state.last_log_time = time.time()
+    @property
+    def last_log_time(self): return self.state.last_log_time
+
     @property
     def busy_anim_step(self): return self.state.busy_anim_step
     @busy_anim_step.setter
@@ -147,6 +212,7 @@ class DataManager:
                 cleanup_text_log("error.log", days_to_keep=2)
                 trading_log.cleanup(days_to_keep=2)
                 self.update_worker_status("CLEANUP", result="성공", last_task="로그 파일 정리 완료")
+                self.update_worker_status("UPDATE", result="성공", last_task="시스템 상태 체크 완료")
             except Exception as e:
                 log_error(f"Maintenance Loop Error: {e}")
             finally:

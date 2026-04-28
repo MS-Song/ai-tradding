@@ -121,6 +121,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self.analysis_interval = 20
         self.analysis_status_msg = "초기화 중..."
         self.current_action = "대기중"
+        self._ai_disabled_logged = False # [추가] AI 비활성 로그 중복 방지 플래그
 
         self.state_mgr = StateManager(self, "trading_state.json")
         self.risk_mgr = RiskManager(api, v_cfg.get("risk_config", {}))

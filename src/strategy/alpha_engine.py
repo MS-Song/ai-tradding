@@ -39,11 +39,15 @@ class VibeAlphaEngine:
             is_hot = any(x['code'] == code for x in hot_raw)
             candidates.append((item, my_theme, is_hot))
 
+        # [최적화] 모든 후보 종목의 실시간 데이터를 벌크로 미리 가져와 캐시 채우기
+        all_candidate_codes = [c[0]['code'] for c in candidates]
+        self.api.get_naver_stocks_realtime(all_candidate_codes)
+        
         # 상세 데이터 수집 및 1차 점수 산정 (병렬 처리)
         current = 0
         total = len(candidates)
         lock = threading.Lock()
-
+        
         stocks_pool, etfs_pool = [], []
 
         def fetch_detail_and_score(cand):
@@ -79,8 +83,8 @@ class VibeAlphaEngine:
                     with lock: etfs_pool.append(res)
                     if on_item_found: on_item_found(res)
 
-        # 병렬 처리로 지표와 1차 점수 수집
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        # 병렬 처리로 지표와 1차 점수 수집 (워커 수 대폭 증가: 20 -> 30)
+        with ThreadPoolExecutor(max_workers=30) as executor:
             list(executor.map(fetch_detail_and_score, candidates))
 
         # 1차 필터링된 종목 중 Top N개 선별
@@ -101,7 +105,7 @@ class VibeAlphaEngine:
                     if pos > 0: stock_item['reason'] = f"뉴스 모멘텀 포착 | {stock_item['reason']}"
                     if pos > 3: stock_item['is_gem'] = True
 
-            with ThreadPoolExecutor(max_workers=5) as executor:
+            with ThreadPoolExecutor(max_workers=10) as executor:
                 list(executor.map(apply_sentiment, top_stocks))
 
         # 최종 추천 리스트 확정 (총 10개, ETF가 부족할 경우 종목으로 채움)
