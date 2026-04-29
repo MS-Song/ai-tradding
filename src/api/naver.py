@@ -245,3 +245,26 @@ class NaverAPIClient(BaseAPI):
                         except: continue
             return theme_map
         except: return {}
+    def get_naver_minute_chart(self, code: str, count: int = 40) -> List[dict]:
+        """네이버 F-Chart XML API를 통해 분봉 데이터를 가져옵니다. (Fallback용)"""
+        try:
+            url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=minute&count={count}&requestType=0"
+            res = requests.get(url, timeout=5)
+            if res.status_code != 200: return []
+            
+            import re
+            pattern = re.compile(r'<item data="([^"]+)" />')
+            items = pattern.findall(res.text)
+            
+            candles = []
+            for item in items:
+                parts = item.split('|')
+                if len(parts) >= 6:
+                    candles.append({
+                        "stck_cntg_hour": parts[0][-6:], 
+                        "stck_prpr": parts[4], 
+                        "stck_clpr": parts[4]
+                    })
+            return list(reversed(candles))
+        except:
+            return []

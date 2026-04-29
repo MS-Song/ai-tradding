@@ -115,7 +115,7 @@ class TradingLogManager:
         
         threading.Thread(target=_do, args=(data_to_save,), daemon=True, name="LogSaveWorker").start()
 
-    def log_trade(self, trade_type, code, name, price, qty, memo="", profit=0.0, model_id=""):
+    def log_trade(self, trade_type, code, name, price, qty, memo="", profit=0.0, model_id="", ma_20=0.0):
         """실제 체결 데이터를 기록 (TRADE). 매도 시 profit(수익금) 포함 가능"""
         try:
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -129,6 +129,10 @@ class TradingLogManager:
             f_price = float(price)
             if not math.isfinite(f_price):
                 f_price = 0.0
+            
+            f_ma = float(ma_20)
+            if not math.isfinite(f_ma):
+                f_ma = 0.0
 
             log_entry = {
                 "type": trade_type, 
@@ -139,7 +143,8 @@ class TradingLogManager:
                 "qty": int(qty), 
                 "memo": memo,
                 "profit": f_profit,
-                "model_id": model_id
+                "model_id": model_id,
+                "ma_20": f_ma
             }
             with self.lock:
                 self.data["trades"].insert(0, log_entry) # 최신순
@@ -251,6 +256,23 @@ class TradingLogManager:
                     elif "AI자율매수" in t_type:
                         amounts["ALGO"] += amt
         return amounts
+
+    def get_daily_trading_fees(self, fee_rate=0.00015, tax_rate=0.0018):
+        """금일 발생한 거래에 대한 예상 수수료 및 세금 합산"""
+        today = datetime.now().strftime('%Y-%m-%d')
+        total_fees = 0.0
+        with self.lock:
+            for t in self.data.get("trades", []):
+                if t["time"].startswith(today):
+                    amt = float(t.get("price", 0)) * int(t.get("qty", 0))
+                    t_type = t.get("type", "")
+                    # 매수 시 수수료 (0.015% 가정)
+                    if "매수" in t_type:
+                        total_fees += amt * fee_rate
+                    # 매도 시 수수료 + 세금 (0.195% 가정)
+                    elif any(x in t_type for x in ["매도", "익절", "손절", "청산", "확정", "교체매도"]):
+                        total_fees += amt * (fee_rate + tax_rate)
+        return int(total_fees)
 
     def get_top_profitable_stocks(self, limit=10):
         """누적 수익금이 0원 초과인 상위 종목 집계 (모델별 상세 포함)"""

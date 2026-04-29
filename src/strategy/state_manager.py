@@ -87,7 +87,8 @@ class StateManager:
                     "replacement_logs": s.replacement_logs,
                     "last_rejected_date": today,
                     "start_day_asset": s.start_day_asset,
-                    "last_asset_date": s.last_asset_date
+                    "last_asset_date": s.last_asset_date,
+                    "notified_dates": getattr(s, 'state', None).notified_dates if getattr(s, 'state', None) else {}
                 }
                 self._atomic_write(self.state_file, data)
             except Exception as e:
@@ -137,6 +138,8 @@ class StateManager:
                     s.start_day_asset = d.get("start_day_asset", 0.0)
                     s.last_asset_date = d.get("last_asset_date", "")
                     s.replacement_logs = d.get("replacement_logs", [])
+                    if hasattr(s, 'state') and s.state is not None:
+                        s.state.notified_dates = d.get("notified_dates", {})
             except Exception as e:
                 log_error(f"상태 파일 로드 실패: {e}")
 

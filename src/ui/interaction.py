@@ -767,7 +767,10 @@ def draw_performance_report(strategy, dm):
                 # [개선] 오늘 매수평단가가 아닌, 계좌 실제 평단가(Cost Basis)를 우선 표시하여 사용자 혼선 방지
                 price = info['avg_price'] 
                 cur = get_current_price(code)
-                ma_20 = dm.ma_20_cache.get(code, 0)
+                ma_20 = info.get('ma_20', 0)
+                # 기록된 값이 없으면 실시간 캐시에서 fallback (기존 로그 호환용)
+                if ma_20 == 0:
+                    ma_20 = dm.ma_20_cache.get(str(code).strip(), 0)
                 
                 # 손익 계산
                 if is_buy:
@@ -818,7 +821,7 @@ def draw_performance_report(strategy, dm):
                         if h.get('pdno') == c:
                             acc_avg = float(h.get('pchs_avg_pric', 0))
                             break
-                    buy_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "type": t['type'], "acc_avg": acc_avg}
+                    buy_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "type": t['type'], "acc_avg": acc_avg, "ma_20": t.get('ma_20', 0)}
                 
                 buy_summary[c]["total_amt"] += p * q; buy_summary[c]["total_qty"] += q
                 # 계좌 정보가 있으면 계좌 평단 사용, 없으면 오늘 매수 평균 사용
@@ -831,7 +834,7 @@ def draw_performance_report(strategy, dm):
             for t in sell_trades:
                 c = t['code']; q = int(t['qty']); p = float(t['price']); pr = float(t.get('profit', 0))
                 if c not in sell_summary: 
-                    sell_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "total_pnl": 0, "type": t['type']}
+                    sell_summary[c] = {"name": t['name'], "code": c, "total_amt": 0, "total_qty": 0, "total_pnl": 0, "type": t['type'], "ma_20": t.get('ma_20', 0)}
                 sell_summary[c]["total_amt"] += p * q; sell_summary[c]["total_qty"] += q; sell_summary[c]["total_pnl"] += pr; sell_summary[c]["avg_price"] = sell_summary[c]["total_amt"] / sell_summary[c]["total_qty"]
 
             # [추가] 매도된 종목 중 오늘 매수 이력이 있는 경우, 매수 섹션의 평단가도 실현 손익 기준으로 보정 (이미 잔고에 없을 때)
@@ -1096,7 +1099,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             if success:
                                 curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
                                 profit = (curr_p - float(h.get('pchs_avg_pric', 0))) * qty
-                                trading_log.log_trade("수동매도", code, name, curr_p, qty, f"수동 매도 ({p_disp})", profit=profit, model_id="수동")
+                                trading_log.log_trade("수동매도", code, name, curr_p, qty, f"수동 매도 ({p_disp})", profit=profit, model_id="수동", ma_20=dm.ma_20_cache.get(code, 0.0))
                                 dm.add_trading_log(f"✅ [{name}] {qty}주 매도 완료 ({p_disp})")
                                 dm.show_status(f"✅ 매도 성공: {name}"); dm.update_all_data(dm.api.auth.is_virtual, force=True)
                             else:
@@ -1163,7 +1166,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             success, msg = api.order_market(code, qty, True, price)
                             if success:
                                 curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
-                                trading_log.log_trade("수동매수", code, buy_name, curr_p, qty, f"수동 매수 ({p_disp})", model_id="수동")
+                                trading_log.log_trade("수동매수", code, buy_name, curr_p, qty, f"수동 매수 ({p_disp})", model_id="수동", ma_20=dm.ma_20_cache.get(code, 0.0))
                                 dm.add_trading_log(f"✅ [{buy_name}] {qty}주 매수 완료 ({p_disp})")
                                 dm.show_status(f"✅ 매수 성공: {buy_name}")
                                 if is_new:

@@ -8,6 +8,8 @@ from src.data.state import TradingState
 from src.workers.market_worker import MarketWorker
 from src.workers.sync_worker import DataSyncWorker
 from src.workers.trade_worker import TradeWorker
+from src.workers.report_worker import ReportWorker
+from src.workers.retrospective_worker import RetrospectiveWorker
 from src.utils.notifier import TelegramNotifier
 from src.logger import log_error, cleanup_text_log, trading_log
 
@@ -18,6 +20,8 @@ class DataManager:
         
         # --- 핵심 상태 관리 객체 (Phase 1) ---
         self.state = TradingState()
+        self.strategy.state = self.state # [추가] StateManager가 notified_dates 등에 접근할 수 있도록 주입
+        self.strategy.state_mgr.load_all_states() # [추가] state 주입 후 다시 로드하여 notified_dates 등 복구
         
         # --- 알림 엔진 초기화 ---
         self.notifier = TelegramNotifier(dm=self)
@@ -27,7 +31,9 @@ class DataManager:
         self.workers = {
             "MARKET": MarketWorker(self.state, api, strategy, self.notifier),
             "DATA": DataSyncWorker(self.state, api, strategy),
-            "TRADE": TradeWorker(self.state, api, strategy)
+            "TRADE": TradeWorker(self.state, api, strategy),
+            "REPORT": ReportWorker(self.state, strategy, self.notifier),
+            "RETRO": RetrospectiveWorker(self.state, strategy, self.notifier)
         }
         
         # --- 하위 호환용 락 (기존 코드에서 참조함) ---
@@ -230,10 +236,12 @@ class DataManager:
 
     # --- 호환성용 더미/대행 메서드 ---
     def update_all_data(self, is_virtual, force=False, lite=False):
-        # 기존에는 수동 동기화 요청 시 사용됨. 워커가 활성화되어 있으므로
-        # 여기서는 즉시 갱신이 필요할 경우 워커의 인터벌을 조정하거나 직접 호출 가능.
-        # 일단은 워커가 1초 주기로 돌고 있으므로 패스.
-        pass
+        """수동 매매 등으로 인해 즉시 데이터 갱신이 필요할 때 호출"""
+        if force:
+            worker = self.workers.get("DATA")
+            if worker and hasattr(worker, "force_sync"):
+                worker.force_sync = True
+                self.show_status("잔고 동기화 요청됨...")
 
     def notify_latest_trades(self):
         """TradeWorker에서 호출하거나 여기서 별도 처리"""

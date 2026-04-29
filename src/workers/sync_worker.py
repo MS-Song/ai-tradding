@@ -2,7 +2,7 @@ import time
 import concurrent.futures
 from datetime import datetime
 from src.workers.base import BaseWorker
-from src.logger import trading_log, log_error
+from src.logger import trading_log, log_error, logger
 
 class DataSyncWorker(BaseWorker):
     def __init__(self, state, api, strategy):
@@ -12,18 +12,20 @@ class DataSyncWorker(BaseWorker):
         self.last_heavy_sync = 0
         self.first_run = True
         self.last_balance_sync = 0
+        self.force_sync = False # [추가] 즉시 동기화 요청 플래그
 
     def run(self):
         curr_t = time.time()
         
-        # 1. 잔고 및 자산 정보 패치 (KIS API 호출) - 5초 주기로 제한 (사용자 요청 반영)
-        should_fetch_balance = curr_t - getattr(self, "last_balance_sync", 0) > 5.0 or self.first_run
+        # 1. 잔고 및 자산 정보 패치 (KIS API 호출) - 5초 주기로 제한 (단, force_sync 시 즉시 실행)
+        should_fetch_balance = curr_t - getattr(self, "last_balance_sync", 0) > 5.0 or self.first_run or self.force_sync
         
         try:
             if should_fetch_balance:
-                self.set_busy("잔고 동기화")
+                self.state.update_worker_status("ASSET", status="잔고 동기화")
                 h, a = self.api.get_full_balance()
                 self.last_balance_sync = curr_t
+                self.force_sync = False # 플래그 초기화
                 
                 if h or a.get('total_asset', 0) > 0:
                     self._update_asset_metrics(a)
@@ -34,7 +36,7 @@ class DataSyncWorker(BaseWorker):
                         if a.get('total_asset', 0) > 0:
                             self.strategy.last_known_asset = float(a['total_asset'])
                     
-                    self.state.update_worker_status("ASSET", result="성공", last_task="계좌 및 평가액 동기화 완료", friendly_name="ASSET")
+                    self.state.update_worker_status("ASSET", status="대기 중 (IDLE)", result="성공", last_task="계좌 및 평가액 동기화 완료")
             
             # 2. 관련 종목 시세 동기화 (네이버 벌크 API 활용 - 이건 Rate Limit 없음)
             # 잔고 데이터가 없는 초기 상태가 아니라면 항상 실행
@@ -46,7 +48,7 @@ class DataSyncWorker(BaseWorker):
                 
         except Exception as e:
             if "초당 거래건수를 초과" in str(e):
-                self.state.update_worker_status("ASSET", result="대기", last_task="API 속도 제한으로 대기 중")
+                self.state.update_worker_status("ASSET", status="대기 중 (IDLE)", result="대기", last_task="API 속도 제한으로 대기 중")
             else:
                 log_error(f"DataSyncWorker Run Error: {e}")
             self.set_result("실패", last_task=f"동기화 오류: {e}")
@@ -59,8 +61,7 @@ class DataSyncWorker(BaseWorker):
         # 파일에서 로드된 과거의 잘못된 기준점(stale data)을 방지하기 위해 프로그램 시작 후 첫 실행 시 강제 재설정
         is_first_init = (
             self.strategy.start_day_asset <= 0 or 
-            self.strategy.last_asset_date != today_str or
-            getattr(self, "first_run", True)
+            self.strategy.last_asset_date != today_str
         )
         
         if is_first_init:
@@ -86,37 +87,47 @@ class DataSyncWorker(BaseWorker):
             a['daily_pnl_rate'] = (a['daily_pnl_amt'] / self.strategy.start_day_asset * 100)
 
     def _sync_stock_prices(self, holdings, curr_t):
-        recent_codes = set()
-        with trading_log.lock:
-            now_dt = datetime.now()
-            for t in trading_log.data.get("trades", []):
-                try:
-                    t_dt = datetime.strptime(t["time"], '%Y-%m-%d %H:%M:%S')
-                    if (now_dt - t_dt).total_seconds() < 600:
-                        recent_codes.add(t["code"])
-                    else: break
-                except: continue
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        all_codes = set([s.get('pdno', '').strip() for s in holdings if s.get('pdno')])
         
-        all_codes = list(set([s.get('pdno') for s in holdings]) | recent_codes)
+        with trading_log.lock:
+            for t in trading_log.data.get("trades", []):
+                if t.get("time", "").startswith(today_str):
+                    all_codes.add(t["code"].strip())
+        
+        all_codes = list(all_codes)
         if not all_codes: return
 
         bulk_data = self.api.get_naver_stocks_realtime(all_codes)
         is_heavy_cycle = (curr_t - self.last_heavy_sync > 60)
+        if is_heavy_cycle:
+            self.last_heavy_sync = curr_t
+        if is_heavy_cycle:
+            self.last_heavy_sync = curr_t
         
         temp_info = {}
         
         def fetch_stock_task(code):
             task_id = f"STOCK_{code}"
+            n_data = bulk_data.get(code)
+            # 보유 종목 여부 확인 (미보유 종목은 실시간 시세만 갱신하고 무거운 분석은 제외)
+            is_holding = any(s.get('pdno') == code for s in holdings)
+            
             # [수정] 캐시된 이름이 있으면 즉시 표시하여 'STOCK_' 코드 노출 최소화
             cached_name = self.state.stock_info.get(code, {}).get('name')
             f_name = f"{code}_{cached_name}" if cached_name else task_id
-            self.state.update_worker_status(task_id, status="분석 중", friendly_name=f_name)
+            
+            # 보유 종목일 때만 UI 워커 목록에 표시
+            if is_holding:
+                self.state.update_worker_status(task_id, status="분석 중", friendly_name=f_name)
             
             # 종목명 찾기 (우선순위: 잔고명 -> Naver 실시간명 -> KIS 상세명 -> 기존 캐시명)
             s_name = next((s.get('prdt_name') for s in holdings if s.get('pdno')==code), None)
             
             p_data = None
-            if is_heavy_cycle or code not in self.state.stock_info:
+            # [최적화] 보유 종목일 때만 KIS 상세 시세(Hoga 등) 조회
+            if is_holding and (is_heavy_cycle or code not in self.state.stock_info):
+                time.sleep(0.1) # [추가] API 속도 제한 방지용 미세 지연
                 p_data = self.api.get_inquire_price(code)
             
             if n_data:
@@ -142,44 +153,69 @@ class DataSyncWorker(BaseWorker):
             if not s_name: 
                 s_name = self.state.stock_info.get(code, {}).get('name')
                 if not s_name or s_name == "Unknown":
-                    s_name = detail.get('name', code)
+                    # 마지막 수단: KIS 데이터나 캐시된 정보 활용
+                    if p_data: s_name = p_data.get('name', code)
+                    else: s_name = code
 
-            # [수정] 분석 완료된 명칭으로 최종 업데이트
-            f_name = f"{code}_{s_name}" if s_name else task_id
-            self.state.update_worker_status(task_id, friendly_name=f_name)
+            # [수정] 분석 완료된 명칭으로 최종 업데이트 (보유 종목만)
+            if is_holding:
+                f_name = f"{code}_{s_name}" if s_name else task_id
+                self.state.update_worker_status(task_id, friendly_name=f_name)
 
-            # MA20 계산
+            # MA20 계산 (보유 종목에 대해서만 수행하여 리소스 절약)
+            # 매도된 종목은 매매 시점에 이미 기록된 MA20 값을 사용하므로 실시간 동기화 제외
             ma_20 = self.state.ma_20_cache.get(code, 0.0)
-            if ma_20 == 0 or is_heavy_cycle:
+            if is_holding and (ma_20 == 0 or is_heavy_cycle):
                 try:
+                    time.sleep(0.15) # API 속도 제한 방지용 미세 지연
                     m_candles = self.api.get_minute_chart_price(code)
+                    
+                    # [Fallback] KIS 실패 시 Naver로 시도
+                    if not m_candles:
+                        m_candles = self.api.get_naver_minute_chart(code)
+                        
                     if m_candles:
                         closes = [float(str(c.get('stck_prpr') or c.get('stck_clpr')).strip()) for c in m_candles if (c.get('stck_prpr') or c.get('stck_clpr'))]
-                        ma_vals = self.strategy.indicator_eng.calculate_sma(closes, [20])
-                        ma_20 = ma_vals.get("sma_20", 0.0)
-                except: pass
+                        if len(closes) >= 20:
+                            ma_vals = self.strategy.indicator_eng.calculate_sma(closes, [20])
+                            ma_20 = ma_vals.get("sma_20", 0.0)
+                        else:
+                            # 데이터 부족은 에러가 아닌 정보성 로그로 처리
+                            if is_heavy_cycle: logger.debug(f"MA20 데이터 부족 ({code}): {len(closes)}개")
+                    else:
+                        # 빈 데이터는 에러가 아닌 정보성 로그로 처리하여 error.log 비대화 방지
+                        if is_heavy_cycle: logger.debug(f"MA20 차트 데이터 수신 실패 (Empty) ({code})")
+                except Exception as e:
+                    logger.debug(f"MA20 Calculation Exception ({code}): {e}")
+                    pass
 
             return code, {
-                "tp": tp, "sl": sl, "spike": spike, "day_val": day_val, "day_rate": day_rate,
+                "tp": tp if is_holding else 0, "sl": sl if is_holding else 0, "spike": spike if is_holding else False, 
+                "day_val": day_val, "day_rate": day_rate,
                 "ma_20": ma_20, "price": curr_p, "prev_vol": p_vol, "name": s_name
-            }, task_id, ma_20
+            }, task_id, ma_20, is_holding
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        # [최적화] 모의투자는 Rate Limit(1.5s)이 엄격하므로 병렬도를 1로 제한하여 순차 처리 보장
+        is_v = getattr(self.api.auth, 'is_virtual', True)
+        m_workers = 1 if is_v else 8
+        with concurrent.futures.ThreadPoolExecutor(max_workers=m_workers) as executor:
             futures = [executor.submit(fetch_stock_task, c) for c in all_codes]
             for f in concurrent.futures.as_completed(futures):
                 try:
-                    c, info, tid, ma = f.result()
+                    c, info, tid, ma, is_h = f.result()
                     temp_info[c] = info
                     with self.state.lock:
-                        # self.state.worker_names[tid] = f"{c}_{info['name']}"  # 워커명 유지 요청에 따라 제거
                         if ma > 0: self.state.ma_20_cache[c] = ma
-                    self.state.update_worker_status(tid, status="IDLE", result="성공", last_task=f"{info['name']} 동기화 완료", friendly_name=f"{c}_{info['name']}")
+                    
+                    if is_h:
+                        self.state.update_worker_status(tid, status="대기 중 (IDLE)", result="성공", last_task=f"{info['name']} 동기화 완료", friendly_name=f"{c}_{info['name']}")
                 except: pass
 
         # 3.5 [신규] 보유 종목이 아닌 STOCK_ 워커 정리 (상태 제거)
         if self.state.holdings_fetched: # 잔고 데이터가 로드된 상태에서만 정리 수행
             with self.state.lock:
-                active_stock_ids = [f"STOCK_{c}" for c in all_codes]
+                holding_codes = [s.get('pdno') for s in holdings if s.get('pdno')]
+                active_stock_ids = [f"STOCK_{c}" for c in holding_codes]
                 for w_id in list(self.state.last_times.keys()):
                     if w_id.upper().startswith("STOCK_") and w_id.upper() not in active_stock_ids:
                         # 해당 워커의 모든 흔적 제거

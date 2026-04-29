@@ -295,14 +295,18 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         # 정렬 폭 정의 (L:라벨, C:컨텐츠)
         L1, C1, L2, C2 = 8, 52, 8, 55
 
-        # Line 1: ASSET & RISK 통합 (사용자 피드백 반영: 순서 및 레이아웃 최적화)
-        label = align_kr(" ASSET", L1)
+        # [v1.6.3] 컬럼 폭 최적화 (가용 줄이고 BEAR/BULL 늘림) 및 가독성 개선
+        # W1:총자산, W2:가용/AI, W3:주식/BEAR, W4:일일/BULL, W5:실현/리스크
+        W1, W2, W3, W4, W5 = 30, 16, 30, 30, 32
+
+        # Line 1: ASSET & COSTS
+        label_asset = align_kr(" ASSET", L1)
         seed = getattr(strategy, "base_seed_money", 0)
         if seed > 0:
             c_prof = tot_eval - seed
             c_rt = (c_prof / seed) * 100
             c_color = "\033[91m" if c_prof > 0 else "\033[94m" if c_prof < 0 else "\033[0m"
-            tot_info = f"총자산 {tot_eval:,.0f} ({c_color}{c_rt:+.2f}%\033[0m) (입금: {seed:,.0f})"
+            tot_info = f"총자산 {tot_eval:,.0f} ({c_color}{c_rt:+.2f}%\033[0m)"
         else:
             tot_info = f"총자산 {tot_eval:,.0f} ({tot_color}{tot_rt:+.2f}%\033[0m)"
             
@@ -312,40 +316,41 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         pnl_color = "\033[91m" if pnl_rate > 0 else ("\033[94m" if pnl_rate < 0 else "\033[93m")
         real_color = "\033[91m" if realized_p > 0 else ("\033[94m" if realized_p < 0 else "\033[93m")
         
+        trading_fee = trading_log.get_daily_trading_fees()
+        ai_costs = dm.cached_ai_costs
+        total_ai_cost = sum(ai_costs.values())
+        
+        d0_c = asset.get('d0_cash', 0)
+        cash_info = f"가용: {d0_c:,.0f}"
+        stk_info = f"주식: {stk_eval:,.0f}"
+        daily_info = f"일일: {pnl_color}{pnl_amt:+,.0f} ({pnl_rate:+.2f}%)\033[0m"
+        realized_info = f"실현: {real_color}{realized_p:+,.0f}\033[0m"
+        
+        # [v1.6.2] 비용 2줄 분리 (짤림 방지 및 색상 간섭 해결)
+        t_cost_info = f"거래비용: \033[90m-{trading_fee:,.0f}\033[0m"
+        line_asset = (f"{label_asset} | {align_kr(tot_info, W1)} | {align_kr(cash_info, W2)} | "
+                      f"{align_kr(stk_info, W3)} | {align_kr(daily_info, W4)} | "
+                      f"{align_kr(realized_info, W5)} | {t_cost_info}\033[0m")
+        buf.write(align_kr(line_asset, tw) + "\n")
+
+        # Line 2: SETUP & RISK
+        label_setup = align_kr(" SETUP", L1)
+        strat_info = f"TP:\033[91m{tp_cur:+.1f}%\033[0m SL:\033[94m{sl_cur:+.1f}%\033[0m"
+        # [] 제거 및 한도 추가
+        algo_info = f"AI: {a_cfg.get('amount_per_trade')/10000:,.0f}만/{a_cfg.get('max_investment_per_stock')/10000:,.0f}만"
+        bear_info = f"BEAR:[{auto_st_bear}] {b_cfg.get('min_loss_to_buy'):+.1f}% {b_cfg.get('average_down_amount')/10000:,.0f}만/{b_cfg.get('max_investment_per_stock')/10000:,.0f}만"
+        bull_info = f"BULL:[{auto_st_bull}] {u_cfg.get('min_profit_to_pyramid'):+.1f}% {u_cfg.get('average_down_amount')/10000:,.0f}만/{u_cfg.get('max_investment_per_stock')/10000:,.0f}만"
+        
         halted = strategy.risk_mgr.is_halted
         risk_st = "\033[41;97m!HALTED!\033[0m" if halted else "\033[92mNORMAL\033[0m"
-        
-        d0_c, d2_c = asset.get('d0_cash', 0), asset.get('d2_cash', 0)
-        d2_color = "\033[91m" if d2_c < 0 else ("\033[94m" if d0_c != d2_c else "")
-        cash_info = f"가용(D+0): {d0_c:,.0f} | 정산(D+2): {d2_color}{d2_c:,.0f}\033[0m"
-        stk_info = f"주식: {stk_eval:,.0f}"
-        
-        # 일일: 전체 변동(원금 대비 ROI) + 실현 손익 병기
-        daily_info = f"{pnl_color}{pnl_amt:+,.0f}원 ({pnl_rate:+.2f}%)\033[0m | 실현: {real_color}{realized_p:+,.0f}원\033[0m"
-        
-        # [순서 변경] 총자산 -> 예수금 -> 주식 -> 일일 -> 리스크
         limit_val = strategy.risk_mgr.max_daily_loss_rate
-        risk_active_info = f"{risk_st} (한도:-{limit_val}%)"
-        line_combined = f"{label} | {tot_info} | {cash_info} | {stk_info} | 일일: {daily_info} | 리스크: {risk_active_info}"
-        buf.write(align_kr(line_combined, tw) + "\n")
-
-        # Line 2: STRAT + ALGO
-        strat_label = align_kr(f"{st_mark}STRAT", L1)
-        strat_info = f"TP:\033[91m{strategy.base_tp:+.1f}%\033[0m(\033[91m{tp_cur:+.1f}%\033[0m) SL:\033[94m{strategy.base_sl:+.1f}%\033[0m(\033[94m{sl_cur:+.1f}%\033[0m)"
-        algo_label = align_kr(f"{al_mark}ALGO", L2)
-        algo_info = f"{a_cfg.get('amount_per_trade'):,}원/{a_cfg.get('max_investment_per_stock'):,}원 (누적:{daily_amts['ALGO']:,.0f})"
-        costs = dm.cached_ai_costs
-        cost_info = f" | AI 비용(추정): \033[96mgemini({costs.get('gemini',0):,.0f}원) groq({costs.get('groq',0):,.0f}원)\033[0m"
-        line_strat = f"{strat_label} | {align_kr(strat_info, C1)} | {algo_label} | {algo_info}{cost_info}"
-        buf.write(align_kr(line_strat, tw) + "\n")
-
-        # Line 3: BEAR + BULL
-        bear_label = align_kr(f"{be_mark}BEAR", L1)
-        bear_info = f"[{auto_st_bear}] TRG:\033[94m{b_cfg.get('min_loss_to_buy'):+.1f}%\033[0m {b_cfg.get('average_down_amount'):,}원/{b_cfg.get('max_investment_per_stock'):,}원 (누적:{daily_amts['BEAR']:,.0f})"
-        bull_label = align_kr(f"{bu_mark}BULL", L2)
-        bull_info = f"[{auto_st_bull}] TRG:\033[91m+{u_cfg.get('min_profit_to_pyramid'):.1f}%\033[0m {u_cfg.get('average_down_amount'):,}원/{u_cfg.get('max_investment_per_stock'):,}원 (누적:{daily_amts['BULL']:,.0f})"
-        line_bear = f"{bear_label} | {align_kr(bear_info, C1)} | {bull_label} | {bull_info}"
-        buf.write(align_kr(line_bear, tw) + "\n")
+        risk_info = f"리스크: {risk_st} (한도:-{limit_val}%)"
+        
+        ai_cost_info = f"AI 비용: \033[90m-{total_ai_cost:,.0f}\033[0m"
+        line_setup = (f"{label_setup} | {align_kr(strat_info, W1)} | {align_kr(algo_info, W2)} | "
+                      f"{align_kr(bear_info, W3)} | {align_kr(bull_info, W4)} | "
+                      f"{align_kr(risk_info, W5)} | {ai_cost_info}\033[0m")
+        buf.write(align_kr(line_setup, tw) + "\n")
         buf.write("-" * tw + "\n")
 
         eff_w = tw - 4; w = [max(4, int(eff_w * 0.03)), max(5, int(eff_w * 0.04)), max(15, int(eff_w * 0.15)), max(10, int(eff_w * 0.09)), max(14, int(eff_w * 0.12)), max(10, int(eff_w * 0.08)), max(8, int(eff_w * 0.07)), max(10, int(eff_w * 0.08)), max(18, int(eff_w * 0.12)), max(10, int(eff_w * 0.07)), max(12, int(eff_w * 0.10)), max(6, int(eff_w * 0.05))]
@@ -826,7 +831,8 @@ def draw_trading_logs(strategy, dm):
                 "ASSET": "계좌 정보 수집", "BILLING": "API 비용 정산", "UPDATE": "최신 버전 확인",
                 "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 알림", "AI_ENGINE": "AI 전략 엔진",
                 "THEME": "테마 정보 수집", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진", 
-                "TRADE": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링"
+                "TRADE": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링",
+                "REPORT": "정기 리포트 발송"
             }
             all_workers = set(worker_desc.keys()); all_workers.update([k.upper() for k in last_times.keys()]); all_workers.update(worker_status.keys())
             

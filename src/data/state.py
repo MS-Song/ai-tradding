@@ -24,7 +24,6 @@ class TradingState:
         }
         self.stock_info: Dict[str, dict] = {} # 종목별 상세 캐시
         self.ma_20_cache: Dict[str, float] = {} # 종목별 20분봉 MA
-        
         # --- 시황 및 분석 데이터 ---
         self.market_data: Dict[str, Any] = {}
         self.vibe: str = "Neutral"
@@ -71,6 +70,11 @@ class TradingState:
             "is_downloading": False, "progress": 0
         }
         self.busy_anim_step: int = 0
+
+    @property
+    def asset_info(self):
+        """하위 호환용: asset 딕셔너리 반환"""
+        return self.asset
 
     # --- 실시간 상태 업데이트 (Thread-Safe) ---
     def update_worker_status(self, worker: str, status: Optional[str] = None, 

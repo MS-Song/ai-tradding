@@ -58,7 +58,7 @@ class ExecutionMixin:
                                 self._last_closing_bet_date = today
                                 results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
                                 m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else ""
-                                trading_log.log_trade("P4종가매수", code, name, price, qty, "AI 추천 기반 종가 베팅", model_id=m_id)
+                                trading_log.log_trade("P4종가매수", code, name, price, qty, "AI 추천 기반 종가 베팅", model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                                 trading_log.log_buy_reason(code, name, "AI 추천 기반 종가 베팅", model_id=m_id)
                                 self.record_buy(code, price)
                                 self.auto_assign_preset(code, name)
@@ -103,7 +103,7 @@ class ExecutionMixin:
                             p3_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원)")
                             m_id = self.last_buy_models.get(code, "")
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도", profit=p3_profit, model_id="TL/SP")
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 장마감 대비 분할매도", profit=p3_profit, model_id="TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                             self.record_sell(code, is_full_exit=False)
                             self._save_all_states()
                     elif skip_trade: p_strat['is_p3_processed'] = True
@@ -119,7 +119,7 @@ class ExecutionMixin:
                             p3_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원) | SL→본전(+0.2%)")
                             m_id = self.last_buy_models.get(code, "")
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도", profit=p3_profit, model_id="TL/SP")
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase3 표준종목 분할매도", profit=p3_profit, model_id="TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                             self.record_sell(code, is_full_exit=False)
                             self._save_all_states()
 
@@ -142,7 +142,7 @@ class ExecutionMixin:
                                     p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                                     results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
                                     m_id = self.last_buy_models.get(code, "")
-                                    trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit, model_id=m_id or "TL/SP")
+                                    trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "Phase4 비용절감 청산", profit=p4_profit, model_id=m_id or "TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                                     self.record_sell(code, is_full_exit=True)
                                     self._save_all_states()
                             except Exception as e: log_error(f"P4 청산 중 오류: {e}")
@@ -156,9 +156,10 @@ class ExecutionMixin:
                     if not is_processed and (time.time() - self.last_buy_times.get(code, 0)) >= 3600:
                         sell_qty = int(float(item.get('hldg_qty', 0)))
                         if sell_qty > 0:
-                            self._p4_ai_done_this_cycle = True
+                            # [Fix] 플래그를 try 블록 내부로 이동: 예외 발생 시 다음 종목이 AI 판단 기회를 얻도록
                             self.current_action = "P4 AI판단"
                             try:
+                                self._p4_ai_done_this_cycle = True  # AI 호출 시작 시점에 세팅
                                 # [추가] AI 실행 가능 시간 체크 (디버그 모드 제외)
                                 if is_ai_enabled_time() or getattr(self, "debug_mode", False):
                                     detail = self.api.get_naver_stock_detail(code)
@@ -172,10 +173,14 @@ class ExecutionMixin:
                                             msg = f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)"
                                             results.append(msg)
                                             m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else "AI"
-                                            trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit, model_id=m_id)
-                                            self.record_sell(code, is_full_exit=True)
-                                            trading_log.log_config(f"{msg} | 사유: {reason}")
-                                            self._save_all_states()
+                                            # [Fix] 로그·상태저장을 별도 try-except로 격리: 주문 성공 사실은 반드시 보존
+                                            try:
+                                                trading_log.log_trade("P4 AI청산", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, "P4 AI 장마감 청산", profit=p4_profit, model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
+                                                self.record_sell(code, is_full_exit=True)
+                                                trading_log.log_config(f"{msg} | 사유: {reason}")
+                                                self._save_all_states()
+                                            except Exception as log_e:
+                                                log_error(f"P4 AI청산 로그 기록 오류 [{code}|{item.get('prdt_name')}]: {log_e}")
                                     else:
                                         msg = f"🔒 P4 AI 유지: {item.get('prdt_name')}"
                                         results.append(msg)
@@ -183,7 +188,9 @@ class ExecutionMixin:
                                 else:
                                     self._p3_global_processed[p4_ai_key] = True
                                     logger.info(f"P4 AI판단 건너뜀 (Market closed/AI Disabled): {item.get('prdt_name')}")
-                            except Exception as e: log_error(f"P4 AI 매도 판단 오류: {e}")
+                            except Exception as e:
+                                log_error(f"P4 AI 매도 판단 오류 [{code}|{item.get('prdt_name')}]: {e}")
+                                self._p4_ai_done_this_cycle = False  # [Fix] 오류 시 플래그 리셋 → 다음 종목 AI 판단 허용
                             finally: self.current_action = "대기중"
 
             tp, sl, vol_spike = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
@@ -211,7 +218,7 @@ class ExecutionMixin:
                         is_full = action in ["손절", "긴급손절"]
                         self.record_sell(code, is_full_exit=is_full)
                         m_id = self.last_buy_models.get(code, "")
-                        trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id=m_id or "TL/SP")
+                        trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, action_reason or action, profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id=m_id or "TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                         self._save_all_states()
                         results.append(f"자동 {action}{f'({action_reason})' if action_reason else ''}: {item.get('prdt_name')} {sell_qty}주")
                     else:
@@ -261,7 +268,7 @@ class ExecutionMixin:
                             if success:
                                 self.record_buy(code, price)
                                 results.append(f"🤖 {b_type}: {name} {qty}주")
-                                trading_log.log_trade(f"자동{b_type}", code, name, price, qty, rec.get('reason', ''), model_id="TL/SP")
+                                trading_log.log_trade(f"자동{b_type}", code, name, price, qty, rec.get('reason', ''), model_id="TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                                 self._save_all_states()
 
             # (B) AI 자율 매수 집행 (신규 종목 진입)
@@ -304,9 +311,14 @@ class ExecutionMixin:
                         else:
                             continue
                             
-                    # [Step 3] 매수 집행
+                    # [Step 3] 매수 집행 준비
+                    price = float(rec.get('price', 0)) or self.api.get_inquire_price(code).get('price', 0)
+                    if price == 0: continue
+                    
                     amt = self.ai_config["amount_per_trade"]
-                    if cash < amt: continue
+                    # [개선] 1회 한도가 부족하더라도 가용 현금이 주가보다 크다면 최소 1주 매수 시도 허용
+                    if cash < amt and cash < price:
+                        continue # 1주도 살 수 없는 경우만 스킵
                     
                     # 교체 대상 전량 매도
                     if target_code:
@@ -316,7 +328,7 @@ class ExecutionMixin:
                             if success:
                                 curr_price = float(t_item.get('prpr', 0))
                                 profit = (curr_price - float(t_item.get('pchs_avg_pric', 0))) * int(float(t_item['hldg_qty']))
-                                trading_log.log_trade("교체매도", target_code, t_item['prdt_name'], curr_price, int(float(t_item['hldg_qty'])), f"교체대상 선정됨 (후보: {name})", profit=profit, model_id="AI")
+                                trading_log.log_trade("교체매도", target_code, t_item['prdt_name'], curr_price, int(float(t_item['hldg_qty'])), f"교체대상 선정됨 (후보: {name})", profit=profit, model_id="AI", ma_20=self.state.ma_20_cache.get(target_code, 0.0) if self.state else 0.0)
                                 self.replacement_logs.append({
                                     "time": now_str,
                                     "out_code": target_code,
@@ -326,12 +338,18 @@ class ExecutionMixin:
                                     "reason": f"AI 교체 판단 (후보: {name})"
                                 })
                                 self.record_sell(target_code, is_full_exit=True)
-                                results.append(f"🔄 교체매도: {t_item['prdt_name']}")
+                                results.append(f"🔄 교체매도: {t_item['prdt_name']} (-> {name})")
+                                # [추가] 매도 후 가용 현금 로컬 업데이트 (매수 qty 계산 및 안전 체크용)
+                                cash += (curr_price * int(float(t_item['hldg_qty'])))
                             else:
                                 results.append(f"❌ 교체매도 실패: {t_item['prdt_name']}")
                     
-                    price = float(rec.get('price', 0)) or self.api.get_inquire_price(code).get('price', 0)
-                    qty = math.floor(amt / price) if price > 0 else 0
+                    # 가용 현금 내에서 설정된 한도(amt)까지 최대한 매수
+                    qty = math.floor(min(amt, cash) / price) if price > 0 else 0
+                    # [개선] 한도(amt)보다 주가가 높더라도 현금이 있다면 최소 1주 매수 보장
+                    if qty == 0 and cash >= price:
+                        qty = 1
+                        
                     if qty > 0:
                         success, msg = self.api.order_market(code, qty, True)
                         if success:
@@ -339,9 +357,14 @@ class ExecutionMixin:
                             self.auto_assign_preset(code, name)
                             results.append(f"🚀 AI자율매수: {name} {qty}주")
                             m_id = self.last_buy_models.get(code, "AI")
-                            trading_log.log_trade("AI자율매수", code, name, price, qty, reason, model_id=m_id)
+                            trading_log.log_trade("AI자율매수", code, name, price, qty, reason, model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                             trading_log.log_buy_reason(code, name, reason, model_id=m_id)
                             self._save_all_states()
+                        else:
+                            # [추가] 매수 실패 시 구체적 사유 로깅 (교체 매매 추적용)
+                            err_msg = f"❌ AI자율매수 실패: {name}({code}) | 사유: {msg}"
+                            logger.error(err_msg)
+                            results.append(f"❌ {name} 매수 실패: {msg}")
                             
         return results
 
@@ -497,73 +520,80 @@ class ExecutionMixin:
         can_sell = market_open and (self.auto_sell_mode or not skip_trade)
         
         for code, opinion in review.items():
-            name = next((h['name'] for h in holdings_data if h['code'] == code), code)
-            action = opinion.get("action", "HOLD").upper()
-            reason = opinion.get("reason", "AI 분석 결과")
-            
-            if action == "SELL":
-                # [추가] 구매 후 최소 관망 시간(1시간) 체크 - 수수료 낭비 방지
-                # 단, 글로벌 패닉(is_panic) 또는 방어모드(Defensive)인 경우 리스크 관리 차원에서 즉시 매도 허용
-                last_buy_t = self.last_buy_times.get(code, 0)
-                holding_sec = time.time() - last_buy_t
-                is_emergency = self.analyzer.is_panic or self.current_market_vibe.upper() == "DEFENSIVE"
+            try:  # [Fix] 종목별 독립 try-except: 한 종목 오류가 전체 배치 루프를 중단시키지 않도록
+                name = next((h['name'] for h in holdings_data if h['code'] == code), code)
+                action = opinion.get("action", "HOLD").upper()
+                reason = opinion.get("reason", "AI 분석 결과")
                 
-                if last_buy_t > 0 and holding_sec < 3600 and not is_emergency:
-                    results.append(f"🛡️ 매도 보호: {name} (구매 후 {int(holding_sec/60)}분 경과 - 1시간 미만)")
-                    continue
-
-                # [매매 시도 기록] 실제 주문 전 AI의 결정을 먼저 로그에 남김
-                msg = f"🤖 AI 자율 매도 결정: {name}"
-                results.append(msg)
-                trading_log.log_config(f"{msg} | 사유: {reason}")
-                
-                if can_sell:
-                    # [즉시 매매 실행]
-                    h_item = next((h for h in holdings if h['pdno'] == code), None)
-                    if h_item:
-                        sell_qty = int(float(h_item.get('hldg_qty', 0)))
-                        dm_tag = self.ai_advisor.last_used_advisor.short_id if hasattr(self.ai_advisor, 'last_used_advisor') else "AI"
-                        
-                        success, res_data = self.api.order_market(code, sell_qty, False)
-                        if success:
-                            curr_price = float(h_item.get('prpr', 0))
-                            profit = (curr_price - float(h_item.get('pchs_avg_pric', 0))) * sell_qty
-                            results.append(f"🤖 AI 자율 매도: {name} ({int(profit):+,}원)")
-                            trading_log.log_trade("AI자율매도", code, name, curr_price, sell_qty, f"AI 선제적 매도: {reason}", profit=profit, model_id=dm_tag)
-                            self.record_sell(code, is_full_exit=True)
-                        else:
-                            trading_log.log_config(f"❌ AI 매도 주문 실패: [{code}]{name} | 사유: {res_data}")
-                            results.append(f"❌ AI 매도 실패: {name}")
-                else:
-                    # [장외 시간 또는 skip_trade] - AI 자율 모드인 경우 전략 수치를 타이트하게 조정하여 장 오픈 즉시 대응
-                    results.append(f"🔒 AI 매도 권고(장외): {name} | 사유: {reason}")
-                    trading_log.log_config(f"🤖 AI 매도 권고(장외): [{code}]{name} | 사유: {reason}")
+                if action == "SELL":
+                    # [추가] 구매 후 최소 관망 시간(1시간) 체크 - 수수료 낭비 방지
+                    # 단, 글로벌 패닉(is_panic) 또는 방어모드(Defensive)인 경우 리스크 관리 차원에서 즉시 매도 허용
+                    last_buy_t = self.last_buy_times.get(code, 0)
+                    holding_sec = time.time() - last_buy_t
+                    is_emergency = self.analyzer.is_panic or self.current_market_vibe.upper() == "DEFENSIVE"
                     
-                    if self.auto_sell_mode:
-                        # 다음 거래일 시가 부근에서 즉시 매도되도록 대응
+                    if last_buy_t > 0 and holding_sec < 3600 and not is_emergency:
+                        results.append(f"🛡️ 매도 보호: {name} (구매 후 {int(holding_sec/60)}분 경과 - 1시간 미만)")
+                        continue
+
+                    # [매매 시도 기록] 실제 주문 전 AI의 결정을 먼저 로그에 남김
+                    msg = f"🤖 AI 자율 매도 결정: {name}"
+                    results.append(msg)
+                    trading_log.log_config(f"{msg} | 사유: {reason}")
+                    
+                    if can_sell:
+                        # [즉시 매매 실행]
                         h_item = next((h for h in holdings if h['pdno'] == code), None)
-                        if h_item and code in self.preset_strategies:
-                            curr_rt = float(h_item.get('evlu_pfls_rt', 0))
-                            if curr_rt >= 0:
-                                # 수익권인 경우: 익절선을 현재 수익률보다 약간 낮게 설정하여 즉시 익절 유도
-                                self.preset_strategies[code]['tp'] = max(0.1, curr_rt - 0.1)
-                                self.preset_strategies[code]['sl'] = -0.1 # 손절 최소화
-                            else:
-                                # 손실권인 경우: 손절선을 현재 수익률보다 약간 높게(0에 가깝게) 설정하여 즉시 손절 유도
-                                self.preset_strategies[code]['sl'] = min(-0.1, curr_rt + 0.1)
-                                self.preset_strategies[code]['tp'] = 0.5 # 익절 기대 포기
+                        if h_item:
+                            sell_qty = int(float(h_item.get('hldg_qty', 0)))
+                            dm_tag = self.ai_advisor.last_used_advisor.short_id if hasattr(self.ai_advisor, 'last_used_advisor') else "AI"
                             
-                            self.preset_strategies[code]['reason'] = f"[장외매도준비] {reason}"
-                            self._save_all_states()
-                            results.append(f"🛡️ {name} 장전 매도 준비 완료 (타이트닝)")
-            
-            elif action == "HOLD":
-                # [전략 갱신]
-                pid = opinion.get("preset_id", "01")
-                tp, sl = float(opinion.get("tp", 5.0)), float(opinion.get("sl", -5.0))
-                lifetime = int(opinion.get("lifetime", 120))  # 유효 시간 추가
-                if self.assign_preset(code, pid, tp, sl, reason, name=name, lifetime_mins=lifetime):
-                    p_name = PRESET_STRATEGIES.get(pid, {}).get("name", pid)
-                    results.append(f"📝 전략 갱신: {name} [{p_name}] TP:{tp:+.1f}% SL:{sl:.1f}%")
+                            success, res_data = self.api.order_market(code, sell_qty, False)
+                            if success:
+                                curr_price = float(h_item.get('prpr', 0))
+                                profit = (curr_price - float(h_item.get('pchs_avg_pric', 0))) * sell_qty
+                                results.append(f"🤖 AI 자율 매도: {name} ({int(profit):+,}원)")
+                                # [Fix] 주문 성공 후 로그·상태저장을 별도 격리: 실패해도 주문 사실은 보존
+                                try:
+                                    trading_log.log_trade("AI자율매도", code, name, curr_price, sell_qty, f"AI 선제적 매도: {reason}", profit=profit, model_id=dm_tag, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
+                                    self.record_sell(code, is_full_exit=True)
+                                except Exception as log_e:
+                                    log_error(f"AI자율매도 로그 기록 오류 [{code}|{name}]: {log_e}")
+                            else:
+                                trading_log.log_config(f"❌ AI 매도 주문 실패: [{code}]{name} | 사유: {res_data}")
+                                results.append(f"❌ AI 매도 실패: {name}")
+                    else:
+                        # [장외 시간 또는 skip_trade] - AI 자율 모드인 경우 전략 수치를 타이트하게 조정하여 장 오픈 즉시 대응
+                        results.append(f"🔒 AI 매도 권고(장외): {name} | 사유: {reason}")
+                        trading_log.log_config(f"🤖 AI 매도 권고(장외): [{code}]{name} | 사유: {reason}")
+                        
+                        if self.auto_sell_mode:
+                            # 다음 거래일 시가 부근에서 즉시 매도되도록 대응
+                            h_item = next((h for h in holdings if h['pdno'] == code), None)
+                            if h_item and code in self.preset_strategies:
+                                curr_rt = float(h_item.get('evlu_pfls_rt', 0))
+                                if curr_rt >= 0:
+                                    # 수익권인 경우: 익절선을 현재 수익률보다 약간 낮게 설정하여 즉시 익절 유도
+                                    self.preset_strategies[code]['tp'] = max(0.1, curr_rt - 0.1)
+                                    self.preset_strategies[code]['sl'] = -0.1 # 손절 최소화
+                                else:
+                                    # 손실권인 경우: 손절선을 현재 수익률보다 약간 높게(0에 가깝게) 설정하여 즉시 손절 유도
+                                    self.preset_strategies[code]['sl'] = min(-0.1, curr_rt + 0.1)
+                                    self.preset_strategies[code]['tp'] = 0.5 # 익절 기대 포기
+                                
+                                self.preset_strategies[code]['reason'] = f"[장외매도준비] {reason}"
+                                self._save_all_states()
+                                results.append(f"🛡️ {name} 장전 매도 준비 완료 (타이트닝)")
+                
+                elif action == "HOLD":
+                    # [전략 갱신]
+                    pid = opinion.get("preset_id", "01")
+                    tp, sl = float(opinion.get("tp", 5.0)), float(opinion.get("sl", -5.0))
+                    lifetime = int(opinion.get("lifetime", 120))  # 유효 시간 추가
+                    if self.assign_preset(code, pid, tp, sl, reason, name=name, lifetime_mins=lifetime):
+                        p_name = PRESET_STRATEGIES.get(pid, {}).get("name", pid)
+                        results.append(f"📝 전략 갱신: {name} [{p_name}] TP:{tp:+.1f}% SL:{sl:.1f}%")
+            except Exception as e:
+                log_error(f"배치 리뷰 종목 처리 오류 [{code}]: {e}")
         
         return results

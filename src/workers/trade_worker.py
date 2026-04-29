@@ -32,9 +32,9 @@ class TradeWorker(BaseWorker):
                 for res in results:
                     self.state.add_trading_log(res)
             
-            self.set_result("성공", last_task="전략 매매 사이클 수행 완료")
+            self.set_result("성공", last_task="전략 매매 사이클 수행 완료", friendly_name="TRADE_EXECUTION")
         except Exception as e:
-            self.set_result("실패", last_task=f"매매 엔진 오류: {e}")
+            self.set_result("실패", last_task=f"매매 엔진 오류: {e}", friendly_name="TRADE_EXECUTION")
 
         # 2. 거래량 폭발/스파이크 감지 (추가 로직)
         # ...

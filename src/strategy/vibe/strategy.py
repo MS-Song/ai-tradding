@@ -54,6 +54,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         return base_ceiling
     def __init__(self, api, config):
         self.api = api
+        self.state = None  # [추가] DataManager에 의해 나중에 주입됨
         self.base_config = config.get("vibe_strategy", {})
         v_cfg = self.base_config
         self.max_stock_count_config = v_cfg.get("max_stock_count_config", "8")
@@ -111,7 +112,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             "auto_sell": v_cfg.get("ai_config", {}).get("auto_sell", False),
             "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
             "debug_mode": v_cfg.get("ai_config", {}).get("debug_mode", False),
-            "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview")
+            "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview"),
+            "report_interval": v_cfg.get("report_interval", 30)
         }
         
         self.is_ready = not self.ai_config.get("auto_mode", False)
@@ -181,7 +183,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
                 "auto_sell": v_cfg.get("ai_config", {}).get("auto_sell", False),
                 "auto_apply": v_cfg.get("ai_config", {}).get("auto_apply", False),
                 "debug_mode": v_cfg.get("ai_config", {}).get("debug_mode", False),
-                "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview")
+                "preferred_model": v_cfg.get("ai_config", {}).get("preferred_model", "gemini-3.1-flash-lite-preview"),
+                "report_interval": v_cfg.get("report_interval", 30)
             })
             self.max_stock_count_config = v_cfg.get("max_stock_count_config", "8")
             llm_seq = v_cfg.get("ai_config", {}).get("llm_sequence", [("GEMINI", self.ai_config.get("preferred_model", "gemini-3.1-flash-lite-preview"))])
@@ -217,7 +220,14 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             vals = self.exit_mgr.manual_thresholds[code]
             return float(vals[0]), float(vals[1]), False
         ps = self.preset_eng.preset_strategies.get(code)
-        if ps and ps.get("preset_id") != "00": return ps["tp"], ps["sl"], False
+        if ps and ps.get("preset_id") != "00":
+            tp, sl = ps.get("tp", 0.0), ps.get("sl", 0.0)
+            if tp == 0 or sl == 0:
+                # [Fix] 수치가 0인 경우 기본값으로 Fallback
+                default_tp, default_sl, _ = self.exit_mgr.get_thresholds(code, vibe, p_data, self.get_market_phase())
+                tp = tp if tp != 0 else default_tp
+                sl = sl if sl != 0 else default_sl
+            return tp, sl, False
         return self.exit_mgr.get_thresholds(code, vibe, p_data, self.get_market_phase())
 
     def _cleanup_rejected_stocks(self):

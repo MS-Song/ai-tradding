@@ -3,6 +3,7 @@ import threading
 import queue
 import asyncio
 import time
+import html
 from datetime import datetime
 from src.logger import log_error, telegram_logger
 
@@ -23,7 +24,7 @@ class TelegramNotifier:
         if self.is_active:
             self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
             self.worker_thread.start()
-            self.send_message("🚀 **Vibe-Trader 알림 엔진이 시작되었습니다.**")
+            self.send_message("🚀 <b>Vibe-Trader 알림 엔진이 시작되었습니다.</b>")
         else:
             from src.logger import logger
             logger.info("ℹ️ 텔레그램 설정이 비어 있어 알림 엔진을 비활성화합니다.")
@@ -57,7 +58,7 @@ class TelegramNotifier:
                 await bot.send_message(
                     chat_id=self.chat_id,
                     text=msg,
-                    parse_mode=parse_mode or ParseMode.MARKDOWN
+                    parse_mode=parse_mode or ParseMode.HTML
                 )
                 self.last_result = "성공"
                 # 발송 내역 로깅
@@ -96,17 +97,23 @@ class TelegramNotifier:
         if "손절" in trade_type: emoji = "🚫"
         if "교체" in trade_type: emoji = "🔄"
         
-        profit_str = f"\n💰 **수익금**: {int(profit):+,}원" if profit != 0 else ""
-        model_str = f" (`{model_id}`)" if model_id else ""
+        # HTML 이스케이프 처리
+        trade_type_esc = html.escape(trade_type)
+        name_esc = html.escape(name)
+        memo_esc = html.escape(memo)
+        model_id_esc = html.escape(model_id)
+        
+        profit_str = f"\n💰 <b>수익금</b>: {int(profit):+,}원" if profit != 0 else ""
+        model_str = f" (<code>{model_id_esc}</code>)" if model_id else ""
         
         msg = (
-            f"{emoji} **[{trade_type}] {name}**{model_str}\n"
+            f"{emoji} <b>[{trade_type_esc}] {name_esc}</b>{model_str}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔹 **종목코드**: `{code}`\n"
-            f"🔹 **체결가격**: {int(price):,}원\n"
-            f"🔹 **체결수량**: {qty}주\n"
-            f"🔹 **체결금액**: {int(price * qty):,}원\n"
-            f"🔹 **사유**: {memo}"
+            f"🔹 <b>종목코드</b>: <code>{code}</code>\n"
+            f"🔹 <b>체결가격</b>: {int(price):,}원\n"
+            f"🔹 <b>체결수량</b>: {qty}주\n"
+            f"🔹 <b>체결금액</b>: {int(price * qty):,}원\n"
+            f"🔹 <b>사유</b>: {memo_esc}"
             f"{profit_str}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏰ {datetime.now().strftime('%H:%M:%S')}"
@@ -116,10 +123,12 @@ class TelegramNotifier:
     def notify_alert(self, title, message, is_critical=False):
         """긴급 경보 전송"""
         emoji = "🚨" if is_critical else "⚠️"
+        title_esc = html.escape(title)
+        message_esc = html.escape(message)
         msg = (
-            f"{emoji} **{title}**\n"
+            f"{emoji} <b>{title_esc}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"{message}\n"
+            f"{message_esc}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏰ {datetime.now().strftime('%H:%M:%S')}"
         )
@@ -127,10 +136,11 @@ class TelegramNotifier:
 
     def notify_market_start(self, vibe):
         """장 개시 리포트"""
+        vibe_esc = html.escape(vibe)
         msg = (
-            f"🔔 **장 개시 알림 (09:00)**\n"
+            f"🔔 <b>장 개시 알림 (09:00)</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"☀️ **오늘의 시장 VIBE**: `{vibe}`\n"
+            f"☀️ <b>오늘의 시장 VIBE</b>: <code>{vibe_esc}</code>\n"
             f"🚀 오늘도 성공적인 투자 되시길 바랍니다!\n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
@@ -143,11 +153,11 @@ class TelegramNotifier:
         emoji = "🥳" if pnl >= 0 else "😥"
         
         msg = (
-            f"🏁 **장 마감 리포트 (15:30)**\n"
+            f"🏁 <b>장 마감 리포트 (15:30)</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"{emoji} **수익금 (수익률)**: {int(pnl):+,}원 ({abs(rate):.2f}%)\n"
-            f"💰 **현재 자산**: {int(asset_info.get('total_asset', 0)):,}원\n"
-            f"💵 **예수금**: {int(asset_info.get('cash', 0)):,}원\n"
+            f"{emoji} <b>수익금 (수익률)</b>: {int(pnl):+,}원 ({abs(rate):.2f}%)\n"
+            f"💰 <b>현재 자산</b>: {int(asset_info.get('total_asset', 0)):,}원\n"
+            f"💵 <b>예수금</b>: {int(asset_info.get('cash', 0)):,}원\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"고생하셨습니다!"
         )

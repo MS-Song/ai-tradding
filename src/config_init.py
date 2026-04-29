@@ -43,7 +43,7 @@ def get_config():
             },
             "base_seed_money": int(env_data.get("BASE_SEED_MONEY", 0)),
             "max_stock_count_config": env_data.get("MAX_STOCK_COUNT", "8"),
-            "telegram_report_enabled": env_data.get("TELEGRAM_REPORT", "Y") == "Y"
+            "report_interval": int(env_data.get("AI_REPORT_INTERVAL", 30))
         }
     }
 
@@ -96,7 +96,7 @@ def ensure_env(force=False):
             ("MAX_STOCK_COUNT", "최대 보유 종목 수 (1~8 또는 Y:AI자동)", "8", "text"),
             ("TELEGRAM_TOKEN", "텔레그램 봇 토큰 (Bot Token)", "", "text"),
             ("TELEGRAM_CHAT_ID", "텔레그램 채팅 ID (Chat ID)", "", "text"),
-            ("TELEGRAM_REPORT", "30분 정기 상태 보고 활성화", "Y", "choice", ["Y", "N"])
+            ("AI_REPORT_INTERVAL", "정기 리포트 발송 주기 (분, 0:미발송)", "30", "text")
         ]
 
         def handle_input(key, label, default, input_type, current_env):
@@ -112,7 +112,7 @@ def ensure_env(force=False):
                 if not val: return old_val if old_val else default
                 return "TRUE" if val in ['Y', 'YES', 'ON', '1'] else "FALSE"
             else:
-                if old_val and (key.endswith("KEY") or "SECRET" in key or "CANO" in key):
+                if old_val and (key.endswith("KEY") or "SECRET" in key or "CANO" in key or "TOKEN" in key or "CHAT_ID" in key):
                     if len(old_val) <= 8:
                         display_val = f"{old_val[:2]}****{old_val[-2:]}"
                     else:
