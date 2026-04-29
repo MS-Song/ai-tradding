@@ -39,49 +39,84 @@ threading.Thread(target=command_worker, daemon=True).start()
 
 def draw_recommendation_report(strategy, dm, tw, th):
     import io
-    buf = io.StringIO(); buf.write("\033[H\033[2J")
-    buf.write("\033[42;30m" + align_kr(" [AI DETAILED STRATEGY REPORT: TOP 10 RECOMMENDATIONS] ", tw, 'center') + "\033[0m\n\n")
-    buf.write("\033[1;93m" + " [AI 시장 전망 및 종합 의견]" + "\033[0m\n")
-    if strategy.ai_briefing:
-        for line in strategy.ai_briefing.split('\n'):
-            if line.strip(): buf.write(f"  {line.strip()}\n")
-    else: buf.write("  분석된 시장 브리핑이 없습니다.\n")
-    buf.write("\n" + "=" * tw + "\n\n")
-    recs = strategy.ai_recommendations
-    if not recs: buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. '8'을 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
-    else:
-        buf.write("\033[1m" + f"{align_kr('테마', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 9)} | {align_kr('등락', 7)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('AI점수', 6)} | 발굴 근거" + "\033[0m\n")
-        buf.write("-" * tw + "\n")
-        for r in recs:
-            code = r['code']; rate = float(r['rate']); color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
-            gem_mark = "💎" if r.get('is_gem') else ("📊" if r.get('is_etf') else "  ")
-            detail = strategy.api.get_naver_stock_detail(code)
-            buf.write(f"{align_kr(r['theme'], 8)} | {align_kr(code, 8)} | {align_kr(gem_mark + r['name'], 14)} | {align_kr(f'{int(float(r.get('price',0))):,}', 9, 'right')} | {align_kr(f'{color}{rate:+.1f}%\033[0m', 7, 'right')} | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(f'{r['score']:.1f}', 6, 'right')} | {r['reason']}\n")
-    buf.write("\n" + "-" * tw + "\n\033[1;92m" + " [AI 수석 전략가 입체 분석 및 대응 전략 (초압축)]" + "\033[0m\n")
+    import threading
     
-    # [Task 10] 리포트 캐싱 및 1회 분석 로직
-    curr_t = time.time()
-    if not strategy.rec_report_cache or (curr_t - strategy.rec_report_time > 600): # 10분 캐시
-        if recs:
-            buf.write("\033[93m  🧠 추천 종목들을 입체 분석 중입니다... 잠시만 기다려주세요.\033[0m\n")
-            sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+    _is_running = False
+    
+    def run_bg_analysis(recs):
+        nonlocal _is_running
+        _is_running = True
+        dm.set_busy("추천 종목 상세 분석 중", "UI")
+        try:
             report = strategy.ai_advisor.get_detailed_report_advice(recs, strategy.current_market_vibe)
             strategy.rec_report_cache = report
-            strategy.rec_report_time = curr_t
-            # 분석 후 버퍼 갱신을 위해 리턴 후 재호출하거나, 그냥 여기서 다시 그림 (여기서는 간단히 덮어쓰기)
-            buf.seek(0); buf.truncate()
-            return draw_recommendation_report(strategy, dm, tw, th) # 재귀 호출로 캐시된 데이터 표시
-    
-    if strategy.rec_report_cache:
-        cleaned_report = clean_ai_text(strategy.rec_report_cache)
-        for line in cleaned_report.split('\n'):
-            if line.strip(): buf.write(f"  > {line.strip()}\n")
-    else: buf.write("  ⚠️ 분석된 데이터가 없습니다. 먼저 '8:시황' 분석을 수행하세요.\n")
-    
-    buf.write("-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
-    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
-    while not get_key_immediate(): time.sleep(0.1)
-    buf.close()
+            strategy.rec_report_time = time.time()
+        finally:
+            _is_running = False
+            dm.clear_busy("UI")
+
+    while True:
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except: tw, th = 80, 24
+        
+        buf = io.StringIO()
+        buf.write("\033[42;30m" + align_kr(" [AI DETAILED STRATEGY REPORT: TOP 10 RECOMMENDATIONS] ", tw, 'center') + "\033[0m\n\n")
+
+        buf.write("\033[1;93m" + " [AI 시장 전망 및 종합 의견]" + "\033[0m\n")
+        if strategy.ai_briefing:
+            for line in strategy.ai_briefing.split('\n'):
+                if line.strip(): buf.write(f"  {line.strip()}\n")
+        else: buf.write("  분석된 시장 브리핑이 없습니다.\n")
+        buf.write("\n" + "=" * tw + "\n\n")
+        recs = strategy.ai_recommendations
+        if not recs: buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. '8'을 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
+        else:
+            buf.write("\033[1m" + f"{align_kr('테마', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 9)} | {align_kr('등락', 7)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('AI점수', 6)} | 발굴 근거" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            for r in recs[:max(1, th-15)]:
+                code = r['code']; rate = float(r['rate']); color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
+                gem_mark = "💎" if r.get('is_gem') else ("📊" if r.get('is_etf') else "  ")
+                detail = strategy.api.get_naver_stock_detail(code, force=False)
+                buf.write(f"{align_kr(r['theme'], 8)} | {align_kr(code, 8)} | {align_kr(gem_mark + r['name'], 14)} | {align_kr(f'{int(float(r.get('price',0))):,}', 9, 'right')} | {align_kr(f'{color}{rate:+.1f}%\033[0m', 7, 'right')} | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(f'{r['score']:.1f}', 6, 'right')} | {r['reason']}\n")
+        
+        buf.write("\n" + "-" * tw + "\n\033[1;92m" + " [AI 수석 전략가 입체 분석 및 대응 전략 (초압축)]" + "\033[0m\n")
+        
+        curr_t = time.time()
+        has_cache = strategy.rec_report_cache and (curr_t - strategy.rec_report_time < 600)
+        
+        if not has_cache and not _is_running and recs:
+            threading.Thread(target=run_bg_analysis, args=(recs,), daemon=True).start()
+            
+        if _is_running:
+            buf.write("\033[93m  🧠 추천 종목들을 입체 분석 중입니다... 잠시만 기다려주세요.\033[0m\n")
+        elif strategy.rec_report_cache:
+            cleaned_report = clean_ai_text(strategy.rec_report_cache)
+            for line in cleaned_report.split('\n'):
+                if line.strip(): buf.write(f"  > {line.strip()}\n")
+        else:
+            buf.write("  ⚠️ 분석된 데이터가 없습니다. 먼저 '8:시황' 분석을 수행하세요.\n")
+        
+        buf.write("-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
+        
+        # 화면 출력
+        sys.stdout.write("\033[H")
+        content_lines = buf.getvalue().split('\n')
+        for i in range(min(th, len(content_lines))):
+            sys.stdout.write(content_lines[i] + "\033[K" + ("\n" if i < th-1 else ""))
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
+        buf.close()
+
+        # 입력 감지 (비차단)
+        inner_cycle = 0
+        while inner_cycle < 10:
+            k = get_key_immediate()
+            if k: return
+            time.sleep(0.1)
+            inner_cycle += 1
+
 
 def draw_holdings_detail(strategy, dm):
     import io
@@ -94,14 +129,14 @@ def draw_holdings_detail(strategy, dm):
     def run_bg_analysis():
         nonlocal _is_running_analysis
         _is_running_analysis = True
-        dm.set_busy("AI 포트폴리오 진단 중")
+        dm.set_busy("AI 포트폴리오 진단 중", "UI")
         try:
-            strategy.refresh_holdings_opinion(progress_cb=lambda c, t: dm.set_busy(f"진단({c}/{t})"))
+            strategy.refresh_holdings_opinion(progress_cb=lambda c, t: dm.set_busy(f"진단({c}/{t})", "UI"))
         finally:
             _is_running_analysis = False
             with dm.data_lock:
                 dm.worker_results["GLOBAL"] = "성공"
-            dm.clear_busy()
+            dm.clear_busy("UI")
             time.sleep(0.2)
             flush_input()
 
@@ -111,7 +146,8 @@ def draw_holdings_detail(strategy, dm):
             tw, th = size.columns, size.lines
         except:
             tw, th = 80, 24
-        buf = io.StringIO(); buf.write("\033[H\033[2J")
+        buf = io.StringIO()
+
         is_v = getattr(strategy.api.auth, 'is_virtual', True)
         header_bg = "45" if is_v else "44"
         buf.write(f"\033[{header_bg};37m" + align_kr(" [AI HOLDINGS PORTFOLIO REPORT] ", tw, 'center') + "\033[0m\n")
@@ -169,7 +205,16 @@ def draw_holdings_detail(strategy, dm):
             buf.write(align_kr(" Q, ESC, SPACE: 종료 | R: AI 재진단 ", tw, 'center') + "\n")
         else:
             buf.write(align_kr(" Q, ESC, SPACE: 종료 | \033[93mR: AI 진단 시작\033[0m ", tw, 'center') + "\n")
-        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+
+        
+        # [수정] 부드러운 화면 갱신
+        sys.stdout.write("\033[H")
+        content_lines = buf.getvalue().split('\n')
+        for i in range(min(th, len(content_lines))):
+            sys.stdout.write(content_lines[i] + "\033[K" + ("\n" if i < th-1 else ""))
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
+
         
         # 키 입력 루프 (비차단 렌더링을 위해 짧은 대기 후 재진입)
         inner_cycle = 0
@@ -189,108 +234,191 @@ def draw_holdings_detail(strategy, dm):
 
 def draw_hot_stocks_detail(strategy, dm, tw, th):
     import io
-    buf = io.StringIO()
-    buf.write("\033[H\033[2J")
-    buf.write("\033[45;37m" + align_kr(" [AI HOT THEME TREND REPORT] ", tw, 'center') + "\033[0m\n\n")
+    import threading
     
-    themes = get_cached_themes()
-    if themes:
-        theme_line = " [오늘의 인기 테마] "
-        for t in themes[:8]: theme_line += f"{t['name']}({t['count']}) | "
-        buf.write("\033[1;93m" + theme_line.rstrip(" | ") + "\033[0m\n")
-    buf.write("-" * tw + "\n\n")
+    _is_running = False
     
-    hot = dm.cached_hot_raw[:10]
-    if not hot:
-        buf.write(align_kr("인기 검색 데이터가 없습니다.", tw, 'center') + "\n")
-    else:
-        buf.write("\033[1m" + f"{align_kr('NO', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 10)} | {align_kr('등락률', 8)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('업종PER', 7)}" + "\033[0m\n")
-        buf.write("-" * tw + "\n")
+    def run_bg_analysis(hot, themes):
+        nonlocal _is_running
+        _is_running = True
+        dm.set_busy("인기 테마 분석 중", "UI")
+        report = None
+        try:
+            report = strategy.ai_advisor.get_hot_stocks_report_advice(hot, themes, strategy.current_market_vibe)
+            strategy.hot_report_cache = report
+            strategy.hot_report_time = time.time()
+        finally:
+            _is_running = False
+            if not report:
+                strategy.hot_report_err_time = time.time()
+            dm.clear_busy("UI")
+
+    while True:
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except: tw, th = 80, 24
+
+        buf = io.StringIO()
+        buf.write("\033[45;37m" + align_kr(" [AI HOT THEME TREND REPORT] ", tw, 'center') + "\033[0m\n\n")
         
-        # [Architect 개선] 종목 상세 정보를 벌크로 미리 가져와 루프 내 지연 최소화
-        codes = [item.get('code', '') for item in hot if item.get('code')]
-        realtime_data = strategy.api.get_naver_stocks_realtime(codes)
+        themes = get_cached_themes()
+        if themes:
+            theme_line = " [오늘의 인기 테마] "
+            for t in themes[:8]: theme_line += f"{t['name']}({t['count']}) | "
+            buf.write("\033[1;93m" + theme_line.rstrip(" | ") + "\033[0m\n")
+        buf.write("-" * tw + "\n\n")
         
-        for idx, item in enumerate(hot, 1):
-            code = item.get('code', '')
-            r_item = realtime_data.get(code, {})
-            price = r_item.get('price', float(item.get('price', 0)))
-            rate = r_item.get('rate', float(item.get('rate', 0)))
-            color = "\033[91m" if rate >= 0 else "\033[94m"
+        hot = dm.cached_hot_raw[:10]
+        if not hot:
+            buf.write(align_kr("인기 검색 데이터가 없습니다.", tw, 'center') + "\n")
+        else:
+            buf.write("\033[1m" + f"{align_kr('NO', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 10)} | {align_kr('등락률', 8)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('업종PER', 7)}" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
             
-            # 펀더멘털 데이터는 캐시된 정보를 우선 활용 (HTML 크롤링 방지)
-            detail = strategy.api.get_naver_stock_detail(code)
-            name = r_item.get('name') or item.get('name', '')
+            codes = [item.get('code', '') for item in hot if item.get('code')]
+            realtime_data = strategy.api.get_naver_stocks_realtime(codes)
             
-            buf.write(f"{align_kr(str(idx), 4)} | {align_kr(code, 8)} | {align_kr(name[:10], 14)} | {align_kr(f'{int(float(price)):,}', 10, 'right')} | {color}{align_kr(f'{rate:+.2f}%', 8, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')}\n")
-    
-    # [Task 10] 인기 테마 리포트 캐싱 (5분/300초 기준)
-    curr_t = time.time()
-    if not strategy.hot_report_cache or (curr_t - strategy.hot_report_time > 300):
-        # 분석 중임을 알리기 위해 현재까지의 내용을 먼저 출력
-        buf.write("\n" + "-" * tw + "\n\033[1;95m" + " [트렌드 분석 중... 잠시 기다려주세요]" + "\033[0m\n")
-        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+            for idx, item in enumerate(hot, 1):
+                code = item.get('code', '')
+                r_item = realtime_data.get(code, {})
+                price = r_item.get('price', float(item.get('price', 0)))
+                rate = r_item.get('rate', float(item.get('rate', 0)))
+                color = "\033[91m" if rate >= 0 else "\033[94m"
+                detail = strategy.api.get_naver_stock_detail(code)
+                name = r_item.get('name') or item.get('name', '')
+                buf.write(f"{align_kr(str(idx), 4)} | {align_kr(code, 8)} | {align_kr(name[:10], 14)} | {align_kr(f'{int(float(price)):,}', 10, 'right')} | {color}{align_kr(f'{rate:+.2f}%', 8, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')}\n")
         
-        # 실제 AI 분석 수행 (지연 발생)
-        report = strategy.ai_advisor.get_hot_stocks_report_advice(hot, themes, strategy.current_market_vibe)
-        strategy.hot_report_cache = report
-        strategy.hot_report_time = curr_t
+        curr_t = time.time()
+        has_cache = strategy.hot_report_cache and (curr_t - strategy.hot_report_time < 300)
         
-        # 분석 완료 후 캐시된 데이터를 포함하여 처음부터 다시 그리기 (재귀 호출로 깔끔하게 처리)
+        if not has_cache and not _is_running and hot:
+            # 실패 시에도 최소 30초는 대기하도록 보호 (API 과부하 방지)
+            last_err_t = getattr(strategy, 'hot_report_err_time', 0)
+            if curr_t - last_err_t > 30:
+                threading.Thread(target=run_bg_analysis, args=(hot, themes), daemon=True).start()
+
+        buf.write("\n\033[1;95m" + " [AI 트렌드 분석가의 인기 테마 진단 (초압축)]" + "\033[0m\n")
+        if _is_running:
+            buf.write("\033[93m  🧠 인기 테마 및 종목 트렌드를 분석 중입니다... 잠시만 기다려주세요.\033[0m\n")
+        elif strategy.hot_report_cache:
+            cleaned_hot = clean_ai_text(strategy.hot_report_cache)
+            for line in cleaned_hot.split('\n'):
+                if line.strip(): buf.write(f"  {line.strip()}\n")
+        else:
+            buf.write("  ⚠️ 리포트를 생성할 수 없습니다. 잠시 후 'R' 키를 눌러 재시도하세요.\n")
+            
+        buf.write("\n" + "-" * tw + "\n" + align_kr(" Q, ESC, SPACE: 종료 | R: AI 분석 갱신 ", tw, 'center') + "\n")
+        
+        sys.stdout.write("\033[H")
+        content_lines = buf.getvalue().split('\n')
+        for i in range(min(th, len(content_lines))):
+            sys.stdout.write(content_lines[i] + "\033[K" + ("\n" if i < th-1 else ""))
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
         buf.close()
-        return draw_hot_stocks_detail(strategy, dm, tw, th)
-    
-    buf.write("\n\033[1;95m" + " [AI 트렌드 분석가의 인기 테마 진단 (초압축)]" + "\033[0m\n")
-    if strategy.hot_report_cache:
-        cleaned_hot = clean_ai_text(strategy.hot_report_cache)
-        for line in cleaned_hot.split('\n'):
-            if line.strip(): buf.write(f"  {line.strip()}\n")
-    else:
-        buf.write("  ⚠️ 리포트를 생성할 수 없습니다.\n")
-        
-    buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
-    sys.stdout.write(buf.getvalue()); sys.stdout.flush()
-    while not get_key_immediate(): time.sleep(0.1)
-    buf.close()
+
+        inner_cycle = 0
+        while inner_cycle < 10:
+            k = get_key_immediate()
+            if k:
+                kl = k.lower()
+                if kl == 'r':
+                    strategy.hot_report_cache = None
+                    strategy.hot_report_err_time = 0
+                    break
+                elif kl in ['q', 'esc', ' ', '\x1b']:
+                    return
+            time.sleep(0.1)
+            inner_cycle += 1
+
 
 
 def draw_stock_analysis(strategy, dm, code, tw, th):
-    sys.stdout.write("\033[H\033[2J")
-    sys.stdout.write("\033[42;30m" + align_kr(f" [AI STOCK ANALYSIS REPORT: {code}] ", tw, 'center') + "\033[0m\n\n")
-    sys.stdout.write(f"\033[93m 🚀 {code} 종목 분석을 시작합니다. 잠시만 기다려주세요...\033[0m\n"); sys.stdout.flush()
-    dm.show_status(f"🔍 {code} 종목 상세 데이터를 수집 중입니다...")
-    detail = strategy.api.get_naver_stock_detail(code); news = strategy.api.get_naver_stock_news(code); name = detail.get('name', '알 수 없는 종목')
-    color = "\033[91m" if detail.get('rate', 0) >= 0 else "\033[94m"
-    sys.stdout.write(f"\n\033[1;93m [종목 정보] {name} ({code})\033[0m\n")
-    sys.stdout.write(f"  * 실시간시세: {int(float(detail.get('price',0))):,}원 ({color}{detail.get('rate',0):+.2f}%\033[0m)\n")
-    sys.stdout.write(f"  * 시가총액  : {detail.get('market_cap')}\n")
-    sys.stdout.write(f"  * 펀더멘털  : PER {detail.get('per')} | PBR {detail.get('pbr')} | 배당 {detail.get('yield')} | 업종PER {detail.get('sector_per')}\n")
-    sys.stdout.write("\n\033[1;96m [최신 소식 및 공시]\033[0m\n")
-    if news:
-        for n in news[:3]: sys.stdout.write(f"  - {n}\n")
-    else: sys.stdout.write("  - 최근 소식 없음\n")
+    import io
+    import threading
     
-    # [Phase 3] 기술적 차트 시각화 추가
-    dm.show_status(f"📊 {code} 차트 데이터를 렌더링 중입니다...")
-    candles = strategy.api.get_minute_chart_price(code)
-    if candles:
-        from src.strategy.chart_renderer import ChartRenderer
-        chart_txt = ChartRenderer.render_candle_chart(candles, width=tw-15, height=12, title=f"[{name}] 기술적 흐름 (분봉)")
-        sys.stdout.write("\n" + chart_txt + "\n\n")
+    _is_running = False
+    _report = None
+    _detail = None
+    _news = None
+    _candles = None
     
-    sys.stdout.write("-" * tw + "\n\n"); sys.stdout.flush()
-    dm.show_status("🧠 AI가 분석을 위해 데이터를 확인 중입니다...")
-    sys.stdout.write("\033[1;95m 🤖 AI가 확인 중입니다... (리포트 생성)\033[0m\n"); sys.stdout.flush()
-    report = strategy.ai_advisor.get_stock_report_advice(code, name, detail, news)
-    if report:
-        sys.stdout.write("\033[1;92m [Gemini AI 심층 분석 의견]\033[0m\n")
-        cleaned_report = clean_ai_text(report)
-        for line in cleaned_report.split('\n'):
-            if line.strip(): sys.stdout.write(f"  {line.strip()}\n")
-    else: sys.stdout.write("  ⚠️ 리포트를 생성할 수 없습니다. API 키 또는 네트워크 상태를 확인하세요.\n")
-    sys.stdout.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n"); sys.stdout.flush()
-    while not get_key_immediate(): time.sleep(0.1)
-    dm.show_status("✅ 분석 완료")
+    def run_bg_analysis(t_code):
+        nonlocal _is_running, _report, _detail, _news, _candles
+        _is_running = True
+        dm.set_busy(f"{t_code} 심층 분석 중", "UI")
+        try:
+            _detail = strategy.api.get_naver_stock_detail(t_code)
+            _news = strategy.api.get_naver_stock_news(t_code)
+            _candles = strategy.api.get_minute_chart_price(t_code)
+            name = _detail.get('name', '알 수 없는 종목')
+            _report = strategy.ai_advisor.get_stock_report_advice(t_code, name, _detail, _news)
+        finally:
+            _is_running = False
+            dm.clear_busy("UI")
+
+    threading.Thread(target=run_bg_analysis, args=(code,), daemon=True).start()
+
+    while True:
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except: tw, th = 80, 24
+        
+        buf = io.StringIO()
+        buf.write("\033[42;30m" + align_kr(f" [AI STOCK ANALYSIS REPORT: {code}] ", tw, 'center') + "\033[0m\n\n")
+        
+        if _detail:
+            name = _detail.get('name', '알 수 없는 종목')
+            color = "\033[91m" if _detail.get('rate', 0) >= 0 else "\033[94m"
+            buf.write(f"\033[1;93m [종목 정보] {name} ({code})\033[0m\n")
+            buf.write(f"  * 실시간시세: {int(float(_detail.get('price',0))):,}원 ({color}{_detail.get('rate',0):+.2f}%\033[0m)\n")
+            buf.write(f"  * 시가총액  : {_detail.get('market_cap')}\n")
+            buf.write(f"  * 펀더멘털  : PER {_detail.get('per')} | PBR {_detail.get('pbr')} | 배당 {_detail.get('yield')} | 업종PER {_detail.get('sector_per')}\n")
+            
+            buf.write("\n\033[1;96m [최신 소식 및 공시]\033[0m\n")
+            if _news:
+                for n in _news[:3]: buf.write(f"  - {n}\n")
+            else: buf.write("  - 최근 소식 없음\n")
+            
+            if _candles:
+                from src.strategy.chart_renderer import ChartRenderer
+                chart_txt = ChartRenderer.render_candle_chart(_candles, width=tw-15, height=min(12, th-20), title=f"[{name}] 기술적 흐름 (분봉)")
+                buf.write("\n" + chart_txt + "\n")
+        else:
+            buf.write(f"\033[93m 🚀 {code} 종목 분석을 시작합니다. 잠시만 기다려주세요...\033[0m\n")
+            buf.write(f" 🔍 상세 데이터를 수집 중입니다...\n")
+
+        buf.write("-" * tw + "\n")
+        if _is_running:
+            buf.write("\033[1;95m 🤖 AI가 확인 중입니다... (리포트 생성 중)\033[0m\n")
+        elif _report:
+            buf.write("\033[1;92m [Gemini AI 심층 분석 의견]\033[0m\n")
+            cleaned_report = clean_ai_text(_report)
+            for line in cleaned_report.split('\n'):
+                if line.strip(): buf.write(f"  {line.strip()}\n")
+        else:
+            if not _is_running:
+                buf.write("  ⚠️ 리포트를 생성할 수 없습니다. API 키 또는 네트워크 상태를 확인하세요.\n")
+
+        buf.write("\n" + "-" * tw + "\n" + align_kr(" 아무 키나 누르면 메인 화면으로 돌아갑니다. ", tw, 'center') + "\n")
+        
+        sys.stdout.write("\033[H")
+        content_lines = buf.getvalue().split('\n')
+        for i in range(min(th, len(content_lines))):
+            sys.stdout.write(content_lines[i] + "\033[K" + ("\n" if i < th-1 else ""))
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
+        buf.close()
+
+        inner_cycle = 0
+        while inner_cycle < 10:
+            k = get_key_immediate()
+            if k: return
+            time.sleep(0.1)
+            inner_cycle += 1
+
 
 def draw_ai_logs_report(strategy, dm):
     import io
@@ -305,7 +433,8 @@ def draw_ai_logs_report(strategy, dm):
             tw, th = size.columns, size.lines
         except:
             tw, th = 80, 24
-        buf = io.StringIO(); buf.write("\033[H\033[2J")
+        buf = io.StringIO()
+
         is_v = getattr(strategy.api.auth, 'is_virtual', True)
         header_bg = "45" if is_v else "44"
         buf.write(f"\033[{header_bg};37m" + align_kr(" [AI DECISION & LOG REPORT] ", tw, 'center') + "\033[0m\n")
@@ -453,7 +582,15 @@ def draw_ai_logs_report(strategy, dm):
 
         buf.write("\n" + "-" * tw + "\n")
         buf.write(align_kr(" [1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
-        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+        
+        # [수정] 부드러운 화면 갱신
+        sys.stdout.write("\033[H")
+        content_lines = buf.getvalue().split('\n')
+        for i in range(min(th, len(content_lines))):
+            sys.stdout.write(content_lines[i] + "\033[K" + ("\n" if i < th-1 else ""))
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
+
         
         while True:
             k = get_key_immediate()
@@ -480,7 +617,8 @@ def draw_performance_report(strategy, dm):
             tw, th = size.columns, size.lines
         except:
             tw, th = 80, 24
-        buf = io.StringIO(); buf.write("\033[H\033[2J")
+        buf = io.StringIO()
+
         is_v = getattr(strategy.api.auth, 'is_virtual', True)
         header_bg = "45" if is_v else "44"
         buf.write(f"\033[{header_bg};37m" + align_kr(" [AI TRADING PERFORMANCE DASHBOARD] ", tw, 'center') + "\033[0m\n")
@@ -595,7 +733,7 @@ def draw_performance_report(strategy, dm):
             k_color = "\033[91m" if kospi_rate >= 0 else "\033[94m"
             kd_color = "\033[91m" if kosdaq_rate >= 0 else "\033[94m"
             buf.write("\033[1;96m" + " [금일 투자 성과 브리핑]" + "\033[0m\n")
-            buf.write(f" 📋 {today} | 실현: {r_color}{realized_profit:+,}원\033[0m | 평가: {d_color}{int(daily_pnl_amt):+,}원 ({abs(daily_pnl_rate):.2f}%)\033[0m | KOSPI: {k_color}{kospi_rate:+.2f}%\033[0m | KOSDAQ: {kd_color}{kosdaq_rate:+.2f}%\033[0m\n")
+            buf.write(f" 📋 {today} | 실현: {r_color}{realized_profit:+,}원\033[0m | 일일(평가+실현): {d_color}{int(daily_pnl_amt):+,}원 ({abs(daily_pnl_rate):.2f}%)\033[0m | KOSPI: {k_color}{kospi_rate:+.2f}%\033[0m | KOSDAQ: {kd_color}{kosdaq_rate:+.2f}%\033[0m\n")
             buf.write("-" * tw + "\n")
 
             # ② [순서 변경] 투자 성과 진단 (2번째 배치)
@@ -785,7 +923,15 @@ def draw_performance_report(strategy, dm):
 
         buf.write("\n" + "-" * tw + "\n")
         buf.write(align_kr(" [1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
-        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+        
+        # [수정] 부드러운 화면 갱신
+        sys.stdout.write("\033[H")
+        content_lines = buf.getvalue().split('\n')
+        for i in range(min(th, len(content_lines))):
+            sys.stdout.write(content_lines[i] + "\033[K" + ("\n" if i < th-1 else ""))
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
+
         
         while True:
             k = get_key_immediate()
@@ -854,7 +1000,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     'h': "인기 테마 리포트 조회 중", 'a': "AI 결정 로그 조회 중", 'p': "성과 대시보드 조회 중"
                 }
                 dm.is_full_screen_active = True
-                dm.set_busy(status_map.get(mode, f"{mode} 처리"))
+                dm.set_busy(status_map.get(mode, f"{mode} 처리"), "UI")
                 try:
                     restore_terminal_settings()
                     size = os.get_terminal_size(); tw_r, th_r = size.columns, size.lines
@@ -874,7 +1020,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     from src.logger import log_error
                     log_error(f"Display Task Error ({mode}): {display_e}")
                 finally: 
-                    dm.clear_busy()
+                    dm.clear_busy("UI")
                     dm.is_full_screen_active = False
             threading.Thread(target=run_display_task, daemon=True).start()
             return
@@ -891,7 +1037,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 if target_code:
                     def run_analysis_task(t_code):
                         dm.is_full_screen_active = True
-                        dm.set_busy("종목 분석 중")
+                        dm.set_busy("종목 분석 중", "UI")
                         try:
                             restore_terminal_settings()
                             size = os.get_terminal_size(); tw_a, th_a = size.columns, size.lines
@@ -902,7 +1048,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             from src.logger import log_error
                             log_error(f"Analysis Task Error ({t_code}): {analysis_e}")
                         finally:
-                            dm.clear_busy()
+                            dm.clear_busy("UI")
                             dm.is_full_screen_active = False
                     threading.Thread(target=run_analysis_task, args=(target_code,), name=f"[{target_code}_분석]", daemon=True).start()
             return
@@ -942,7 +1088,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     qty = int(float(inp[1])) if len(inp) > 1 and inp[1].replace('.','',1).isdigit() else int(float(h['hldg_qty']))
                     price = int(float(inp[2])) if len(inp) > 2 and inp[2].replace('.','',1).isdigit() else 0
                     def task_sell():
-                        dm.set_busy("매도 처리")
+                        dm.set_busy("매도 처리", "MANUAL_TRADE")
                         try:
                             p_disp = f"{price:,}원" if price > 0 else "시장가"
                             dm.add_trading_log(f"[{code}] {name} {p_disp} {qty}주 매도시도")
@@ -957,7 +1103,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                 from src.logger import log_error
                                 log_error(f"수동 매도 실패 ({h['prdt_name']}): {msg}")
                                 dm.show_status(f"❌ 매도 실패: {msg}", True)
-                        finally: dm.clear_busy()
+                        finally: dm.clear_busy("MANUAL_TRADE")
                     threading.Thread(target=task_sell, name=f"[{code}_{name}_매도]", daemon=True).start()
 
         elif mode == 'u':
@@ -1008,7 +1154,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 if len(inp) >= 2:
                     code, qty = inp[0], int(inp[1]); price = int(inp[2]) if len(inp) > 2 and inp[2].isdigit() else 0
                     def task_buy():
-                        dm.set_busy("매수 처리")
+                        dm.set_busy("매수 처리", "MANUAL_TRADE")
                         try:
                             detail = api.get_naver_stock_detail(code); buy_name = detail.get('name', code)
                             p_disp = f"{price:,}원" if price > 0 else "시장가"
@@ -1031,7 +1177,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                 from src.logger import log_error
                                 log_error(f"수동 매수 실패 ({buy_name}): {msg}")
                                 dm.show_status(f"❌ 매수 실패: {msg}", True)
-                        finally: dm.clear_busy()
+                        finally: dm.clear_busy("MANUAL_TRADE")
                     threading.Thread(target=task_buy, name=f"[{code}_매수]", daemon=True).start()
 
         elif mode == '3':
@@ -1057,12 +1203,16 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     except: dm.show_status("❌ 입력 오류", True)
 
         elif mode == '8':
+            if strategy.is_analyzing:
+                dm.show_status("⚠️ 이미 분석이 진행 중입니다.", True)
+                return
+                
             def task_ai():
-                dm.set_busy("AI분석")
+                dm.set_busy("AI분석", "AI_ENGINE")
                 try:
                     def prog_cb(c, t, m="AI분석"): 
                         if "분석 중:" in m: m = "AI추천"
-                        dm.set_busy(f"{m}({c}/{t})")
+                        dm.set_busy(f"{m}({c}/{t})", "AI_ENGINE")
                     def item_cb(i): 
                         with dm.data_lock: 
                             if not any(r['code'] == i['code'] for r in strategy.ai_recommendations):
@@ -1082,7 +1232,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                         dm.show_status(f"❌ AI 분석 실패", True)
                 finally:
                     strategy.is_ready = True
-                    dm.clear_busy()
+                    dm.clear_busy("AI_ENGINE")
             command_queue.put((task_ai, (), {}))
 
         elif mode == '5':
@@ -1116,12 +1266,12 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 if not f_h: dm.show_status("⚠️ 보유 종목 없음", True)
                 else:
                     def task_bulk():
-                        dm.set_busy("AI 통합 전략 진단")
+                        dm.set_busy("AI 통합 전략 진단", "AI_ENGINE")
                         try:
                             batch_results = strategy.perform_portfolio_batch_review(skip_trade=True, include_manual=True)
                             
                             dm.show_status("✅ 일괄 전략 진단 완료")
-                        finally: dm.clear_busy()
+                        finally: dm.clear_busy("AI_ENGINE")
                     command_queue.put((task_bulk, (), {}))
             elif res_code.strip().isdigit():
                 idx = int(res_code.strip())
@@ -1130,7 +1280,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     res_strat = get_input(dm, f"> [{name}] 전략 번호 (엔터=AI): ", tw, prompt_mode='STRATEGY')
                     if res_strat is not None:
                         def task_single(sid_raw):
-                            dm.set_busy("AI 전략 분석")
+                            dm.set_busy("AI 전략 분석", "AI_ENGINE")
                             try:
                                 if sid_raw.strip() == '':
                                     result = strategy.auto_assign_preset(code, name)
@@ -1167,7 +1317,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                         from src.logger import log_error
                                         log_error(f"무효한 프리셋 번호 입력: {antis_id}")
                                         dm.show_status("⚠️ 무효한 번호", True)
-                            finally: dm.clear_busy()
+                            finally: dm.clear_busy("AI_ENGINE")
                         command_queue.put((task_single, (res_strat,), {}))
 
 

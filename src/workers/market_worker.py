@@ -20,6 +20,12 @@ class MarketWorker(BaseWorker):
             self.set_busy("시장분석", friendly_name="MARKET_ANAL")
             self.strategy.determine_market_trend()
             
+            # [Task] 날짜 변경 감지 시 전일 추천 리스트 갱신
+            today_str = datetime.now().strftime('%Y-%m-%d')
+            if not hasattr(self, "_last_date") or self._last_date != today_str:
+                self.strategy.state_mgr.update_yesterday_recs()
+                self._last_date = today_str
+
             with self.state.lock:
                 self.state.market_data = self.strategy.current_market_data
                 self.state.vibe = self.strategy.current_market_vibe
@@ -71,6 +77,9 @@ class MarketWorker(BaseWorker):
             self.set_result("성공", last_task="인기/거래량 종목 수집")
             self.state.update_worker_status("RANKING", result="성공", last_task="인기 종목 탐색 완료", friendly_name="RANKING")
             self.state.update_worker_status("THEME", result="성공", last_task="테마 분석 완료", friendly_name="THEME")
+            
+            # [추가] 전일 추천 종목 성과 실시간 갱신
+            self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
         except Exception as e:
             self.set_result("실패", last_task=f"랭킹 수집 오류: {e}")
             self.state.update_worker_status("RANKING", result="실패", last_task=f"랭킹 수집 오류: {e}")
@@ -91,6 +100,7 @@ class MarketWorker(BaseWorker):
             if curr_vibe != self.state.last_notified_vibe:
                 if self.notifier:
                     self.notifier.notify_alert("시장 VIBE 변화", f"🔄 `{self.state.last_notified_vibe}` → `{curr_vibe}`")
+                self.state.add_trading_log(f"🌍 시장 VIBE 변화: {self.state.last_notified_vibe} → {curr_vibe}")
                 self.state.last_notified_vibe = curr_vibe
             
             # 2. 장 개시 알림
@@ -135,6 +145,7 @@ class MarketWorker(BaseWorker):
                     with self.state.lock:
                         self.state.recommendations = self.strategy.ai_recommendations
                         self.state.last_times["recommendation"] = curr_t
+                    self.state.update_worker_status("RECOMMENDATION", result="성공", last_task="AI 추천 종목 리스트 갱신 완료")
             
             # 비용 업데이트 (5초 주기)
             if curr_t - self.state.last_times.get("billing", 0) > 5:

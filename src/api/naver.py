@@ -85,7 +85,7 @@ class NaverAPIClient(BaseAPI):
             return results[:20]
         except: return []
 
-    def get_naver_stock_detail(self, code: str, force: bool = False) -> dict:
+    def get_naver_stock_detail(self, code: str, force: bool = False, **kwargs) -> dict:
         curr_t = time.time()
         if not force and code in self._detail_cache:
             ts, data = self._detail_cache[code]

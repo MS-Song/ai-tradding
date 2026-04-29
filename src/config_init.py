@@ -149,7 +149,8 @@ def ensure_env(force=False):
             return ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"]
 
         results = {}
-        for k, l, d, t in general_keys:
+        for item in general_keys:
+            k, l, d, t = item[:4]
             results[k] = handle_input(k, l, d, t, env_data)
 
         # 2. 멀티 LLM 상세 설정

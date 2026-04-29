@@ -148,8 +148,10 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         # 매도 시 해당 종목에 할당된 프리셋 전략 설정도 함께 삭제 (상태 파일 최적화)
         # [Fix] 부분 익절 시에는 전략을 삭제하지 않도록 is_full_exit 체크 추가
         if is_full_exit and code in self.preset_eng.preset_strategies:
+            ps = self.preset_eng.preset_strategies[code]
+            s_name = ps.get('stock_name', '')
             del self.preset_eng.preset_strategies[code]
-            logger.info(f"🗑️ 프리셋 전략 데이터 정리: [{code}]")
+            logger.info(f"🗑️ 프리셋 전략 데이터 정리: {s_name} [{code}]")
         self._save_all_states()
 
     def is_reentry_restricted(self, code, cooldown_sec=7200):

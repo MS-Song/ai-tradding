@@ -505,7 +505,10 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     if lines and not lines[-1]: lines.pop()
     with dm.ui_lock:
         sys.stdout.write("\033[H")
-        for i in range(min(th, len(lines))): sys.stdout.write(lines[i] + "\033[K" + ("\n" if i < th-1 and i < len(lines)-1 else ""))
+        for i in range(min(th, len(lines))): 
+            sys.stdout.write(lines[i] + "\033[K" + ("\n" if i < th-1 and i < len(lines)-1 else ""))
+        # [수정] 화면 하단의 남은 영역 소거 (\033[J) 하여 드래그/스크롤 시 잔상 방지
+        sys.stdout.write("\033[J")
         sys.stdout.flush()
     buf.close()
 
@@ -519,7 +522,8 @@ def draw_manual_page():
             tw, th = size.columns, size.lines
         except:
             tw, th = 80, 24
-        buf = io.StringIO(); buf.write("\033[H\033[2J")
+        buf = io.StringIO()
+
         buf.write("\033[46;37m" + align_kr(" [KIS-VIBE-TRADER SYSTEM MANUAL] ", tw, 'center') + "\033[0m\n")
         
         # 탭 메뉴 바
@@ -581,22 +585,18 @@ def draw_manual_page():
             # ── 시장 페이즈 & 전략 ──
             w("\033[1;93m [시장 페이즈 (Market Phase) — 시간대별 자동 전략 보정]\033[0m")
             w("-" * tw)
-            w(" \033[91m🔥 P1 OFFENSIVE  (09:00~10:00)\033[0m  장 초반 변동성 극대화")
-            w("    TP \033[91m+2.0%\033[0m 상향 | SL \033[94m-1.0%\033[0m 완화 (단, 하락/방어장 시 손절 완화 제외)")
-            w("    → 적극적 수익 추구 구간. 큰 움직임을 활용하여 익절 기회 극대화")
+            w(" \033[91m🔥 P1 OFFENSIVE (09~10시)\033[0m TP +2.0% 상향 | SL -1.0% 완화")
+            w("    → 장 초반 변동성 활용 공격적 수익 추구 (하락/방어장 시 손절완화 제외)")
             w("")
-            w(" \033[92m🧘 P2 CONVERGENCE (10:00~14:30)\033[0m  시장 수렴 안정화")
-            w("    TP \033[94m-1.0%\033[0m 보수화 | SL \033[94m-1.0%\033[0m 타이트 관리")
-            w("    → 횡보장 대응. 리스크를 줄이며 안정적 운영")
+            w(" \033[92m🧘 P2 CONVERGENCE(10~14:30)\033[0m TP -1.0% 보수화 | SL -1.0% 타이트")
+            w("    → 시장 수렴 안정화 구간. 리스크 최소화 및 횡보장 대응")
             w("")
-            w(" \033[93m🏁 P3 CONCLUSION  (14:30~15:10)\033[0m  당일 수익 확정 단계")
-            w("    보정 없음 | 수익률 ≥+0.5% 종목 50% 분할 매도")
-            w("    → 분할 매도 후 잔여 물량 손절선을 +0.2%(본전)로 상향하여 추가 수익 추종")
+            w(" \033[93m🏁 P3 CONCLUSION (14:30~15:10)\033[0m 수익률 ≥+0.5% 종목 50% 분할 매도")
+            w("    → 잔여 물량 손절선을 +0.2%(본전)로 상향하여 리스크 없이 추가 수익 추종")
             w("")
-            w(" \033[96m💤 P4 PREPARATION (15:10~15:30)\033[0m  익일 준비 / AI 장마감 판단")
-            w("    ① 종가베팅 : 추천 1~3순위 중 1종목 선별 매수 (기보유 시 시간 갱신하여 청산 방어)")
-            w("    ② AI 장마감: 잔여 종목별 [펀더멘털+뉴스+수익률] 분석 → 불확실하면 Sell")
-            w("    → 단, 종가베팅 확정 종목 및 당일 매수 종목은 P4 청산 로직에서 안전하게 보호됨")
+            w(" \033[96m💤 P4 PREPARATION (15:10~15:30)\033[0m 종가베팅 및 AI 장마감 청산")
+            w("    ① 종가베팅: 추천 1~3순위 중 1종목 선별 매수 (보유종목은 시간갱신 보호)")
+            w("    ② AI 청산 : 전 종목 입체 분석(Batch Review) → 불확실한 종목 과감히 매도")
             w("")
             w("-" * tw)
             w("\033[1;93m [VIBE 시장 장세별 TP/SL 실시간 보정 (Current Delta)]\033[0m")
@@ -606,6 +606,10 @@ def draw_manual_page():
             w("  \033[94mBear(하락)\033[0m  | \033[94m-2.0%\033[0m     | \033[94m-2.0%\033[0m     | 짧은 익절, 리스크 강화")
             w("  \033[90mDefensive\033[0m   | \033[94m-3.0%\033[0m     | \033[94m-3.0%\033[0m     | 극보수적 자산 보호 모드")
             w("  Neutral     |  0.0%     |  0.0%     | 기본 전략 유지")
+            w("")
+            w("\033[1;93m [지수 DEMA(지수이평) 추세 분석]\033[0m")
+            w("  \033[1mKSP↑ / KDQ↓\033[0m: 지수가 20일 DEMA 상단(↑) 또는 하단(↓) 위치 표시")
+            w("  → 하락장(Bear) + DEMA 하단 위치 시 강력한 하락세로 판정하여 보수적 운영")
             w("")
             w("\033[1;93m [프리셋 전략 엔진 (9번 키)]\033[0m")
             w("-" * tw)
@@ -688,7 +692,7 @@ def draw_manual_page():
             w("-" * tw)
             w("  \033[1m헤더바\033[0m    : 버전, 시장상태(KR/US), 작업현황, 시간")
             w("  \033[1m지수라인\033[0m  : KOSPI/KOSDAQ/VIX | DOW/NAS/SPX | 환율/코인/선물")
-            w("  \033[1mVIBE라인\033[0m  : 시장 장세(Bull/Bear/Neutral) + 페이즈 + AI 보정 상태")
+            w("  \033[1mVIBE라인\033[0m  : 장세(Bull/Bear) + DEMA 지수추세 + 페이즈 + AI 보정")
             w("  \033[1m커맨드바\033[0m  : 전체 단축키 한 줄 표시")
             w("  \033[1m자산영역\033[0m  : 총자산/예수금/주식/일일변동/리스크 상태")
             w("  \033[1mSTRAT/ALGO\033[0m: 현재 TP/SL + 보정값 | AI 매매설정 및 비용")
@@ -712,7 +716,14 @@ def draw_manual_page():
         buf.write("\n" + "-" * tw + "\n")
         nav_hint = " | ".join([f"\033[{'7m' if current_tab == i else '0m'}{i}\033[0m" for i in range(1, total_tabs + 1)])
         buf.write(align_kr(f" [{nav_hint}]: 탭 전환 | Q, ESC, SPACE: 메인으로 복귀 ", tw, 'center') + "\n")
-        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+        # [수정] 버퍼 내용을 한 줄씩 출력하면서 각 줄을 소거 (\033[K) 하고 남은 영역 소거 (\033[J)
+        sys.stdout.write("\033[H")
+        content_lines = buf.getvalue().split('\n')
+        for i in range(min(th, len(content_lines))):
+            sys.stdout.write(content_lines[i] + "\033[K" + ("\n" if i < th-1 else ""))
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
+
         
         # 키 입력 대기
         while True:
@@ -746,7 +757,8 @@ def draw_trading_logs(strategy, dm):
             tw, th = size.columns, size.lines
         except:
             tw, th = 80, 24
-        buf = io.StringIO(); buf.write("\033[H\033[2J")
+        buf = io.StringIO()
+
         is_v = getattr(strategy.api.auth, 'is_virtual', True)
         header_bg = "45" if is_v else "44"
         buf.write(f"\033[{header_bg};37m" + align_kr(" [SYSTEM LOGS & MONITORING DASHBOARD] ", tw, 'center') + "\033[0m\n")
@@ -765,14 +777,15 @@ def draw_trading_logs(strategy, dm):
         curr_time = time.time()
 
         if current_tab == 1:
-            dm.set_busy("시스템 로그 조회 중", "GLOBAL")
+            dm.set_busy("시스템 로그 조회 중", "UI")
             log_area_h = max(4, th - 15)
             trade_h = int(log_area_h * 0.7)
             config_h = max(1, log_area_h - trade_h)
             
             buf.write("\033[1;93m [최근 거래 내역 (TRADE)]\033[0m\n")
             with trading_log.lock:
-                trades = copy.deepcopy(trading_log.data.get("trades", []))
+                trades = copy.deepcopy(trading_log.data.get("trades", [])[:trade_h])
+
             if not trades:
                 buf.write("  최근 거래 내역이 없습니다.\n")
             else:
@@ -804,7 +817,7 @@ def draw_trading_logs(strategy, dm):
                     buf.write(f"  [{c.get('time', '-')}] {truncate_log_line(c.get('content', ''), tw - 25)}\n")
                     
         elif current_tab == 2:
-            dm.set_busy("실시간 모니터링 중", "GLOBAL")
+            dm.set_busy("실시간 모니터링 중", "UI")
             with dm.data_lock:
                 last_times = dict(dm.last_times); worker_status = dict(dm._worker_statuses); worker_results = dict(dm.worker_results)
             
@@ -812,13 +825,14 @@ def draw_trading_logs(strategy, dm):
                 "INDEX": "시황/지수 분석", "DATA": "데이터 동기화", "RANKING": "인기 종목 탐색",
                 "ASSET": "계좌 정보 수집", "BILLING": "API 비용 정산", "UPDATE": "최신 버전 확인",
                 "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 알림", "AI_ENGINE": "AI 전략 엔진",
-                "THEME": "테마 정보 수집", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진", "TRADE": "실시간 매매"
+                "THEME": "테마 정보 수집", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진", 
+                "TRADE": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링"
             }
             all_workers = set(worker_desc.keys()); all_workers.update([k.upper() for k in last_times.keys()]); all_workers.update(worker_status.keys())
             
-            # [수정] 설명(Task) 컬럼 너비 확장 (12 -> 18) 및 전체 레이아웃 조정
-            h_name = align_kr('워커명', 12); h_desc = align_kr('설명(Task)', 18)
-            h_time = align_kr('시간', 8); h_elap = align_kr('경과', 10, 'right')
+            # [수정] 워커명 너비 확장 (15 -> 20) 및 경과 시간 너비 동기화 (12)
+            h_name = align_kr('워커명', 20); h_desc = align_kr('설명(Task)', 18)
+            h_time = align_kr('시간', 8); h_elap = align_kr('경과', 12, 'right')
             h_stat = align_kr('상태', 14); h_res  = align_kr('결과', 4, 'center')
             header = f"  {h_name} | {h_desc} | {h_time} | {h_elap} | {h_stat} | {h_res} | 마지막 행동"
             buf.write("\033[1m" + header + "\033[0m\n" + "  " + "-" * (tw - 6) + "\n")
@@ -859,20 +873,21 @@ def draw_trading_logs(strategy, dm):
                 elif w == "TELEGRAM" and hasattr(dm, 'notifier'): res = getattr(dm.notifier, 'last_result', '-')
                 res_color = "\033[92m" if res == "성공" else ("\033[91m" if res == "실패" else "")
                 
-                last_task = dm.worker_last_tasks.get(w, "-")
-                if w == "TELEGRAM" and hasattr(dm, 'notifier'): last_task = getattr(dm.notifier, 'last_task', '-')
+                last_task = dm.worker_last_tasks.get(w, "-").replace('\n', ' ')
+                if w == "TELEGRAM" and hasattr(dm, 'notifier'): 
+                    last_task = getattr(dm.notifier, 'last_task', '-').replace('\n', ' ')
                 
-                # [수정] 마지막 행동 필드 내 개행 문자( \n, \r, <br> )를 공백으로 대체하여 줄바꿈 방지
-                last_task = str(last_task).replace('\n', ' ').replace('\r', ' ').replace('<br>', ' ').replace('<BR>', ' ')
+                # [수정] 실패 시 마지막 행동을 빨간색으로 강조
+                last_task_fmt = f"\033[91m{last_task}\033[0m" if res == "실패" else last_task
                 
-                # [수정] 데이터 행 컬럼 너비 동기화 (Desc: 18, Elap: 10) 및 가용 너비 재계산 (tw-91)
-                buf.write(f"  \033[1;94m{align_kr(name_col, 12)}\033[0m | {align_kr(desc, 18)} | {t_fmt} | {e_fmt} | {status_fmt} | {res_color}{align_kr(res, 4, 'center')}\033[0m | {truncate_log_line(last_task, max(20, tw-91))}\n")
+                # [수정] 데이터 행 컬럼 너비 동기화 (Name: 20, Desc: 18, Elap: 12) 및 가용 너비 재계산 (tw-101)
+                buf.write(f"  \033[1;94m{align_kr(name_col, 20)}\033[0m | {align_kr(desc, 18)} | {t_fmt} | {e_fmt} | {status_fmt} | {res_color}{align_kr(res, 4, 'center')}\033[0m | {truncate_log_line(last_task_fmt, max(20, tw-101))}\n")
             
             skipped = len(sorted_workers) - display_limit
             if skipped > 0: buf.write(f"  \033[90m... 외 {skipped}건 생략됨 (터미널 높이 부족)\033[0m\n")
 
         elif current_tab == 3:
-            dm.set_busy("에러 로그 분석 중", "GLOBAL")
+            dm.set_busy("에러 로그 분석 중", "UI")
             buf.write("\033[1;91m [최근 에러 로그 (ERROR LOG)]\033[0m\n" + "-" * tw + "\n")
             error_file = "error.log"
             try:
@@ -890,7 +905,7 @@ def draw_trading_logs(strategy, dm):
             except Exception as e: buf.write(f"  로그 읽기 오류: {e}\n")
 
         elif current_tab == 4:
-            dm.set_busy("거래 로그 분석 중", "GLOBAL")
+            dm.set_busy("거래 로그 분석 중", "UI")
             buf.write("\033[1;92m [최근 거래 로그 (TRADING LOG)]\033[0m\n" + "-" * tw + "\n")
             trade_log_file = "trading.log"
             try:
@@ -911,7 +926,15 @@ def draw_trading_logs(strategy, dm):
 
         buf.write("\n" + "-" * tw + "\n")
         buf.write(align_kr(" [1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 메인으로 복귀 ", tw, 'center') + "\n")
-        sys.stdout.write(buf.getvalue()); sys.stdout.flush()
+        
+        # [수정] 버퍼 내용을 한 줄씩 출력하면서 각 줄을 소거 (\033[K) 하고 남은 영역 소거 (\033[J)
+        # 드래그나 스크롤 시 화면이 밀리는 현상 방지
+        sys.stdout.write("\033[H")
+        content_lines = buf.getvalue().split('\n')
+        for i in range(min(th, len(content_lines))):
+            sys.stdout.write(content_lines[i] + "\033[K" + ("\n" if i < th-1 else ""))
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
         
         inner_cycle = 0
         while inner_cycle < 100:

@@ -11,7 +11,9 @@ class TradeWorker(BaseWorker):
     def run(self):
         # 시장이 열려있거나 디버그 모드일 때만 작동
         if not self.state.is_kr_market_active and not getattr(self.strategy, "debug_mode", False):
-            self.set_result("대기", last_task="장 종료 (매매 대기)")
+            # [개선] 현재 시간이 장중인데도 active가 False라면 '확인 중'으로 표시
+            msg = "장 종료 (매매 대기)" if not is_market_open() else "시장 상태 확인 중..."
+            self.set_result("대기", last_task=msg)
             return
 
         # 1. 매매 루프 실행 (VibeStrategy.run_cycle)
@@ -19,11 +21,16 @@ class TradeWorker(BaseWorker):
             self.set_busy("매매 검토", friendly_name="TRADE_EXECUTION")
             
             # strategy.run_cycle은 내부적으로 API를 호출하고 로깅함
-            self.strategy.run_cycle(
+            results = self.strategy.run_cycle(
                 market_trend=self.state.vibe.lower(),
                 holdings=self.state.holdings,
                 asset_info=self.state.asset
             )
+            
+            # [추가] 매매 결과가 있으면 TUI 로그에 출력 (요구사항 반영)
+            if results:
+                for res in results:
+                    self.state.add_trading_log(res)
             
             self.set_result("성공", last_task="전략 매매 사이클 수행 완료")
         except Exception as e:

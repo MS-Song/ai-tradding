@@ -10,59 +10,80 @@ class DataSyncWorker(BaseWorker):
         self.api = api
         self.strategy = strategy
         self.last_heavy_sync = 0
+        self.first_run = True
+        self.last_balance_sync = 0
 
     def run(self):
         curr_t = time.time()
         
-        # 1. 자산 및 잔고 패치
+        # 1. 잔고 및 자산 정보 패치 (KIS API 호출) - 5초 주기로 제한 (사용자 요청 반영)
+        should_fetch_balance = curr_t - getattr(self, "last_balance_sync", 0) > 5.0 or self.first_run
+        
         try:
-            self.set_busy("잔고 동기화")
-            h, a = self.api.get_full_balance(force=True)
-            
-            if h or a.get('total_asset', 0) > 0:
-                # 당일 자산 기준점 설정 및 수익률 계산 (DataManager의 _update_daily_metrics 로직)
-                self._update_asset_metrics(a)
+            if should_fetch_balance:
+                self.set_busy("잔고 동기화")
+                h, a = self.api.get_full_balance()
+                self.last_balance_sync = curr_t
                 
-                with self.state.lock:
-                    self.state.holdings = h
-                    self.state.asset = a
-                    self.state.holdings_fetched = True
-                    if a.get('total_asset', 0) > 0:
-                        self.strategy.last_known_asset = float(a['total_asset'])
+                if h or a.get('total_asset', 0) > 0:
+                    self._update_asset_metrics(a)
+                    with self.state.lock:
+                        self.state.holdings = h
+                        self.state.asset = a
+                        self.state.holdings_fetched = True
+                        if a.get('total_asset', 0) > 0:
+                            self.strategy.last_known_asset = float(a['total_asset'])
                     
-                self.state.update_worker_status("ASSET", result="성공", last_task="계좌 및 평가액 동기화 완료", friendly_name="ASSET")
-
-                # 2. 관련 종목 시세 동기화 (네이버 벌크 API 활용)
-                self._sync_stock_prices(h, curr_t)
-                
+                    self.state.update_worker_status("ASSET", result="성공", last_task="계좌 및 평가액 동기화 완료", friendly_name="ASSET")
+            
+            # 2. 관련 종목 시세 동기화 (네이버 벌크 API 활용 - 이건 Rate Limit 없음)
+            # 잔고 데이터가 없는 초기 상태가 아니라면 항상 실행
+            current_holdings = self.state.holdings
+            if current_holdings or self.first_run:
+                self._sync_stock_prices(current_holdings, curr_t)
                 self.set_result("성공", last_task="전체 잔고 및 시세 동기화 완료")
-            else:
-                self.set_result("실패", last_task="잔고 수집 실패")
+                self.first_run = False
+                
         except Exception as e:
-            log_error(f"DataSyncWorker Run Error: {e}")
+            if "초당 거래건수를 초과" in str(e):
+                self.state.update_worker_status("ASSET", result="대기", last_task="API 속도 제한으로 대기 중")
+            else:
+                log_error(f"DataSyncWorker Run Error: {e}")
             self.set_result("실패", last_task=f"동기화 오류: {e}")
 
     def _update_asset_metrics(self, a):
         if not a or a.get('total_asset', 0) <= 0: return
         today_str = datetime.now().strftime('%Y-%m-%d')
         
-        # [수정] 일일 수익률 기준점(start_day_asset) 관리 로직 강화
-        # KIS API의 prev_day_asset은 주식 평가금만 포함되거나 부실한 경우가 많아 검증 후 사용
-        if self.strategy.start_day_asset <= 0 or self.strategy.last_asset_date != today_str:
+        # [핵심] 일일 수익률 기준점(start_day_asset) 강제 동기화
+        # 파일에서 로드된 과거의 잘못된 기준점(stale data)을 방지하기 위해 프로그램 시작 후 첫 실행 시 강제 재설정
+        is_first_init = (
+            self.strategy.start_day_asset <= 0 or 
+            self.strategy.last_asset_date != today_str or
+            getattr(self, "first_run", True)
+        )
+        
+        if is_first_init:
             p_asset = a.get('prev_day_asset', 0)
-            # 만약 전일자산이 오늘 주식평가금보다도 작다면, 현금이 누락된 데이터로 간주하고 무시
-            if p_asset > a.get('stock_eval', 0) * 1.2: # 최소한의 안전장치
+            if p_asset > 0:
+                # KIS 전일 평가액이 있으면 기준점으로 사용 (API 신뢰)
                 self.strategy.start_day_asset = p_asset
             else:
-                # 데이터가 부실하면 현재 자산을 시작점으로 설정 (오늘 수익 0%부터 시작)
+                # 전일 데이터가 없거나 0이면 현재 자산을 시작점으로 설정 (오늘 수익 0%부터 시작)
                 self.strategy.start_day_asset = a['total_asset']
+            
             self.strategy.last_asset_date = today_str
-        
+            self.first_run = False # 초기화 완료
+            with self.state.lock:
+                self.state.last_log_msg = f"\033[96m[LOG] 📅 당일 수익률 기준점 초기화: {self.strategy.start_day_asset:,.0f}원\033[0m"
+                self.state.last_log_time = time.time()
+
         a['total_principal'] = getattr(self.strategy, "base_seed_money", 0)
         
         if self.strategy.start_day_asset > 0:
-            a['daily_pnl_rate'] = (a['total_asset'] / self.strategy.start_day_asset - 1) * 100
+            # [핵심] 일일 수익 및 수익률 계산: 실시간 total_asset 기반
             a['daily_pnl_amt'] = a['total_asset'] - self.strategy.start_day_asset
+            a['daily_pnl_rate'] = (a['daily_pnl_amt'] / self.strategy.start_day_asset * 100)
 
     def _sync_stock_prices(self, holdings, curr_t):
         recent_codes = set()
@@ -85,8 +106,11 @@ class DataSyncWorker(BaseWorker):
         temp_info = {}
         
         def fetch_stock_task(code):
-            n_data = bulk_data.get(code)
             task_id = f"STOCK_{code}"
+            # [수정] 캐시된 이름이 있으면 즉시 표시하여 'STOCK_' 코드 노출 최소화
+            cached_name = self.state.stock_info.get(code, {}).get('name')
+            f_name = f"{code}_{cached_name}" if cached_name else task_id
+            self.state.update_worker_status(task_id, status="분석 중", friendly_name=f_name)
             
             # 종목명 찾기 (우선순위: 잔고명 -> Naver 실시간명 -> KIS 상세명 -> 기존 캐시명)
             s_name = next((s.get('prdt_name') for s in holdings if s.get('pdno')==code), None)
@@ -118,9 +142,11 @@ class DataSyncWorker(BaseWorker):
             if not s_name: 
                 s_name = self.state.stock_info.get(code, {}).get('name')
                 if not s_name or s_name == "Unknown":
-                    # 마지막 수단: API에서 다시 확인하거나 코드로 대체
-                    detail = self.api.get_naver_stock_detail(code)
                     s_name = detail.get('name', code)
+
+            # [수정] 분석 완료된 명칭으로 최종 업데이트
+            f_name = f"{code}_{s_name}" if s_name else task_id
+            self.state.update_worker_status(task_id, friendly_name=f_name)
 
             # MA20 계산
             ma_20 = self.state.ma_20_cache.get(code, 0.0)
@@ -145,12 +171,27 @@ class DataSyncWorker(BaseWorker):
                     c, info, tid, ma = f.result()
                     temp_info[c] = info
                     with self.state.lock:
-                        self.state.worker_names[tid] = f"{c}_{info['name']}"
+                        # self.state.worker_names[tid] = f"{c}_{info['name']}"  # 워커명 유지 요청에 따라 제거
                         if ma > 0: self.state.ma_20_cache[c] = ma
+                    self.state.update_worker_status(tid, status="IDLE", result="성공", last_task=f"{info['name']} 동기화 완료", friendly_name=f"{c}_{info['name']}")
                 except: pass
 
-        # 4. 실시간 가격 기반 수익률 재계산 (KIS API 지연 대응)
+        # 3.5 [신규] 보유 종목이 아닌 STOCK_ 워커 정리 (상태 제거)
+        if self.state.holdings_fetched: # 잔고 데이터가 로드된 상태에서만 정리 수행
+            with self.state.lock:
+                active_stock_ids = [f"STOCK_{c}" for c in all_codes]
+                for w_id in list(self.state.last_times.keys()):
+                    if w_id.upper().startswith("STOCK_") and w_id.upper() not in active_stock_ids:
+                        # 해당 워커의 모든 흔적 제거
+                        self.state.last_times.pop(w_id, None)
+                        self.state.worker_statuses.pop(w_id.upper(), None)
+                        self.state.worker_results.pop(w_id.upper(), None)
+                        self.state.worker_last_tasks.pop(w_id.upper(), None)
+                        self.state.worker_names.pop(w_id.upper(), None)
+
+        # 4. 실시간 가격 기반 수익률 및 자산 재계산 (KIS API 지연 대응)
         with self.state.lock:
+            eval_delta = 0
             for h in self.state.holdings:
                 c = h.get('pdno')
                 if c in temp_info:
@@ -159,12 +200,24 @@ class DataSyncWorker(BaseWorker):
                     avg_p = float(h.get('pchs_avg_pric', 0))
                     qty = int(float(h.get('hldg_qty', 0)))
                     
+                    # 기존 평가금액과 실시간 평가금액 차이 계산
+                    old_eval = float(h.get('evlu_amt', 0))
+                    new_eval = curr_p * qty
+                    eval_delta += (new_eval - old_eval)
+                    
                     if avg_p > 0 and curr_p > 0:
                         pnl_amt = (curr_p - avg_p) * qty
                         pnl_rt = ((curr_p / avg_p) - 1) * 100
                         h['evlu_pfls_rt'] = f"{pnl_rt:.2f}"
                         h['evlu_pfls_amt'] = str(int(pnl_amt))
                         h['prpr'] = str(int(curr_p))
+                        h['evlu_amt'] = str(int(new_eval)) # 평가금액 업데이트
+
+            # 총자산 및 일일 수익률 즉시 갱신 (지연 방지)
+            if eval_delta != 0 and self.state.asset:
+                self.state.asset['total_asset'] = float(self.state.asset.get('total_asset', 0)) + eval_delta
+                self.state.asset['stock_eval'] = float(self.state.asset.get('stock_eval', 0)) + eval_delta
+                self._update_asset_metrics(self.state.asset)
 
             self.state.stock_info.update(temp_info)
             self.state.last_update_time = datetime.now().strftime('%H:%M:%S')

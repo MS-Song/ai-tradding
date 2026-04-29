@@ -66,7 +66,12 @@ class TradingLogManager:
         self.log_file = log_file
         self.data = {"trades": [], "configs": [], "rejections": [], "buy_reasons": []}
         self.lock = threading.Lock()
+        self.notifier = None  # [추가] 텔레그램 알림 엔진 연동
         self._load()
+
+    def set_notifier(self, notifier):
+        """[추가] 알림 엔진 연동을 위한 세터"""
+        self.notifier = notifier
 
     def _load(self):
         with self.lock:
@@ -112,26 +117,48 @@ class TradingLogManager:
 
     def log_trade(self, trade_type, code, name, price, qty, memo="", profit=0.0, model_id=""):
         """실제 체결 데이터를 기록 (TRADE). 매도 시 profit(수익금) 포함 가능"""
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        log_entry = {
-            "type": trade_type, 
-            "time": now, 
-            "code": code, 
-            "name": name, 
-            "price": float(price), 
-            "qty": int(qty), 
-            "memo": memo,
-            "profit": float(profit),
-            "model_id": model_id  # [Phase 2 추가]
-        }
-        with self.lock:
-            self.data["trades"].insert(0, log_entry) # 최신순
-        self._save()
+        try:
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # [Safety] NaN 또는 Inf 수익금 처리
+            import math
+            f_profit = float(profit)
+            if not math.isfinite(f_profit):
+                f_profit = 0.0
+            
+            f_price = float(price)
+            if not math.isfinite(f_price):
+                f_price = 0.0
+
+            log_entry = {
+                "type": trade_type, 
+                "time": now, 
+                "code": code, 
+                "name": name, 
+                "price": f_price, 
+                "qty": int(qty), 
+                "memo": memo,
+                "profit": f_profit,
+                "model_id": model_id
+            }
+            with self.lock:
+                self.data["trades"].insert(0, log_entry) # 최신순
+            self._save()
+            
+            # 텍스트 로그 파일에도 동시 기록
+            p_str = f" | 수익: {int(f_profit):+,}원" if f_profit != 0 else ""
+            m_str = f" | 모델: {model_id}" if model_id else ""
+            logger.info(f"[TRADE] {trade_type} | {name}({code}) | {int(f_price):,}원 | {qty}주 | {memo}{p_str}{m_str}")
+
+            # [Phase 2] 텔레그램 및 TUI 로그 동시 기록
+            if self.notifier:
+                try:
+                    self.notifier.notify_trade(trade_type, code, name, f_price, qty, memo, f_profit, model_id)
+                except Exception as e:
+                    log_error(f"Telegram Notification Error: {e}")
+        except Exception as e:
+            log_error(f"log_trade 기록 중 치명적 오류: {e}")
         
-        # 텍스트 로그 파일에도 동시 기록
-        p_str = f" | 수익: {int(profit):+,}원" if profit != 0 else ""
-        m_str = f" | 모델: {model_id}" if model_id else ""
-        logger.info(f"[TRADE] {trade_type} | {name}({code}) | {int(price):,}원 | {qty}주 | {memo}{p_str}{m_str}")
 
     def log_config(self, content):
         """환경 설정 및 전략 변경을 기록 (CONFIG)"""

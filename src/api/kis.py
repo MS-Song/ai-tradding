@@ -16,20 +16,23 @@ class KISAPIClient(BaseAPI):
     _req_lock = threading.Lock()
 
     def _request(self, method, url, **kwargs):
-        # [개선] 글로벌 레이트 리미터: 전 스레드 공통으로 초당 호출 제한 준수
-        with self._req_lock:
-            now = time.time()
-            # 모의 투자는 초당 2회, 실전은 초당 5회(또는 10회)이나 안전을 위해 0.5s~1s 간격 유지
-            interval = 0.51 if self.auth.is_virtual else 0.21
-            elapsed = now - self._last_req_time
-            if elapsed < interval:
-                time.sleep(interval - elapsed)
-            self._last_req_time = time.time()
+        # [개선] 글로벌 레이트 리미터: 모의투자는 초당 1회 미만 엄격 제한, 실전은 제한 해제
+        is_v = getattr(self.auth, 'is_virtual', True)
+        if is_v:
+            # 클래스 변수를 직접 참조하여 인스턴스에 상관없이 단일 큐 보장
+            with KISAPIClient._req_lock:
+                now = time.time()
+                interval = 1.5 # 모의투자는 초당 약 0.6회 (1.5s 간격)로 보수적으로 제한
+                elapsed = now - KISAPIClient._last_req_time
+                if elapsed < interval:
+                    time.sleep(interval - elapsed)
+                KISAPIClient._last_req_time = time.time()
+        # 실전 거래는 별도의 대기 없이 즉시 실행 (호출 큐 해제)
 
         return requests.request(method, url, **kwargs)
 
     @retry_api(max_retries=3, delay=1.5)
-    def get_full_balance(self, force=False) -> Tuple[List[dict], dict]:
+    def get_full_balance(self, force=False, **kwargs) -> Tuple[List[dict], dict]:
         url = f"{self.domain}/uapi/domestic-stock/v1/trading/inquire-balance"
         headers = self.auth.get_auth_headers()
         headers.update({"tr_id": "VTTC8434R" if self.auth.is_virtual else "TTTC8434R"})
@@ -43,7 +46,9 @@ class KISAPIClient(BaseAPI):
         try:
             res = self._request("GET", url, headers=headers, params=params, timeout=10)
             data = res.json()
-            if data.get("rt_cd") != "0": return [], {"total_asset":0, "stock_eval":0, "cash":0, "pnl":0}
+            if data.get("rt_cd") != "0": 
+                msg = data.get("msg1", "Unknown Error")
+                raise Exception(f"KIS API Error: {msg} (RT_CD:{data.get('rt_cd')})")
             
             raw_holdings = data.get("output1", [])
             holdings = []
@@ -73,30 +78,48 @@ class KISAPIClient(BaseAPI):
                     "prdy_vrss": str(vrss), "prdy_ctrt": str(ctrt)
                 })
             
+            # output2가 비어있는 경우 대응 (종목은 없는데 예수금만 있는 경우 등)
+            if not data.get("output2"):
+                return holdings, {"total_asset": 0, "prev_day_asset": 0}
+            
             raw_summary = data.get("output2", [{}])[0]
-            d0_cash = self._safe_float(raw_summary.get("dnca_tot_amt"))
-            # [수정] d2_cash는 'excc'(재사용/증거금포함)가 아닌 'exca'(실제 정산예정금)를 사용해야 함
-            d2_cash = self._safe_float(raw_summary.get("prvs_rcdl_exca_amt"))
-            if d2_cash <= 0: d2_cash = d0_cash # 데이터 부재 시 D+0으로 대체
+            d0_cash = self._safe_float(raw_summary.get("dnca_tot_amt"))            # D+0 예수금
+            d2_cash = self._safe_float(raw_summary.get("prvs_rcdl_excc_amt"))      # D+2 정산예수금
+            
+            # 가용 현금(cash)은 주식 매도 대금을 즉시 매수 자금으로 활용할 수 있도록 D+2 정산예수금을 기준으로 합니다.
+            # D+2 예수금이 마이너스인 경우(미수 발생) 추가 매수를 방지하기 위해 0으로 처리합니다.
+            cash = d2_cash if d2_cash > 0 else 0
             
             stock_eval = self._safe_float(raw_summary.get("evlu_amt_smtl_amt"))
+            stock_principal = self._safe_float(raw_summary.get("pchs_amt_smtl_amt"))
             
-            # [개선] 총자산 = 정산현금(D+2) + 주식평가금 (미결제 매도대금 포함)
-            tot_asset = d2_cash + stock_eval
+            # [복구] 메인 브랜치 표준 필드 사용
+            tot_asset = self._safe_float(raw_summary.get("tot_evlu_amt"))
+            if tot_asset <= 0:
+                tot_asset = d2_cash + stock_eval
+            
+            # [복구] 메인 브랜치 표준 필드 사용 (prdy_evlu_amt)
+            prev_day_asset = self._safe_float(raw_summary.get("prdy_evlu_amt") or 0)
             
             asset_info = {
                 "total_asset": tot_asset,
+                "total_principal": stock_principal + d2_cash,
                 "stock_eval": stock_eval,
+                "stock_principal": stock_principal,
+                "cash": cash,
                 "d0_cash": d0_cash,
                 "d2_cash": d2_cash,
-                "cash": d2_cash, # 시스템 매수 가능 판단 기준 (정산금 기준)
                 "pnl": self._safe_float(raw_summary.get("evlu_pfls_smtl_amt")),
-                "prev_day_asset": self._safe_float(raw_summary.get("prdy_evlu_amt") or 0)
+                "deposit": self._safe_float(raw_summary.get("prvs_rcdl_exca_amt") or 0),
+                "prev_day_asset": prev_day_asset
             }
             return holdings, asset_info
-        except: return [], {}
+        except Exception as e:
+            # 예외를 상위로 던져서 SyncWorker가 구체적인 이유를 표시하게 함
+            if "KIS API Error" in str(e): raise e
+            raise Exception(f"Balance Fetch Fail: {e}")
 
-    def get_balance(self, force=False) -> List[dict]:
+    def get_balance(self, force=False, **kwargs) -> List[dict]:
         return self.get_full_balance(force=force)[0]
 
     def order_market(self, code: str, qty: int, is_buy: bool, price: int = 0) -> Tuple[bool, str]:

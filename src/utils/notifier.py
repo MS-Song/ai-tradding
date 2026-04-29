@@ -49,7 +49,8 @@ class TelegramNotifier:
 
                 # 메시지 전송
                 self.status_msg = "전송중"
-                self.last_task = f"메시지 전송: {msg[:20]}..."
+                clean_preview = msg[:30].replace('\n', ' ')
+                self.last_task = f"메시지 전송: {clean_preview}..."
                 if self.dm:
                     self.dm.update_worker_status("TELEGRAM", last_task=self.last_task)
                 

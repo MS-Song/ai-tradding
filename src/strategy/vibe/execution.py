@@ -59,6 +59,7 @@ class ExecutionMixin:
                                 results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
                                 m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else ""
                                 trading_log.log_trade("P4종가매수", code, name, price, qty, "AI 추천 기반 종가 베팅", model_id=m_id)
+                                trading_log.log_buy_reason(code, name, "AI 추천 기반 종가 베팅", model_id=m_id)
                                 self.record_buy(code, price)
                                 self.auto_assign_preset(code, name)
                                 self._save_all_states()
@@ -283,6 +284,9 @@ class ExecutionMixin:
                     # [Cooldown] 익절/손절 후 2시간 이내 재진입 금지 (핑퐁 방지)
                     if (time.time() - self.last_sell_times.get(code, 0)) < 7200: continue
                     
+                    # [Cooldown] 최근 매수 이력이 있으면 중복 진입 금지 (잔고 동기화 지연 및 API 딜레이 대응)
+                    if (time.time() - self.last_buy_times.get(code, 0)) < 600: continue
+                    
                     # 현금 비중 보호
                     if market_trend == "bear" and cash_ratio < 30: continue
                     if market_trend == "defensive" and cash_ratio < 80: continue
@@ -308,9 +312,23 @@ class ExecutionMixin:
                     if target_code:
                         t_item = next((h for h in holdings if h['pdno'] == target_code), None)
                         if t_item:
-                            self.api.order_market(target_code, int(float(t_item['hldg_qty'])), False)
-                            self.record_sell(target_code, is_full_exit=True)
-                            results.append(f"🔄 교체매도: {t_item['prdt_name']}")
+                            success, _ = self.api.order_market(target_code, int(float(t_item['hldg_qty'])), False)
+                            if success:
+                                curr_price = float(t_item.get('prpr', 0))
+                                profit = (curr_price - float(t_item.get('pchs_avg_pric', 0))) * int(float(t_item['hldg_qty']))
+                                trading_log.log_trade("교체매도", target_code, t_item['prdt_name'], curr_price, int(float(t_item['hldg_qty'])), f"교체대상 선정됨 (후보: {name})", profit=profit, model_id="AI")
+                                self.replacement_logs.append({
+                                    "time": now_str,
+                                    "out_code": target_code,
+                                    "out_name": t_item['prdt_name'],
+                                    "in_code": code,
+                                    "in_name": name,
+                                    "reason": f"AI 교체 판단 (후보: {name})"
+                                })
+                                self.record_sell(target_code, is_full_exit=True)
+                                results.append(f"🔄 교체매도: {t_item['prdt_name']}")
+                            else:
+                                results.append(f"❌ 교체매도 실패: {t_item['prdt_name']}")
                     
                     price = float(rec.get('price', 0)) or self.api.get_inquire_price(code).get('price', 0)
                     qty = math.floor(amt / price) if price > 0 else 0
@@ -322,6 +340,7 @@ class ExecutionMixin:
                             results.append(f"🚀 AI자율매수: {name} {qty}주")
                             m_id = self.last_buy_models.get(code, "AI")
                             trading_log.log_trade("AI자율매수", code, name, price, qty, reason, model_id=m_id)
+                            trading_log.log_buy_reason(code, name, reason, model_id=m_id)
                             self._save_all_states()
                             
         return results
@@ -367,6 +386,10 @@ class ExecutionMixin:
     def confirm_buy_decision(self, code: str, name: str, score: float = 0.0) -> Tuple[bool, str]:
         self._cleanup_rejected_stocks()
         if code in self.rejected_stocks: return False, f"당일 매수 거절됨"
+        
+        # [Safety] 최근 매수 이력이 있는 경우 중복 진입 방지 (잔고 동기화 전 중복 호출 차단)
+        if (time.time() - self.last_buy_times.get(code, 0)) < 600:
+            return False, "최근 매수 이력 있음 (중복 방지)"
         
         # [Safety] indicators 초기화 위치를 함수 최상단으로 이동 (UnboundLocalError 방지)
         indicators = {}

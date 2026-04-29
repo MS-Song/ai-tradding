@@ -36,8 +36,9 @@ class TradingState:
         self.vol_raw: List[dict] = []
         
         # --- 시스템 상태 및 플래그 ---
+        from src.utils import is_market_open
         self.is_running: bool = True
-        self.is_kr_market_active: bool = False
+        self.is_kr_market_active: bool = is_market_open()
         self.holdings_fetched: bool = False
         self.last_update_time: str = ""
         self.ranking_filter: str = "ALL"

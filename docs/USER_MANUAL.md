@@ -65,7 +65,7 @@
 2.  **Market Indices**: KOSPI, KOSDAQ, NASDAQ, 환율 등 주요 지수 실시간 표시.
     *   **C Market**: 비트코인 국내가/해외가 및 **김치 프리미엄(PREM)** 표시.
 3.  **VIBE Status**: 현재 시장 분위기 (BULL/BEAR/NEUTRAL/DEFENSIVE) 및 AI 교정 메시지.
-    *   **[신규] DEMA 추세**: VIBE 옆에 `[DEMA: KSP↑ KDQ↓]` 형태로 지수의 이중 지수 이동 평균(DEMA) 대비 현재 위치를 표시합니다 (↑:상회, ↓:하회).
+    *   **[신규] DEMA 추세**: VIBE 옆에 `[DEMA: KSP↑ KDQ↓]` 형태로 지수의 이중 지수 이동 평균(DEMA) 대비 현재 위치를 표시합니다 (↑:상회, ↓:하회). 지수가 DEMA 하단에 위치하고 당일 등락률이 마이너스인 경우 **[강력한 Bear]**로 판정하여 리스크 관리를 강화합니다.
 4.  **COMMANDS**: 사용 가능한 모든 단축키 리스트.
 5.  **전략 정보 패널**:
     *   `STRAT`: 현재 기본 익절/손절 기준 및 Vibe 보정 적용 후 실시간 값.

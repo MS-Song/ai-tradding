@@ -143,6 +143,7 @@ class MarketAnalyzer:
         return False
 
     def _check_kr_vibe(self) -> str:
+        dema_signals = []
         kr_targets = {"KOSPI": "0001", "KOSDAQ": "1001"}
         active_kr = [self.current_data.get(k) for k in kr_targets if self.current_data.get(k)]
         if not active_kr: return "Neutral"
@@ -165,7 +166,6 @@ class MarketAnalyzer:
                     log_error(f"지수 DEMA 계산 오류 ({name}): {e}")
             self.last_dema_update = now
 
-        dema_signals = []
         for name in kr_targets.keys():
             if name in self.dema_info:
                 info = self.dema_info[name]

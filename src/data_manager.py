@@ -21,6 +21,7 @@ class DataManager:
         
         # --- 알림 엔진 초기화 ---
         self.notifier = TelegramNotifier(dm=self)
+        trading_log.set_notifier(self.notifier)
         
         # --- 워커 인스턴스 (Phase 2) ---
         self.workers = {
@@ -208,7 +209,7 @@ class DataManager:
         """로그 정리 및 주기적 관리 작업"""
         while self.state.is_running:
             try:
-                self.set_busy("로그 정리")
+                self.set_busy("로그 정리", "CLEANUP")
                 cleanup_text_log("error.log", days_to_keep=2)
                 trading_log.cleanup(days_to_keep=2)
                 self.update_worker_status("CLEANUP", result="성공", last_task="로그 파일 정리 완료")
@@ -216,7 +217,7 @@ class DataManager:
             except Exception as e:
                 log_error(f"Maintenance Loop Error: {e}")
             finally:
-                self.clear_busy()
+                self.clear_busy("CLEANUP")
             
             time.sleep(3600) # 1시간 주기
 

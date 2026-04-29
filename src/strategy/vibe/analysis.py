@@ -35,8 +35,6 @@ class AnalysisMixin:
         """백그라운드에서 주기적으로 호출되어 시황 분석, AI 조언 수집, 전략 반영을 일괄 수행"""
         if self.is_analyzing: return
         
-        if dm: dm.update_worker_status("AI_ENGINE", last_task="정기 시황 및 포트폴리오 분석 중")
-        
         # [추가] AI 토큰 절약을 위한 시간 기반 차단 (디버그 모드 제외)
         if not is_ai_enabled_time() and not getattr(self, "debug_mode", False):
             if not getattr(self, "_ai_disabled_logged", False):
@@ -54,6 +52,7 @@ class AnalysisMixin:
             self._ai_disabled_logged = False
 
         self.is_analyzing = True
+        if dm: dm.set_busy("정기 분석", "AI_ENGINE")
         try:
             # 1. 시장 시황 분석 (Vibe 결정 등)
             self.perform_full_market_analysis()
@@ -77,6 +76,7 @@ class AnalysisMixin:
         finally:
             self.is_analyzing = False
             self.current_action = "대기중"
+            if dm: dm.clear_busy("AI_ENGINE")
 
     def update_ai_recommendations(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], progress_cb: Optional[Callable] = None, on_item_found: Optional[Callable] = None):
         try: 
