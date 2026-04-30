@@ -44,6 +44,9 @@ class TelegramNotifier:
                 # 큐에서 메시지 대기 (타임아웃을 두어 루프 종료 체크)
                 try:
                     msg, parse_mode = self.msg_queue.get(timeout=1.0)
+                    if msg == "__QUIT__":
+                        self.msg_queue.task_done()
+                        break
                 except queue.Empty:
                     # 대기 중에도 주기적으로 갱신하여 살아있음을 알림 (선택 사항)
                     continue
@@ -166,6 +169,7 @@ class TelegramNotifier:
     def stop(self):
         """엔진 종료"""
         self.is_running = False
-        if self.worker_thread:
-            # 큐에 남은 메시지가 처리될 때까지 잠시 대기할 수 있음
-            pass
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.msg_queue.put(("__QUIT__", None))
+            # 큐에 남은 메시지가 처리될 때까지 잠시 대기 (최대 2초)
+            self.worker_thread.join(timeout=2.0)

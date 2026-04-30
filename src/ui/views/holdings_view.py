@@ -1,0 +1,126 @@
+import os
+import sys
+import time
+import threading
+import io
+import re
+from datetime import datetime
+from src.utils import *
+from src.theme_engine import get_cached_themes, get_theme_for_stock
+from src.strategy import PRESET_STRATEGIES
+from src.logger import trading_log
+
+def draw_holdings_detail(strategy, dm):
+    import io
+    import os
+    import threading
+    from datetime import datetime
+    
+    _is_running_analysis = False
+    
+    def run_bg_analysis():
+        nonlocal _is_running_analysis
+        _is_running_analysis = True
+        dm.set_busy("AI 포트폴리오 진단 중", "UI")
+        try:
+            strategy.refresh_holdings_opinion(progress_cb=lambda c, t: dm.set_busy(f"진단({c}/{t})", "UI"))
+        finally:
+            _is_running_analysis = False
+            with dm.data_lock:
+                dm.worker_results["GLOBAL"] = "성공"
+            dm.clear_busy("UI")
+            time.sleep(0.2)
+            flush_input()
+
+    while True:
+        try:
+            size = os.get_terminal_size()
+            tw, th = size.columns, size.lines
+        except:
+            tw, th = 80, 24
+        buf = io.StringIO()
+
+        is_v = getattr(strategy.api.auth, 'is_virtual', True)
+        header_bg = "45" if is_v else "44"
+        buf.write(f"\033[{header_bg};37m" + align_kr(" [AI HOLDINGS PORTFOLIO REPORT] ", tw, 'center') + "\033[0m\n")
+        buf.write("=" * tw + "\n")
+
+        # 자산 요약
+        asset = dm.cached_asset; p_c = "\033[91m" if asset['pnl'] > 0 else "\033[94m" if asset['pnl'] < 0 else "\033[0m"
+        p_rt = (asset['pnl'] / (asset['total_asset'] - asset['pnl']) * 100) if (asset['total_asset'] - asset['pnl']) > 0 else 0
+        buf.write(align_kr(f" [자산 요약] 총자산: {asset['total_asset']:,.0f} | 평가손익: {p_c}{int(asset['pnl']):+,} ({p_rt:+.2f}%)\033[0m | 현금: {asset['cash']:,.0f}", tw) + "\n")
+        buf.write("-" * tw + "\n")
+        
+        if not dm.cached_holdings:
+            buf.write(align_kr("현재 보유 중인 종목이 없습니다.", tw, 'center') + "\n")
+        else:
+            buf.write("\033[1m" + f"{align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('수익률', 10)} | {align_kr('평가손액', 12)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)}" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            max_h = max(3, th - 15)
+            for h in dm.cached_holdings[:max_h]:
+                code = h['pdno']; pnl_rt = float(h.get('evlu_pfls_rt', 0)); pnl_amt = int(float(h.get('evlu_pfls_amt', 0)))
+                color = "\033[91m" if pnl_amt > 0 else "\033[94m" if pnl_amt < 0 else "\033[0m"
+                detail = strategy.api.get_naver_stock_detail(code, force=False)
+                buf.write(f"{align_kr(code, 8)} | {align_kr(h['prdt_name'], 14)} | {color}{align_kr(f'{pnl_rt:+.2f}%', 10, 'right')}\033[0m | {color}{align_kr(f'{pnl_amt:+,}', 12, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')}\n")
+
+        buf.write("\n\033[1;96m" + " [AI 포트폴리오 매니저의 실시간 진단 의견]" + "\033[0m")
+        if hasattr(strategy, 'ai_holdings_update_time') and strategy.ai_holdings_update_time > 0:
+            t_str = datetime.fromtimestamp(strategy.ai_holdings_update_time).strftime('%H:%M:%S')
+            buf.write(f" (분석완료: {t_str})\n")
+        else: buf.write("\n")
+        
+        if _is_running_analysis:
+            buf.write(f"\n  \033[93m🔄 포트폴리오를 입체 분석 중입니다... ({dm.global_busy_msg or '대기중'})\033[0m\n")
+        elif strategy.ai_holdings_opinion:
+            max_lines = max(3, th - buf.getvalue().count('\n') - 5)
+            cleaned_opinion = clean_ai_text(strategy.ai_holdings_opinion)
+            lines = [l.strip() for l in cleaned_opinion.split('\n') if l.strip()]
+            for line in lines[:max_lines]: buf.write(f"  {line}\n")
+        else:
+            buf.write("\n  ⚠️ 아직 진단 데이터가 없습니다. 'R' 키를 눌러 AI 분석을 시작하세요.\n")
+
+        # 하단 상태 바 및 키 안내
+        buf.write("\n" + "-" * tw + "\n")
+        if _is_running_analysis:
+            status_line = f" \033[93m[작업중]\033[0m {dm.global_busy_msg}"
+        elif hasattr(strategy, 'ai_holdings_update_time') and strategy.ai_holdings_update_time > 0:
+            elapsed = time.time() - strategy.ai_holdings_update_time
+            t_str = datetime.fromtimestamp(strategy.ai_holdings_update_time).strftime('%H:%M:%S')
+            status_line = f" \033[92m[분석완료]\033[0m {t_str} ({int(elapsed//60)}분 전)"
+        else:
+            status_line = " \033[90m[미분석]\033[0m AI 진단 데이터 없음"
+        buf.write(status_line + "\n")
+        
+        # R키 안내: 10분 이상 경과 또는 미분석 시에만 표시
+        has_recent = hasattr(strategy, 'ai_holdings_update_time') and strategy.ai_holdings_update_time > 0 and (time.time() - strategy.ai_holdings_update_time < 600)
+        if has_recent:
+            buf.write(align_kr(" Q, ESC, SPACE: 종료 | R: AI 재진단 ", tw, 'center') + "\n")
+        else:
+            buf.write(align_kr(" Q, ESC, SPACE: 종료 | \033[93mR: AI 진단 시작\033[0m ", tw, 'center') + "\n")
+
+        
+        # [수정] 부드러운 화면 갱신
+        sys.stdout.write("\033[H")
+        content_lines = buf.getvalue().split('\n')
+        for i in range(min(th, len(content_lines))):
+            sys.stdout.write(content_lines[i] + "\033[K" + ("\n" if i < th-1 else ""))
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
+
+        
+        # 키 입력 루프 (비차단 렌더링을 위해 짧은 대기 후 재진입)
+        inner_cycle = 0
+        while inner_cycle < 10: 
+            k = get_key_immediate()
+            if k:
+                kl = k.lower()
+                if kl == 'r':
+                    if not _is_running_analysis:
+                        threading.Thread(target=run_bg_analysis, daemon=True).start()
+                    break
+                elif kl in ['q', 'esc', ' ']:
+                    buf.close()
+                    return
+            time.sleep(0.01)
+            inner_cycle += 1
+
