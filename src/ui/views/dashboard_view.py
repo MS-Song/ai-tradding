@@ -31,13 +31,16 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     # 버전/상태/작업 정보를 왼쪽에 배치, 시간과 스레드 카운트를 오른쪽 끝에 배치
     is_v = getattr(strategy.api.auth, 'is_virtual', True)
     debug_tag = " [디버그]" if getattr(strategy, "debug_mode", False) else ""
-    mode_tag = f" [모의]{debug_tag}" if is_v else f" [실전]{debug_tag}"
+    # [DEV] 태그: 실행파일이 아닌 경우(python 실행) 항상 표시
+    from src.updater import is_running_as_executable as _is_exe_fn
+    _is_exe = _is_exe_fn()
+    _dev_tag = "" if _is_exe else " \033[1;90m[DEV]\033[0;44m"
+    mode_tag = f" [모의]{debug_tag}{_dev_tag}" if is_v else f" [실전]{debug_tag}{_dev_tag}"
+    # 업데이트 배지: 새 버전 감지 시 실행모드에 따라 구분
     if dm.update_info.get("has_update"):
-        from src.updater import is_running_as_executable
-        _is_exe = is_running_as_executable()
         _auto_on = getattr(strategy, 'config', {}).get('vibe_strategy', {}).get('auto_update', False)
         if not _is_exe:
-            update_tag = f" \033[1;90m[DEV]\033[1;93m🆕NEW v{dm.update_info['latest_version']}\033[0;44m"
+            update_tag = f" \033[1;93m🆕NEW v{dm.update_info['latest_version']}\033[0;44m"
         elif _auto_on:
             update_tag = f" \033[1;92m[AUTO🔄 v{dm.update_info['latest_version']}]\033[0;44m"
         else:
@@ -317,9 +320,18 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         risk_info = f"리스크: {risk_st} (한도:-{limit_val}%)"
         
         ai_cost_info = f"AI 비용: \033[90m-{total_ai_cost:,.0f}\033[0m"
+        # AUTO_UPDATE 상태
+        _auto_upd_cfg = getattr(strategy, 'config', {}).get('vibe_strategy', {}).get('auto_update', False)
+        if not _is_exe:
+            _upd_mode_str = "\033[90m[DEV/업데이트알림전용]\033[0m"
+        elif _auto_upd_cfg:
+            _upd_mode_str = "\033[92mON(EXE/자동)\033[0m"
+        else:
+            _upd_mode_str = "\033[90mOFF(EXE/수동)\033[0m"
+        auto_upd_info = f"자동업데이트: {_upd_mode_str}"
         line_setup = (f"{label_setup} | {align_kr(strat_info, W1)} | {align_kr(algo_info, W2)} | "
                       f"{align_kr(bear_info, W3)} | {align_kr(bull_info, W4)} | "
-                      f"{align_kr(risk_info, W5)} | {ai_cost_info}\033[0m")
+                      f"{align_kr(risk_info, W5)} | {ai_cost_info} | {auto_upd_info}\033[0m")
         buf.write(align_kr(line_setup, tw) + "\n")
         buf.write("-" * tw + "\n")
 
