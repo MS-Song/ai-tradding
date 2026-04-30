@@ -51,7 +51,7 @@ class DataManager:
         self.ui_lock = threading.Lock() # UI 전용 락 유지
         
         # --- 초기 알림 ---
-        self.notifier.notify_alert("시스템 시작", "🚀 KIS-Vibe-Trader 엔진이 가동되었습니다. (Modular Arch)")
+        self.notifier.notify_alert("시스템 시작", self._build_system_msg("🚀 KIS-Vibe-Trader 엔진이 가동되었습니다."))
 
     # --- 하위 호환성을 위한 프로퍼티 매핑 ---
     @property
@@ -335,8 +335,49 @@ class DataManager:
         finally:
             self.clear_busy("UPDATE")
 
+    def _build_system_msg(self, headline: str) -> str:
+        """실행 시스템 정보를 포함한 알림 메시지를 생성합니다."""
+        import socket, platform, sys, os
+        from src.updater import is_running_as_executable
+        from src.ui.renderer import VERSION_CACHE
+        
+        try:
+            hostname = socket.gethostname()
+        except Exception:
+            hostname = "Unknown"
+        
+        # IP 주소 (로칼 + 외부 IP 모두 시도)
+        try:
+            local_ip = socket.gethostbyname(hostname)
+        except Exception:
+            local_ip = "Unknown"
+        
+        try:
+            import urllib.request
+            public_ip = urllib.request.urlopen("https://api.ipify.org", timeout=3).read().decode()
+        except Exception:
+            public_ip = "N/A"
+        
+        run_mode = "EXE" if is_running_as_executable() else "DEV(python)"
+        os_info = f"{platform.system()} {platform.release()}"
+        py_ver = f"Python {sys.version.split()[0]}" if not is_running_as_executable() else ""
+        cwd = os.getcwd()
+        # 경로가 너무 길면 마지막 두 단계만
+        cwd_parts = cwd.replace("\\", "/").split("/")
+        cwd_short = "/".join(cwd_parts[-2:]) if len(cwd_parts) >= 2 else cwd
+        
+        lines = [headline, ""]
+        lines.append(f"🖥️  호스트: `{hostname}`")
+        lines.append(f"🌐  로칼 IP: `{local_ip}`")
+        lines.append(f"🏠  외부 IP: `{public_ip}`")
+        lines.append(f"💻  OS: `{os_info}`")
+        lines.append(f"⚡  실행모드: `{run_mode}`{f' / {py_ver}' if py_ver else ''}")
+        lines.append(f"📂  경로: `.../{cwd_short}`")
+        lines.append(f"🔖  버전: `v{VERSION_CACHE}`")
+        return "\n".join(lines)
+
     def shutdown(self, reason="사용자 종료"):
-        self.notifier.notify_alert("시스템 종료", f"🛑 트레이딩 엔진이 종료되었습니다. (사유: {reason})")
+        self.notifier.notify_alert("시스템 종료", self._build_system_msg(f"🛑 트레이딩 엔진이 종료되었습니다.\n📌 사유: {reason}"))
         self.state.is_running = False
         for worker in self.workers.values():
             worker.stop()
