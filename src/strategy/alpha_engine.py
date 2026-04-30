@@ -196,10 +196,17 @@ class VibeAlphaEngine:
             if per_val <= 8.0: score += (15.0 * val_weight)
             elif per_val <= 15.0: score += (8.0 * val_weight)
             
-            # 시가총액 가중치 (우량주 선호)
+            # 시가총액 파싱 (페널티 계산에도 공용 사용)
             mkt_cap = float(str(detail.get('market_cap', '0')).replace(',', '').replace('억', '')) if detail.get('market_cap') else 0
             if mkt_cap >= 10000: # 시총 1조 이상 우량주
                 score += 5.0 * val_weight
+            
+            # [복기반영 #3] Bear/Defensive 장세에서 고PER 대형주 복합 감점
+            # 하락장에서는 지수 영향이 큰 고PER 대형주보다 지수 영향이 적은 개별 모멘텀 종목이 유리
+            if v in ["BEAR", "DEFENSIVE"] and per_val > 25.0 and mkt_cap >= 10000:
+                large_cap_penalty = min(20.0, (per_val - 25.0) * 0.8)
+                score -= large_cap_penalty
+                logger.debug(f"하락장 고PER대형주 페널티: PER={per_val:.1f} 시총={mkt_cap:.0f}억 → -{large_cap_penalty:.1f}pt")
             
             # 업종 상대 PER 보정
             sector_per_str = str(detail.get('sector_per', '0')).replace(',', '').replace('%', '')

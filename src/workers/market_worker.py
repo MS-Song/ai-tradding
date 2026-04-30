@@ -60,8 +60,11 @@ class MarketWorker(BaseWorker):
                     self.strategy.analyzer.last_analyzed_rates[k] = batch_data.get(k, {}).get('rate', 0.0)
                 
                 with self.state.lock:
-                    self.state.vibe = self.strategy.current_market_vibe
-                    self.state.is_panic = self.strategy.global_panic
+                    self.state.vibe = getattr(self.state, "force_vibe", None) or self.strategy.current_market_vibe
+                    if getattr(self.state, "manual_panic", False):
+                        self.state.is_panic = True
+                    else:
+                        self.state.is_panic = self.strategy.global_panic
                     self.state.dema_info = getattr(self.strategy.analyzer, 'dema_info', {})
                 self.state.update_worker_status("VIBE", status="대기 중 (IDLE)", result="성공", last_task=reason)
             except Exception as e:

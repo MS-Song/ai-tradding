@@ -183,12 +183,21 @@ def perform_interaction(key, api, strategy, dm, cycle):
                 inp = res.strip().split()
                 if inp and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
                     h = f_h[int(inp[0])-1]; code, name = h['pdno'], h['prdt_name']
-                    qty = int(float(inp[1])) if len(inp) > 1 and inp[1].replace('.','',1).isdigit() else int(float(h['hldg_qty']))
+                    max_qty = int(float(h['hldg_qty']))
+                    user_qty = int(float(inp[1])) if len(inp) > 1 and inp[1].replace('.','',1).isdigit() else max_qty
+                    
+                    qty = min(user_qty, max_qty)
                     price = int(float(inp[2])) if len(inp) > 2 and inp[2].replace('.','',1).isdigit() else 0
+                    
+                    qty_adjusted = user_qty > max_qty
+
                     def task_sell():
                         dm.set_busy("매도 처리", "MANUAL_TRADE")
                         try:
                             p_disp = f"{price:,}원" if price > 0 else "시장가"
+                            if qty_adjusted:
+                                dm.add_trading_log(f"⚠️ {name} 보유수량({max_qty}) 초과 -> {qty}주로 조정")
+                            
                             dm.add_trading_log(f"[{code}] {name} {p_disp} {qty}주 매도시도")
                             success, msg = api.order_market(code, qty, False, price)
                             if success:
@@ -200,6 +209,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             else:
                                 from src.logger import log_error
                                 log_error(f"수동 매도 실패 ({h['prdt_name']}): {msg}")
+                                dm.add_trading_log(f"❌ 수동 매도 실패 ({name}): {msg}")
                                 dm.show_status(f"❌ 매도 실패: {msg}", True)
                         finally: dm.clear_busy("MANUAL_TRADE")
                     threading.Thread(target=task_sell, name=f"[{code}_{name}_매도]", daemon=True).start()

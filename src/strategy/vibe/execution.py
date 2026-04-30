@@ -213,7 +213,10 @@ class ExecutionMixin:
                     is_emg, emg_reason = self._is_emergency_exit(rt, tp, vol_spike, phase, self.last_buy_times.get(code, 0) > self.last_sell_times.get(code, 0))
                     if is_emg: action, action_reason, sell_qty = "긴급익절", emg_reason, max(1, math.floor(int(item.get('hldg_qty', 0)) * 0.3))
             elif rt <= sl:
-                if (curr_t - self.last_buy_times.get(code, 0)) < 1800 and self.last_buy_times.get(code, 0) > self.last_sell_times.get(code, 0):
+                # [복기반영 #1] Defensive 장세에서는 손절선 돌파 즉시 기계적 청산 (물타기 유예 30분 포함, 예외 없음)
+                if self.analyzer.kr_vibe.upper() == "DEFENSIVE":
+                    action, action_reason, sell_qty = "긴급손절", "Defensive장세_SL즉시", int(item.get('hldg_qty', 0))
+                elif (curr_t - self.last_buy_times.get(code, 0)) < 1800 and self.last_buy_times.get(code, 0) > self.last_sell_times.get(code, 0):
                     is_emg, emg_reason = self._is_emergency_sl(rt, sl, self.analyzer.is_panic, self.analyzer.kr_vibe, phase, True)
                     if is_emg: action, action_reason, sell_qty = "긴급손절", emg_reason, int(item.get('hldg_qty', 0))
                 else: action, sell_qty = "손절", int(item.get('hldg_qty', 0))
@@ -241,7 +244,7 @@ class ExecutionMixin:
                     self.current_action = "대기중"
 
         # --- [추가] 신규 진입 및 추가 매수 엔진 (Bear/Bull/AI) ---
-        if not skip_trade and not self.global_panic and phase['id'] in ["P1", "P2"]:
+        if not skip_trade and not self.global_panic and phase['id'] in ["P1", "P2"] and not getattr(self.state, "is_trading_paused", False):
             # (A) 물타기/불타기 집행 (기존 종목 비중 조절)
             if self.recovery_eng.config.get("auto_mode") or self.bull_config.get("auto_mode"):
                 # [Cash Ratio Check] 하락장 30%, 방어모드 80% 현금 비중 유지 원칙
@@ -472,8 +475,16 @@ class ExecutionMixin:
             ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
             if ma_analysis:
                 indicators['ma_analysis'] = ma_analysis
-                if ma_analysis.get('signal') == "CAUTION":
-                    score *= 0.8
+                sig = ma_analysis.get('signal', 'NEUTRAL')
+                # [복기반영 #2] Bear/Defensive 장세에서 분봉 20MA CAUTION(이탈) 종목은 진입 직접 차단
+                # Bull/Neutral에서는 기존대로 score 감점만 적용
+                vibe_upper = self.current_market_vibe.upper()
+                if sig == "CAUTION":
+                    if vibe_upper in ["BEAR", "DEFENSIVE"]:
+                        logger.info(f"🚫 [MA필터] {name} 분봉20MA 이탈(CAUTION) - {vibe_upper} 장세 진입 차단")
+                        return False, f"분봉20MA 이탈 확인 중 진입 차단 ({vibe_upper} 장세)"
+                    else:
+                        score *= 0.8  # Bull/Neutral: 감점만 적용
         except Exception as e:
             logger.warning(f"지표 수급 및 분석 중 오류 (스킵): {e}")
 

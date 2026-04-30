@@ -103,7 +103,7 @@ def draw_trading_logs(strategy, dm):
             worker_desc = {
                 "MARKET": "마켓 엔진 (수집)", "VIBE": "Vibe 분석 (AI)", "RANKING": "인기/테마 (랭킹)",
                 "DATA": "데이터 동기화", "ASSET": "계좌 정보 수집", "BILLING": "API 비용 정산", 
-                "UPDATE": "최신 버전 확인", "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 알림", 
+                "UPDATE": "최신 버전 확인", "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 발신", "TG_RECEIVE": "텔레그램 수신",
                 "AI_ENGINE": "AI 전략 엔진", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진", 
                 "TRADE": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링",
                 "REPORT": "정기 리포트 발송"
@@ -117,7 +117,7 @@ def draw_trading_logs(strategy, dm):
             header = f"  {h_name} | {h_desc} | {h_time} | {h_elap} | {h_stat} | {h_res} | 마지막 행동"
             buf.write("\033[1m" + header + "\033[0m\n" + "  " + "-" * (tw - 6) + "\n")
             
-            sort_order = {"MARKET": 0, "VIBE": 1, "RANKING": 2, "AI_ENGINE": 3, "DATA": 4, "GLOBAL": 5, "TELEGRAM": 6, "ASSET": 7}
+            sort_order = {"MARKET": 0, "VIBE": 1, "RANKING": 2, "AI_ENGINE": 3, "DATA": 4, "GLOBAL": 5, "TELEGRAM": 6, "TG_RECEIVE": 7, "ASSET": 8}
             def get_sort_key(x): return (sort_order.get(x, 99), x) if not x.startswith("STOCK_") else (100, x)
             sorted_workers = sorted([w for w in all_workers if w and w != "..."], key=get_sort_key)
             if "TELEGRAM" not in sorted_workers: sorted_workers.append("TELEGRAM")

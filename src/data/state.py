@@ -34,6 +34,11 @@ class TradingState:
         self.hot_raw: List[dict] = []
         self.vol_raw: List[dict] = []
         
+        # --- 수동 제어 플래그 (텔레그램 인바운드 등) ---
+        self.manual_panic: bool = False
+        self.is_trading_paused: bool = False
+        self.force_vibe: Optional[str] = None
+        
         # --- 시스템 상태 및 플래그 ---
         from src.utils import is_market_open
         self.is_running: bool = True

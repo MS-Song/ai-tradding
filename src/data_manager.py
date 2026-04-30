@@ -2,7 +2,7 @@ import threading
 import time
 import queue
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 from src.data.state import TradingState
 from src.workers.market_worker import MarketWorker
@@ -26,6 +26,16 @@ class DataManager:
         # --- 알림 엔진 초기화 ---
         self.notifier = TelegramNotifier(dm=self)
         trading_log.set_notifier(self.notifier)
+        
+        # --- 텔레그램 인바운드 명령 엔진 초기화 ---
+        try:
+            from src.utils.telegram_receiver import TelegramCommandListener
+            self.telegram_listener = TelegramCommandListener(dm=self)
+            self.telegram_listener.start()
+        except ImportError as e:
+            from src.logger import log_error
+            log_error(f"TelegramCommandListener Load Error: {e}")
+
         
         # --- 워커 인스턴스 (Phase 2) ---
         self.workers = {
@@ -146,6 +156,9 @@ class DataManager:
     def current_prompt_mode(self): return self.state.current_prompt_mode
     @current_prompt_mode.setter
     def current_prompt_mode(self, val): self.state.current_prompt_mode = val
+    
+    @property
+    def is_trading_paused(self): return self.state.is_trading_paused
     @property
     def market_info_status(self):
         res = self.state.worker_results.get("INDEX")
@@ -232,7 +245,124 @@ class DataManager:
         self.state.is_running = False
         for worker in self.workers.values():
             worker.stop()
+            
+        # --- 텔레그램 스레드 안전 종료 ---
+        if hasattr(self, 'telegram_listener') and self.telegram_listener:
+            if hasattr(self.telegram_listener, 'stop'):
+                self.telegram_listener.stop()
+        if hasattr(self, 'notifier') and self.notifier:
+            self.notifier.stop()
+            
         time.sleep(1)
+
+    # --- 긴급 제어 메서드 (Telegram Inbound) ---
+    def toggle_trading_pause(self, pause: bool):
+        with self.state.lock:
+            self.state.is_trading_paused = pause
+        if pause:
+            self.show_status("신규 매수 일시 정지됨", is_error=True)
+            self.add_log("⏸️ [TELEGRAM] 신규 매수 일시 정지 활성화")
+            self.add_trading_log("⏸️ [TELEGRAM] 신규 매수 일시 정지 활성화")
+        else:
+            self.show_status("매매 정상 재개됨")
+            self.add_log("▶️ [TELEGRAM] 매매 정상 재개")
+            self.add_trading_log("▶️ [TELEGRAM] 매매 정상 재개")
+
+    def execute_emergency_panic(self):
+        with self.state.lock:
+            self.state.manual_panic = True
+            self.state.is_panic = True
+            self.state.is_trading_paused = True
+        self.show_status("🚨 긴급 패닉 모드 발동 - 전 종목 청산 대기중", is_error=True)
+        self.add_log("🚨 [TELEGRAM INBOUND] 긴급 패닉 모드 활성화! 전 종목 청산 진행")
+        self.add_trading_log("🚨 [긴급] 텔레그램 패닉 명령 수신 - 전 종목 청산 시도")
+
+    def force_defensive_mode(self):
+        with self.state.lock:
+            self.state.force_vibe = "Defensive"
+            self.state.vibe = "Defensive"
+        self.show_status("🛡️ 강제 방어모드 전환", is_error=False)
+        self.add_log("🛡️ [TELEGRAM] 강제 방어모드(Defensive) 전환")
+        self.add_trading_log("🛡️ [TELEGRAM] 강제 방어모드(Defensive) 전환")
+        
+    def reset_emergency_state(self):
+        with self.state.lock:
+            self.state.manual_panic = False
+            self.state.is_panic = False
+            self.state.is_trading_paused = False
+            self.state.force_vibe = None
+        self.show_status("🔄 긴급 상태 전면 해제 (정상화)", is_error=False)
+        self.add_log("🔄 [TELEGRAM] 모든 긴급 제어 해제 (패닉/정지/방어모드)")
+        self.add_trading_log("🔄 [TELEGRAM] 모든 긴급 제어 해제 (정상 운용 복귀)")
+
+    def execute_manual_trade(self, action: str, code: str, qty: int, price: Optional[float] = None) -> Tuple[bool, str]:
+        # action: "BUY" or "SELL"
+        is_buy = action.upper() == "BUY"
+        action_kr = "매수" if is_buy else "매도"
+        
+        # 종목명 찾기 (캐시 또는 보유 종목)
+        stock_name = self.state.stock_info.get(code, {}).get("name")
+        if not stock_name:
+            for h in self.state.holdings:
+                if h.get("pdno") == code:
+                    stock_name = h.get("prdt_name")
+                    break
+        if not stock_name:
+            stock_name = code  # 못 찾으면 코드 그대로 사용
+
+        # [추가] 매도 시 보유 수량 체크 및 조정
+        if not is_buy:
+            holding = next((h for h in self.state.holdings if h.get("pdno") == code), None)
+            if holding:
+                max_qty = int(float(holding.get("hldg_qty", 0)))
+                if qty > max_qty:
+                    self.add_trading_log(f"⚠️ {stock_name} 보유수량({max_qty}) 초과 -> {max_qty}주로 조정")
+                    qty = max_qty
+            else:
+                # 보유하지 않은 종목 매도 시도 시
+                msg = f"❌ 매도 실패: {stock_name}({code}) 종목을 보유하고 있지 않습니다."
+                self.add_trading_log(msg)
+                return False, msg
+
+        try:
+            p_val = int(price) if price and price > 0 else 0
+            success, msg = self.api.order_market(code, qty, is_buy, p_val)
+            order_type = "시장가" if p_val == 0 else f"지정가({p_val:,}원)"
+                
+            if success:
+                self.add_log(f"✅ [TELEGRAM] 수동 {action_kr} 완료: {stock_name}({code}) {qty}주 ({order_type})")
+                self.add_trading_log(f"✅ 수동 {action_kr}: {stock_name}({code}) {qty}주 ({order_type})")
+                
+                # trading_logs.json 에 정식 기록 및 텔레그램 알림 발송
+                curr_p = float(p_val) if p_val > 0 else float(self.state.stock_info.get(code, {}).get("price", 0))
+                profit = 0.0
+                if not is_buy:
+                    for h in self.state.holdings:
+                        if h.get("pdno") == code:
+                            avg_p = float(h.get("pchs_avg_pric", 0))
+                            if avg_p > 0 and curr_p > 0:
+                                profit = (curr_p - avg_p) * qty
+                            break
+                trade_type = "수동매수" if is_buy else "수동매도"
+                ma20 = self.state.ma_20_cache.get(code, 0.0)
+                
+                trading_log.log_trade(
+                    trade_type, code, stock_name, curr_p, qty, 
+                    f"텔레그램 수동 주문 ({order_type})", 
+                    profit=profit, model_id="수동", ma_20=ma20
+                )
+                
+                # 빠른 동기화를 위해 업데이트 요청
+                self.update_all_data(False, force=True)
+                return True, f"✅ 수동 {action_kr} 주문 성공: {stock_name}({code}) {qty}주 ({order_type})"
+            else:
+                self.add_log(f"❌ [TELEGRAM] 수동 {action_kr} 실패: {stock_name}({code}) - {msg}")
+                self.add_trading_log(f"❌ 수동 {action_kr} 실패: {stock_name}({code}) - {msg}")
+                return False, f"❌ 수동 {action_kr} 실패: {stock_name}({code}) - {msg}"
+        except Exception as e:
+            msg = f"❌ 주문 중 오류 발생: {e}"
+            self.add_trading_log(msg)
+            return False, msg
 
     # --- 호환성용 더미/대행 메서드 ---
     def update_all_data(self, is_virtual, force=False, lite=False):

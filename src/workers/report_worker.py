@@ -77,20 +77,23 @@ class ReportWorker(BaseWorker):
                 sorted_h = sorted(holdings, key=lambda x: float(x.get('evlu_pfls_rt', 0)), reverse=True)
                 for h in sorted_h:
                     name = h.get('prdt_name', 'Unknown')
+                    code = h.get('pdno', '000000')
                     rt = float(h.get('evlu_pfls_rt', 0))
+                    pfls_amt = int(float(h.get('evlu_pfls_amt', 0)))
                     prpr = int(float(h.get('prpr', 0)))
                     pchs = int(float(h.get('pchs_avg_pric', 0)))
                     qty = int(float(h.get('hldg_qty', 0)))
-                    amt = int(float(h.get('evlu_amt', 0)))
+                    prdy_ctrt = float(h.get('prdy_ctrt', 0))
+                    prdy_vrss = int(float(h.get('prdy_vrss', 0)))
                     
                     emoji = "🔥" if rt >= 3 else "📈" if rt > 0 else "📉" if rt < -3 else "🔹"
                     
-                    # 모바일 가독성을 위해 2줄 구조의 카드형 테이블 구성
-                    # 1행: 종목명 및 수익률 (강조)
-                    # 2행: 현재가 | 평단 | 수량 | 평가금액 (고정폭 폰트로 정렬)
                     holdings_detail += (
-                        f"{emoji} <b>{name}</b> (<code>{rt:+.2f}%</code>)\n"
-                        f"┗ <code>{prpr:,} | {pchs:,} | {qty}주 | {amt:,}원</code>\n"
+                        f"{emoji} <b>{name}</b> ({code})\n"
+                        f"┣ 💰수익: <code>{rt:+.2f}%</code> ({pfls_amt:+,}원)\n"
+                        f"┣ 📊변동: <code>{prdy_ctrt:+.2f}%</code> ({prdy_vrss:+,}원)\n"
+                        f"┗ 💵단가: {pchs:,} → {prpr:,}원 (<code>{qty}주</code>)\n"
+                        f"───────────────\n"
                     )
 
             pnl_amt = asset.get('daily_pnl_amt', 0)
@@ -106,7 +109,6 @@ class ReportWorker(BaseWorker):
                 f"💵 <b>가용 현금</b>: {int(asset.get('cash', 0)):,}원\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"📦 <b>보유 종목 상세 ({len(holdings)}개)</b>\n"
-                f"<code>(현재가 | 평단 | 보유량 | 평가금액)</code>\n"
                 f"{holdings_detail}"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"⏰ {datetime.now().strftime('%H:%M:%S')} 기준"
