@@ -61,7 +61,8 @@ class DataSyncWorker(BaseWorker):
         # 파일에서 로드된 과거의 잘못된 기준점(stale data)을 방지하기 위해 프로그램 시작 후 첫 실행 시 강제 재설정
         is_first_init = (
             self.strategy.start_day_asset <= 0 or 
-            self.strategy.last_asset_date != today_str
+            self.strategy.last_asset_date != today_str or
+            self.strategy.start_day_pnl == -999999999.0
         )
         
         if is_first_init:
@@ -73,17 +74,31 @@ class DataSyncWorker(BaseWorker):
                 # 전일 데이터가 없거나 0이면 현재 자산을 시작점으로 설정 (오늘 수익 0%부터 시작)
                 self.strategy.start_day_asset = a['total_asset']
             
+            # [수정] 일일 수익률 계산을 위한 초기 미실현 손익 저장
+            self.strategy.start_day_pnl = a.get('pnl', 0)
             self.strategy.last_asset_date = today_str
             self.first_run = False # 초기화 완료
             with self.state.lock:
-                self.state.last_log_msg = f"\033[96m[LOG] 📅 당일 수익률 기준점 초기화: {self.strategy.start_day_asset:,.0f}원\033[0m"
+                self.state.last_log_msg = f"\033[96m[LOG] 📅 당일 수익률 기준점 초기화: {self.strategy.start_day_asset:,.0f}원 (초기 미실현: {self.strategy.start_day_pnl:,.0f}원)\033[0m"
                 self.state.last_log_time = time.time()
 
         a['total_principal'] = getattr(self.strategy, "base_seed_money", 0)
         
         if self.strategy.start_day_asset > 0:
-            # [핵심] 일일 수익 및 수익률 계산: 실시간 total_asset 기반
-            a['daily_pnl_amt'] = a['total_asset'] - self.strategy.start_day_asset
+            # [개선] 입출금에 영향받지 않는 정확한 일일 수익 계산 로직 적용 (요구사항 반영)
+            # 공식: 일일 수익 = 당일 실현손익(순수익) + (현재 미실현손익 - 기초 미실현손익)
+            from src.logger import trading_log
+            realized_p = trading_log.get_daily_profit()
+            fees = trading_log.get_daily_trading_fees()
+            curr_unrealized = a.get('pnl', 0)
+            init_unrealized = self.strategy.start_day_pnl
+            
+            # 순 실현 수익 = 실현 - 수수료
+            net_realized = realized_p - fees
+            # 미실현 수익 변동분
+            unrealized_delta = curr_unrealized - init_unrealized
+            
+            a['daily_pnl_amt'] = net_realized + unrealized_delta
             a['daily_pnl_rate'] = (a['daily_pnl_amt'] / self.strategy.start_day_asset * 100)
 
     def _sync_stock_prices(self, holdings, curr_t):

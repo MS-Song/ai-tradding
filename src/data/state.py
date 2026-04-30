@@ -38,6 +38,7 @@ class TradingState:
         self.manual_panic: bool = False
         self.is_trading_paused: bool = False
         self.force_vibe: Optional[str] = None
+        self.force_ai_diagnosis: bool = False # [추가] AI 즉시 진단 요청 플래그
         
         # --- 시스템 상태 및 플래그 ---
         from src.utils import is_market_open

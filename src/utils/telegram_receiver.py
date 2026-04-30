@@ -47,6 +47,9 @@ class TelegramCommandListener:
             async def post_init(application):
                 commands = [
                     BotCommand("status", "계좌 요약 및 상태 확인"),
+                    BotCommand("diagnosis", "AI 즉시 진단 실행 (스케줄 무시)"),
+                    BotCommand("log", "최신 트레이딩 로그 10개 확인"),
+                    BotCommand("error", "최신 에러 로그 10개 확인"),
                     BotCommand("buy", "수동 매수 (/buy 종목코드 수량 [가격])"),
                     BotCommand("sell", "수동 매도 (/sell 종목코드 수량 [가격])"),
                     BotCommand("reset", "모든 특수 상태 해제 (AI 자율 복귀)"),
@@ -61,6 +64,9 @@ class TelegramCommandListener:
             
             # 명령어 핸들러 등록
             self.app.add_handler(CommandHandler("status", self._cmd_status))
+            self.app.add_handler(CommandHandler("diagnosis", self._cmd_diagnosis))
+            self.app.add_handler(CommandHandler("log", self._cmd_log))
+            self.app.add_handler(CommandHandler("error", self._cmd_error))
             self.app.add_handler(CommandHandler("buy", self._cmd_buy))
             self.app.add_handler(CommandHandler("sell", self._cmd_sell))
             self.app.add_handler(CommandHandler("reset", self._cmd_reset))
@@ -143,11 +149,54 @@ class TelegramCommandListener:
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"📦 <b>보유 종목 상세 ({len(holdings)}개)</b>\n"
                 f"{holdings_detail}"
-                f"━━━━━━━━━━━━━━━━━━━━"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"💡 <b>AI 추천 종목 TOP 5</b>\n"
             )
+            
+            recs = getattr(self.dm.state, "recommendations", [])
+            if not recs:
+                msg += "🔹 추천 데이터가 아직 없습니다.\n"
+            else:
+                for r in recs[:5]:
+                    score = r.get('score', 0)
+                    code = r.get('code', '000000')
+                    name = r.get('name', 'Unknown')
+                    msg += f"┣ <code>[{score:.0f}점]</code> {code} {name}\n"
+            
+            msg += "━━━━━━━━━━━━━━━━━━━━"
             await update.message.reply_text(msg, parse_mode='HTML')
         except Exception as e:
             log_error(f"Telegram Inbound /status Error: {e}")
+
+    async def _cmd_diagnosis(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._verify_auth(update): return
+        if self.dm:
+            self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/diagnosis 처리")
+            try:
+                msg = self.dm.trigger_ai_diagnosis()
+                await update.message.reply_text(msg, parse_mode='HTML')
+            except Exception as e:
+                log_error(f"Telegram Inbound /diagnosis Error: {e}")
+
+    async def _cmd_log(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._verify_auth(update): return
+        if self.dm:
+            self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/log 처리")
+            try:
+                msg = self.dm.get_recent_logs(10)
+                await update.message.reply_text(msg, parse_mode='HTML')
+            except Exception as e:
+                log_error(f"Telegram Inbound /log Error: {e}")
+
+    async def _cmd_error(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._verify_auth(update): return
+        if self.dm:
+            self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/error 처리")
+            try:
+                msg = self.dm.get_recent_errors(10)
+                await update.message.reply_text(msg, parse_mode='HTML')
+            except Exception as e:
+                log_error(f"Telegram Inbound /error Error: {e}")
 
     async def _cmd_panic(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._verify_auth(update): return

@@ -22,8 +22,20 @@ class ExecutionMixin:
         
         if asset_info.get('total_asset', 0) > 0:
             self.last_known_asset = float(asset_info['total_asset'])
-            if self.start_day_asset > 0:
-                asset_info['daily_pnl_rate'] = (asset_info['total_asset'] / self.start_day_asset - 1) * 100
+            if self.start_day_asset > 0 and self.start_day_pnl != -999999999.0:
+                # [개선] 입출금 영향 배제 정확한 일일 수익률 계산 (SyncWorker와 로직 동기화)
+                realized_p = trading_log.get_daily_profit()
+                fees = trading_log.get_daily_trading_fees()
+                curr_unrealized = asset_info.get('pnl', 0)
+                init_unrealized = self.start_day_pnl
+                
+                daily_pnl_amt = (realized_p - fees) + (curr_unrealized - init_unrealized)
+                asset_info['daily_pnl_amt'] = daily_pnl_amt
+                asset_info['daily_pnl_rate'] = (daily_pnl_amt / self.start_day_asset * 100)
+            else:
+                # 초기화 전이라면 기본값 설정 (0)
+                asset_info['daily_pnl_amt'] = asset_info.get('daily_pnl_amt', 0.0)
+                asset_info['daily_pnl_rate'] = asset_info.get('daily_pnl_rate', 0.0)
         
         if self.risk_mgr.check_circuit_breaker(asset_info):
             return [f"🛑 리스크 상한 도달: {self.risk_mgr.halt_reason} (매매 중단)"]

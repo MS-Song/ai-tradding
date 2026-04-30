@@ -87,6 +87,7 @@ class StateManager:
                     "replacement_logs": s.replacement_logs,
                     "last_rejected_date": today,
                     "start_day_asset": s.start_day_asset,
+                    "start_day_pnl": s.start_day_pnl,
                     "last_asset_date": s.last_asset_date,
                     "notified_dates": getattr(s, 'state', None).notified_dates if getattr(s, 'state', None) else {}
                 }
@@ -136,6 +137,7 @@ class StateManager:
                     if "bull_config" in d: s.bull_config.update(d["bull_config"])
                     s._last_closing_bet_date = d.get("last_closing_bet_date")
                     s.start_day_asset = d.get("start_day_asset", 0.0)
+                    s.start_day_pnl = d.get("start_day_pnl", 0.0)
                     s.last_asset_date = d.get("last_asset_date", "")
                     s.replacement_logs = d.get("replacement_logs", [])
                     if hasattr(s, 'state') and s.state is not None:

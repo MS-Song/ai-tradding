@@ -25,6 +25,33 @@ def main():
     auth.on_error_message = lambda msg: dm.show_status(msg, is_error=True)
     
     enter_alt_screen()
+    
+    # [안전장치] TUI 실행 중 백그라운드 스레드의 의도치 않은 print()가 화면을 깨뜨리지 않도록
+    # sys.stdout을 안전 래퍼로 교체: ESC 시퀀스(\033[H 등)를 포함한 TUI 전용 출력만 허용하고
+    # 그 외의 텍스트 출력(print 등)은 error.log로 우회합니다.
+    import logging as _logging
+    _safe_real_stdout = sys.stdout
+    class _SafeStdout:
+        """TUI 실행 중 ANSI 제어 코드 없는 일반 print() 출력을 가로채서 로그로 리디렉션"""
+        def write(self, text):
+            # ANSI 이스케이프 코드 포함 또는 빈 문자열이면 실제 출력 (TUI 렌더러 정상 동작 허용)
+            # [수정] dm.is_full_screen_active(셋업 모드 등)인 경우에도 실제 출력 허용
+            if not text or '\033[' in text or text in ('\n', '\r', '\r\n') or dm.is_full_screen_active:
+                _safe_real_stdout.write(text)
+            else:
+                # 일반 print() 출력 → error.log로 리디렉션 (TUI 화면 보호)
+                stripped = text.strip()
+                if stripped:
+                    _logging.getLogger("VibeTrader").error(f"[STDOUT 캡처] {stripped}")
+        def flush(self): _safe_real_stdout.flush()
+        def fileno(self): return _safe_real_stdout.fileno()
+        # TextIOWrapper 호환용 속성
+        @property
+        def encoding(self): return getattr(_safe_real_stdout, 'encoding', 'utf-8')
+        @property
+        def errors(self): return getattr(_safe_real_stdout, 'errors', 'replace')
+    sys.stdout = _SafeStdout()
+    
     dm.start_workers(auth.is_virtual)
     set_terminal_raw()
     try:
@@ -61,6 +88,7 @@ def main():
                     try: tw = os.get_terminal_size().columns
                     except: tw = 110
                     # TUI 정지 및 화면 청소 후 종료 알림
+                    sys.stdout = _safe_real_stdout
                     restore_terminal_settings(); exit_alt_screen()
                     sys.stdout.write("\033[H\033[2J" + align_kr(" 시스템을 안전하게 종료합니다. 잠시만 기다려주세요... ", tw, 'center') + "\n")
                     sys.stdout.flush()
@@ -97,6 +125,7 @@ def main():
         dm.is_running = False
     finally: 
         dm.is_running = False
+        sys.stdout = _safe_real_stdout
         restore_terminal_settings(); exit_alt_screen()
 
 if __name__ == "__main__":

@@ -445,7 +445,7 @@ def cleanup_text_log(file_path, days_to_keep=2):
             os.replace(tmp_path, file_path)
             success = True
         except OSError as e:
-            print(f"DEBUG: 로그 교체 실패 ({file_path}): {e}")
+            log_error(f"로그 교체 실패 ({file_path}): {e}")
         
         # 4. 핸들러 복구
         for log_obj, old_h in active_handlers:
@@ -460,7 +460,7 @@ def cleanup_text_log(file_path, days_to_keep=2):
             cleaned = True
                 
     except Exception as e:
-        print(f"DEBUG: 로그 정리 중 예외 발생 ({file_path}): {e}")
+        log_error(f"로그 정리 중 예외 발생 ({file_path}): {e}")
     finally:
         if os.path.exists(tmp_path):
             try: os.remove(tmp_path)

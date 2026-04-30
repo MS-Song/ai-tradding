@@ -95,6 +95,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self.last_buy_models: Dict[str, str] = {}
         self.replacement_logs: List[dict] = []
         self.start_day_asset = 0.0
+        self.start_day_pnl = -999999999.0  # Sentinel for uninitialized
         self.last_asset_date = ""
         
         # --- 리포트 캐싱 (Task 10) ---
@@ -199,11 +200,12 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             return True
         except Exception as e: log_error(f"설정 동기화 오류: {e}"); return False
 
-    def reset_daily_pnl(self, current_asset: float):
+    def reset_daily_pnl(self, current_asset: float, current_pnl: float = 0.0):
         self.start_day_asset = current_asset
+        self.start_day_pnl = current_pnl
         self.last_asset_date = datetime.now().strftime('%Y-%m-%d')
         self._save_all_states()
-        logger.info(f"📅 일일 수익률 기준점 초기화: {current_asset:,.0f}원")
+        logger.info(f"📅 일일 수익률 기준점 초기화: {current_asset:,.0f}원 (미실현: {current_pnl:,.0f}원)")
 
     def determine_market_trend(self, force_ai: bool = False, external_data: dict = None): 
         return self.analyzer.update(force_ai=force_ai, external_data=external_data)

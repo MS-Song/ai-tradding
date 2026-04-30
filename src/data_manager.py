@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import queue
@@ -11,7 +12,7 @@ from src.workers.trade_worker import TradeWorker
 from src.workers.report_worker import ReportWorker
 from src.workers.retrospective_worker import RetrospectiveWorker
 from src.utils.notifier import TelegramNotifier
-from src.logger import log_error, cleanup_text_log, trading_log
+from src.logger import log_error, cleanup_text_log, trading_log, logger
 
 class DataManager:
     def __init__(self, api, strategy):
@@ -499,6 +500,70 @@ class DataManager:
             msg = f"❌ 주문 중 오류 발생: {e}"
             self.add_trading_log(msg)
             return False, msg
+
+    def trigger_ai_diagnosis(self):
+        """AI 진단(시황 및 추천)을 즉시 실행하도록 워커에게 요청"""
+        with self.state.lock:
+            self.state.force_ai_diagnosis = True
+        self.add_log("🧠 [TELEGRAM] AI 즉시 진단 요청됨")
+        return "🧠 <b>AI 즉시 진단을 시작합니다...</b>\n(약 10~20초 소요될 수 있습니다)"
+
+    def get_recent_logs(self, count=10) -> str:
+        """최신 트레이딩 로그를 가져옴"""
+        try:
+            if not os.path.exists("trading.log"):
+                return "📂 트레이딩 로그 파일이 없습니다."
+            
+            with open("trading.log", "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            
+            # 최신 count개 추출 및 포맷팅
+            recent = lines[-count:]
+            if not recent:
+                return "📂 기록된 로그가 없습니다."
+                
+            # 가독성을 위해 불필요한 부분 제거 (날짜/시간은 유지)
+            formatted = []
+            for line in recent:
+                # 2026-04-30 15:30:00 | INFO    | [TRADE] ... -> [15:30:00] [TRADE] ...
+                parts = line.split(" | ")
+                if len(parts) >= 3:
+                    time_part = parts[0].split(" ")[1] if " " in parts[0] else parts[0]
+                    msg_part = parts[2].strip()
+                    formatted.append(f"<code>[{time_part}]</code> {msg_part}")
+                else:
+                    formatted.append(f"<code>{line.strip()}</code>")
+            
+            return "📝 <b>최신 트레이딩 로그 ({0}개)</b>\n━━━━━━━━━━━━━━\n{1}".format(len(formatted), "\n".join(formatted))
+        except Exception as e:
+            return f"❌ 로그 읽기 오류: {e}"
+
+    def get_recent_errors(self, count=10) -> str:
+        """최신 에러 로그를 가져옴"""
+        try:
+            if not os.path.exists("error.log"):
+                return "📂 에러 로그 파일이 없습니다."
+            
+            with open("error.log", "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            
+            recent = lines[-count:]
+            if not recent:
+                return "✅ 최근 발생한 에러가 없습니다."
+                
+            formatted = []
+            for line in recent:
+                parts = line.split(" | ")
+                if len(parts) >= 3:
+                    time_part = parts[0].split(" ")[1] if " " in parts[0] else parts[0]
+                    msg_part = parts[2].strip()
+                    formatted.append(f"<code>[{time_part}]</code> {msg_part}")
+                else:
+                    formatted.append(f"<code>{line.strip()}</code>")
+            
+            return "⚠️ <b>최신 에러 로그 ({0}개)</b>\n━━━━━━━━━━━━━━\n{1}".format(len(formatted), "\n".join(formatted))
+        except Exception as e:
+            return f"❌ 에러 로그 읽기 오류: {e}"
 
     # --- 호환성용 더미/대행 메서드 ---
     def update_all_data(self, is_virtual, force=False, lite=False):

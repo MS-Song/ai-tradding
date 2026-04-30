@@ -47,14 +47,14 @@ class MarketWorker(BaseWorker):
                 break
         
         vibe_interval = 120
-        if curr_t - getattr(self.strategy.analyzer, 'last_vibe_update', 0) > vibe_interval:
+        if (curr_t - getattr(self.strategy.analyzer, 'last_vibe_update', 0) > vibe_interval) or self.state.force_ai_diagnosis:
             should_analyze_vibe = True
-            reason = "⏰ 정기 분석 (120s)"
+            reason = "🧠 즉시 진단 요청" if self.state.force_ai_diagnosis else "⏰ 정기 분석 (120s)"
 
         if should_analyze_vibe:
             try:
                 self.state.update_worker_status("VIBE", status="분석 중", friendly_name="MARKET_ANAL")
-                self.strategy.determine_market_trend(force_ai=("⚡" in reason), external_data=batch_data)
+                self.strategy.determine_market_trend(force_ai=("⚡" in reason or "🧠" in reason), external_data=batch_data)
                 self.strategy.analyzer.last_vibe_update = curr_t
                 for k in ["KOSPI", "KOSDAQ"]:
                     self.strategy.analyzer.last_analyzed_rates[k] = batch_data.get(k, {}).get('rate', 0.0)
@@ -155,8 +155,9 @@ class MarketWorker(BaseWorker):
         from src.logger import log_error
         # 1. AI 추천 업데이트 (5분 주기)
         try:
-            if is_ai_enabled_time() or getattr(self.strategy, "debug_mode", False):
-                if curr_t - self.state.last_times.get("recommendation", 0) > 300:
+            # [수정] 수동 진단 요청(force_ai_diagnosis) 시에는 장외 시간이라도 AI 분석 허용
+            if is_ai_enabled_time() or getattr(self.strategy, "debug_mode", False) or self.state.force_ai_diagnosis:
+                if (curr_t - self.state.last_times.get("recommendation", 0) > 300) or self.state.force_ai_diagnosis:
                     def rec_prog_cb(c, t, msg=""):
                         self.state.update_worker_status("RECOMMENDATION", status=f"AI분석({c}/{t})")
                     
@@ -186,3 +187,30 @@ class MarketWorker(BaseWorker):
         except Exception as e:
             log_error(f"AI 비용 집계 오류: {e}")
             self.state.update_worker_status("BILLING", status="대기 중 (IDLE)", result="실패", last_task=f"비용 집계 오류: {str(e)[:20]}")
+
+        # 3. 플래그 초기화
+        if self.state.force_ai_diagnosis:
+            # [추가] 즉시 진단 완료 후 텔레그램으로 요약 결과 전송
+            if self.notifier:
+                recs = self.state.recommendations[:5]
+                rec_str = ""
+                if not recs:
+                    rec_str = "🔹 추천 종목이 없습니다."
+                else:
+                    for r in recs:
+                        score = r.get('score', 0)
+                        code = r.get('code', '000000')
+                        name = r.get('name', 'Unknown')
+                        rec_str += f"┣ <code>[{score:.0f}점]</code> {code} <b>{name}</b>\n"
+                
+                msg = (
+                    f"✅ <b>AI 즉시 진단 완료</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🌍 <b>현재 VIBE</b>: <code>{self.state.vibe}</code>\n"
+                    f"💡 <b>추천 종목 TOP 5</b>:\n{rec_str}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━"
+                )
+                self.notifier.send_message(msg)
+
+            with self.state.lock:
+                self.state.force_ai_diagnosis = False

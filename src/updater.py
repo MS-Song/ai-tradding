@@ -1,10 +1,13 @@
 import os
 import sys
 import time
+import logging
 import requests
 import platform
 import subprocess
 from datetime import datetime
+
+_upd_log = logging.getLogger("VibeTrader")
 
 # GitHub 저장소 정보
 REPO_OWNER = "MS-Song"
@@ -60,7 +63,7 @@ def check_for_updates(current_version):
                     "body": data.get("body", "")
                 }
     except Exception as e:
-        print(f"Update check error: {e}")
+        _upd_log.error(f"Update check error: {e}")
     
     return {"has_update": False}
 
@@ -80,7 +83,7 @@ def download_update(url, target_path, progress_cb=None):
                         progress_cb(downloaded, total_size)
         return True
     except Exception as e:
-        print(f"Download error: {e}")
+        _upd_log.error(f"Download error: {e}")
         return False
 
 def apply_update_and_restart(new_binary_path):
