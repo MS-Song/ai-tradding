@@ -43,7 +43,8 @@ def get_config():
             },
             "base_seed_money": int(env_data.get("BASE_SEED_MONEY", 0)),
             "max_stock_count_config": env_data.get("MAX_STOCK_COUNT", "8"),
-            "report_interval": int(env_data.get("AI_REPORT_INTERVAL", 30))
+            "report_interval": int(env_data.get("AI_REPORT_INTERVAL", 30)),
+            "auto_update": env_data.get("AUTO_UPDATE", "FALSE") == "TRUE"
         }
     }
 
@@ -94,6 +95,7 @@ def ensure_env(force=False):
             ("AUTO_APPLY_AI_STRATEGY", "AI 시황 분석 전략 자동 반영 여부 (Y/N)", "FALSE", "bool"),
             ("BASE_SEED_MONEY", "총 누적 입금액(초기 시드 + 추가 입금액) (원)", "0", "text"),
             ("MAX_STOCK_COUNT", "최대 보유 종목 수 (1~8 또는 Y:AI자동)", "8", "text"),
+            ("AUTO_UPDATE", "새 버전 자동 업데이트 사용 여부 (Y/N) [EXE 실행 시에만 동작]", "FALSE", "bool"),
             ("TELEGRAM_TOKEN", "텔레그램 봇 토큰 (Bot Token)", "", "text"),
             ("TELEGRAM_CHAT_ID", "텔레그램 채팅 ID (Chat ID)", "", "text"),
             ("AI_REPORT_INTERVAL", "정기 리포트 발송 주기 (분, 0:미발송)", "30", "text")

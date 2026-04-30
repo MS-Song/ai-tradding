@@ -223,15 +223,25 @@ class DataManager:
         
         # 로그 정리 및 테마 수집은 별도 스레드로 유지 (추후 별도 워커화 가능)
         threading.Thread(target=self._maintenance_loop, daemon=True).start()
+        
+        # [Auto-Update] 시작 시 즉시 1회 버전 체크 (비동기)
+        threading.Thread(target=self._check_update_once, daemon=True).start()
 
     def _maintenance_loop(self):
         """로그 정리 및 주기적 관리 작업"""
+        _last_update_check = 0  # 마지막 버전 체크 시각
         while self.state.is_running:
             try:
                 self.set_busy("로그 정리", "CLEANUP")
                 cleanup_text_log("error.log", days_to_keep=2)
                 trading_log.cleanup(days_to_keep=2)
                 self.update_worker_status("CLEANUP", result="성공", last_task="로그 파일 정리 완료")
+                
+                # [Auto-Update] 6시간마다 GitHub 버전 체크
+                if time.time() - _last_update_check > 6 * 3600:
+                    self._run_update_check()
+                    _last_update_check = time.time()
+                    
                 self.update_worker_status("UPDATE", result="성공", last_task="시스템 상태 체크 완료")
             except Exception as e:
                 log_error(f"Maintenance Loop Error: {e}")
@@ -239,6 +249,91 @@ class DataManager:
                 self.clear_busy("CLEANUP")
             
             time.sleep(3600) # 1시간 주기
+
+    def _check_update_once(self):
+        """시작 직후 즉시 1회 GitHub 버전 체크 (비동기 호출용)"""
+        time.sleep(5)  # 시스템 안정화 후 체크
+        self._run_update_check()
+
+    def _run_update_check(self):
+        """GitHub 릴리스 API로 버전 체크 후 state.update_info 갱신"""
+        try:
+            from src.updater import check_for_updates, is_running_as_executable
+            from src.ui.renderer import VERSION_CACHE
+            result = check_for_updates(VERSION_CACHE)
+            with self.state.lock:
+                self.state.update_info["has_update"] = result.get("has_update", False)
+                self.state.update_info["latest_version"] = result.get("latest_version", "")
+                self.state.update_info["download_url"] = result.get("download_url", "")
+            
+            if result.get("has_update"):
+                is_exe = is_running_as_executable()
+                # 자동 업데이트 설정값 읽기 (strategy.config 또는 .env 직접)
+                auto_update_enabled = False
+                try:
+                    cfg = self.strategy.config.get("vibe_strategy", {})
+                    auto_update_enabled = cfg.get("auto_update", False)
+                except Exception:
+                    from dotenv import dotenv_values
+                    auto_update_enabled = dotenv_values(".env").get("AUTO_UPDATE", "FALSE") == "TRUE"
+                
+                if is_exe and auto_update_enabled:
+                    # 실행파일 모드 + 자동 업데이트 ON → 자동 다운로드 및 재기동
+                    self.add_log(f"🆕 [AUTO-UPDATE] v{result['latest_version']} 자동 업데이트 시작...")
+                    self.update_worker_status("UPDATE", result="업데이트 시작", last_task=f"v{result['latest_version']} 자동 적용 중")
+                    threading.Thread(target=self._apply_auto_update, args=(result,), daemon=True).start()
+                else:
+                    # 개발 모드 또는 자동 업데이트 OFF → 알림만
+                    if is_exe:
+                        hint = "S:셈업 → AUTO_UPDATE=Y로 자동 업데이트 활성화 가능 | 단축키 [U]로 수동 업데이트"
+                    else:
+                        hint = "[개발모드] 수동 업데이트만 지원 | 다음에 다시: 단축키 [U]"
+                    self.add_log(f"🆕 [AUTO-UPDATE] 새 버전 감지: v{result['latest_version']} (v{VERSION_CACHE}) — {hint}")
+                    self.update_worker_status("UPDATE", result="업데이트 가능", last_task=f"v{result['latest_version']} 릴리스 감지")
+            else:
+                self.update_worker_status("UPDATE", result="최신", last_task=f"현재 v{VERSION_CACHE} 최신 버전")
+        except Exception as e:
+            log_error(f"Update Check Error: {e}")
+
+    def _apply_auto_update(self, result: dict):
+        """실행파일 모드에서만 호출: 다운로드 → 적용 → 재기동"""
+        try:
+            from src.updater import download_update, apply_update_and_restart
+            import platform
+            
+            is_windows = platform.system() == "Windows"
+            new_bin = "KIS-Vibe-Trader_new.exe" if is_windows else "KIS-Vibe-Trader-Linux_new"
+            
+            url = result.get("download_url", "")
+            if not url:
+                self.add_log("❌ [AUTO-UPDATE] 다운로드 URL을 찾을 수 없습니다. 릴리스 자산 확인 필요.")
+                self.update_worker_status("UPDATE", result="URL 없음", last_task="다운로드 URL 누락")
+                return
+            
+            self.set_busy("업데이트 다운로드 중", "UPDATE")
+            
+            def prog_cb(downloaded, total):
+                pct = downloaded / total * 100 if total > 0 else 0
+                self.set_busy(f"다운로드 {pct:.1f}%", "UPDATE")
+            
+            success = download_update(url, new_bin, progress_cb=prog_cb)
+            if success:
+                self.add_log(f"✅ [AUTO-UPDATE] v{result['latest_version']} 다운로드 완료! 3초 후 재기동...")
+                self.update_worker_status("UPDATE", result="재기동 중", last_task=f"v{result['latest_version']} 적용 완료")
+                try:
+                    self.notifier.notify_alert("업데이트 적용", f"🛠️ v{result['latest_version']} 업데이트를 적용하고 재기동합니다.")
+                except Exception:
+                    pass
+                time.sleep(3)
+                apply_update_and_restart(new_bin)
+            else:
+                self.add_log("❌ [AUTO-UPDATE] 다운로드 실패. 수동으로 업데이트하려면 [U] 키를 누르세요.")
+                self.update_worker_status("UPDATE", result="다운로드 실패", last_task="수동 업데이트 필요")
+        except Exception as e:
+            log_error(f"Auto-Update Apply Error: {e}")
+            self.add_log(f"❌ [AUTO-UPDATE] 오류: {e}")
+        finally:
+            self.clear_busy("UPDATE")
 
     def shutdown(self, reason="사용자 종료"):
         self.notifier.notify_alert("시스템 종료", f"🛑 트레이딩 엔진이 종료되었습니다. (사유: {reason})")

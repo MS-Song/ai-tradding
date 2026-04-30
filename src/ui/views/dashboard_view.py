@@ -32,7 +32,18 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     is_v = getattr(strategy.api.auth, 'is_virtual', True)
     debug_tag = " [디버그]" if getattr(strategy, "debug_mode", False) else ""
     mode_tag = f" [모의]{debug_tag}" if is_v else f" [실전]{debug_tag}"
-    update_tag = f" \033[1;93m[NEW v{dm.update_info['latest_version']}]\033[0;44m" if dm.update_info.get("has_update") else ""
+    if dm.update_info.get("has_update"):
+        from src.updater import is_running_as_executable
+        _is_exe = is_running_as_executable()
+        _auto_on = getattr(strategy, 'config', {}).get('vibe_strategy', {}).get('auto_update', False)
+        if not _is_exe:
+            update_tag = f" \033[1;90m[DEV]\033[1;93m🆕NEW v{dm.update_info['latest_version']}\033[0;44m"
+        elif _auto_on:
+            update_tag = f" \033[1;92m[AUTO🔄 v{dm.update_info['latest_version']}]\033[0;44m"
+        else:
+            update_tag = f" \033[1;93m[🆕NEW v{dm.update_info['latest_version']} ▶U]\033[0;44m"
+    else:
+        update_tag = ""
     version_text = f"[AI TRADING SYSTEM ver {VERSION_CACHE}]{mode_tag}{update_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)

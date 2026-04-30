@@ -11,6 +11,14 @@ REPO_OWNER = "MS-Song"
 REPO_NAME = "ai-tradding"
 GITHUB_API_URL = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 
+def is_running_as_executable() -> bool:
+    """
+    PyInstaller/Nuitka 등으로 빌드된 단일 실행파일로 실행 중인지 확인합니다.
+    - EXE/SH 등 단일 실행파일: True  → 자동 업데이트 동작
+    - python main.py 등 개발 실행:  False → 알림만 표시
+    """
+    return getattr(sys, 'frozen', False)
+
 def check_for_updates(current_version):
     """GitHub API를 통해 최신 버전을 확인합니다."""
     try:
