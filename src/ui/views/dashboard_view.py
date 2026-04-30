@@ -34,7 +34,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     # [DEV] 태그: 실행파일이 아닌 경우(python 실행) 항상 표시
     from src.updater import is_running_as_executable as _is_exe_fn
     _is_exe = _is_exe_fn()
-    _dev_tag = "" if _is_exe else " \033[1;90m[DEV]\033[0;44m"
+    _dev_tag = "" if _is_exe else " \033[1;97m[DEV]\033[0;44m"
     mode_tag = f" [모의]{debug_tag}{_dev_tag}" if is_v else f" [실전]{debug_tag}{_dev_tag}"
     # 업데이트 배지: 새 버전 감지 시 실행모드에 따라 구분
     if dm.update_info.get("has_update"):
