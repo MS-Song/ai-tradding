@@ -34,7 +34,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     # [DEV] / [AUTO] 태그: 실행모드 + 자동업데이트 설정 조합
     from src.updater import is_running_as_executable as _is_exe_fn
     _is_exe = _is_exe_fn()
-    _auto_upd_cfg = getattr(strategy, 'config', {}).get('vibe_strategy', {}).get('auto_update', False)
+    _auto_upd_cfg = getattr(strategy, 'base_config', {}).get('auto_update', False)
     _dev_tag = "" if _is_exe else " \033[1;97m[DEV]\033[0;44m"
     _auto_tag = " \033[1;92m[AUTO]\033[0;44m" if _auto_upd_cfg else ""
     mode_tag = f" [모의]{debug_tag}{_dev_tag}{_auto_tag}" if is_v else f" [실전]{debug_tag}{_dev_tag}{_auto_tag}"
