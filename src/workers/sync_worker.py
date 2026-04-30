@@ -95,6 +95,12 @@ class DataSyncWorker(BaseWorker):
                 if t.get("time", "").startswith(today_str):
                     all_codes.add(t["code"].strip())
         
+        # [추가] AI 추천 종목도 동기화 대상에 포함 (매수 시 병목 방지 및 지표 수급용)
+        recs = getattr(self.strategy, "ai_recommendations", [])
+        for r in recs[:10]: # 상위 10개 종목 우선 수급
+            if r.get('code'):
+                all_codes.add(r['code'].strip())
+        
         all_codes = list(all_codes)
         if not all_codes: return
 

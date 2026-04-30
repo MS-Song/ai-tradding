@@ -753,7 +753,7 @@ def draw_performance_report(strategy, dm):
             buf.write("-" * tw + "\n")
 
             # ③ [좌우 배치] 매수/매도 테이블
-            other_w = 53 # 가격(8)|현재(8)|평균(8)|손익(10)|방법(8)|평가(6) = 48 + 5 separators
+            other_w = 57 # 가격(8)|현재(8)|평균(8)|손익(10)|방법(12)|평가(6) = 52 + 5 separators
             half_w = tw // 2
             name_w = max(12, half_w - other_w - 2)
             
@@ -809,7 +809,7 @@ def draw_performance_report(strategy, dm):
                        f"{align_kr(f'{int(cur):,}', 8, 'right')}|"
                        f"{align_kr(ma_str, 8, 'right')}|"
                        f"{p_color}{align_kr(f'{int(pnl):,}', 10, 'right')}\033[0m|"
-                       f"{align_kr(info['type'][:4], 8)}|"
+                       f"{align_kr(info['type'][:6], 12)}|"
                        f"{v_color}{align_kr(verdict, 6)}\033[0m")
                 return row
 
@@ -867,8 +867,8 @@ def draw_performance_report(strategy, dm):
             h_buy = f"\033[1;42;1;37m{align_kr(f' [📈 매수 성과: {buy_wins}/{len(buy_list)} ({buy_rate:.0f}%)] ', half_w-1, 'center')}\033[0m"
             h_sell = f"\033[1;41;1;37m{align_kr(f' [📉 매도 성과: {sell_wins}/{len(sell_list)} ({sell_rate:.0f}%)] ', tw-half_w-1, 'center')}\033[0m"
             buf.write(f"{h_buy} {h_sell}\n")
-            t_head = f"{smart_align('종목(코드)명', name_w)}|{align_kr('매수가', 8)}|{align_kr('현재가', 8)}|{align_kr('평균선', 8)}|{align_kr('평가손익', 10)}|{align_kr('방법', 8)}|{align_kr('평가', 6)}"
-            t_head_s = f"{smart_align('종목(코드)명', name_w)}|{align_kr('매도가', 8)}|{align_kr('현재가', 8)}|{align_kr('평균선', 8)}|{align_kr('실현손익', 10)}|{align_kr('방법', 8)}|{align_kr('평가', 6)}"
+            t_head = f"{smart_align('종목(코드)명', name_w)}|{align_kr('매수가', 8)}|{align_kr('현재가', 8)}|{align_kr('평균선', 8)}|{align_kr('평가손익', 10)}|{align_kr('방법', 12)}|{align_kr('평가', 6)}"
+            t_head_s = f"{smart_align('종목(코드)명', name_w)}|{align_kr('매도가', 8)}|{align_kr('현재가', 8)}|{align_kr('평균선', 8)}|{align_kr('실현손익', 10)}|{align_kr('방법', 12)}|{align_kr('평가', 6)}"
             buf.write(f"\033[1m{align_kr(t_head, half_w-1)} \033[1m{align_kr(t_head_s, tw-half_w-1)}\033[0m\n")
             buf.write("-" * (half_w-1) + " " + "-" * (tw-half_w-1) + "\n")
             for i in range(max(1, max_rows)):

@@ -399,13 +399,24 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 color = "\033[91m" if r['change'] >= 0 else "\033[94m"
                 y_parts.append(f"{r['name']}({color}{r['change']:>+4.1f}%\033[0m)")
             
+            # [v1.6.6] 1줄로 복구하되, 이름을 축약하여 최대한 많은 종목(최대 10개) 표시
+            y_parts = []
+            for r in sorted_recs:
+                name = r['name']
+                # 이름이 너무 길면 축약하여 더 많은 종목이 한 줄에 들어가도록 함
+                if get_visual_width(name) > 8:
+                    name = align_kr(name, 6).strip() + ".."
+                color = "\033[91m" if r['change'] >= 0 else "\033[94m"
+                y_parts.append(f"{name}({color}{r['change']:>+4.1f}%\033[0m)")
+            
             y_str = " | ".join(y_parts)
             y_line = f" 전일: {y_str}"
-            # ANSI 제거 후 너비 체크
+            # 여전히 너비가 부족하면 뒤에서부터 하나씩 제거
             while get_visual_width(re.sub(r'\x1b\[[0-9;]*m', '', y_line)) > tw - 2 and " | " in y_str:
                 y_parts.pop()
                 y_str = " | ".join(y_parts)
                 y_line = f" 전일: {y_str}.."
+            
             buf.write(align_kr(y_line, tw) + "\n")
         else:
             buf.write(align_kr("\033[90m 전일 추천 내역이 없습니다.\033[0m", tw) + "\n")
@@ -418,40 +429,70 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         vol_list = [l for l in dm.cached_vol_raw if str(l.get('mkt','')).strip().upper() == dm.ranking_filter or dm.ranking_filter == "ALL"][:ranking_items_count]
         ai_recs = strategy.ai_recommendations[:ranking_items_count]
 
-        def fmt_r(item, width=col_w):
+        # [v1.6.4] 동적 정렬을 위한 최대 너비 계산 유틸리티
+        def get_col_metrics(items):
+            max_n, max_p = 0, 0
+            for it in items:
+                if not it: continue
+                n_w = get_visual_width(it.get('name', 'Unknown'))
+                if n_w > max_n: max_n = n_w
+                r = float(it.get('rate', 0)); p = int(float(it.get('price', 0)))
+                p_w = get_visual_width(f"({p:,}/{r:>+4.1f}%)")
+                if p_w > max_p: max_p = p_w
+            return max_n, max_p
+
+        m_n_hot, m_p_hot = get_col_metrics(hot_list)
+        m_n_vol, m_p_vol = get_col_metrics(vol_list)
+        m_n_ai, m_p_ai = get_col_metrics(ai_recs)
+
+        def fmt_r(item, width=col_w, t_n=0, t_p=0):
             if not item: return " " * width
             r = float(item['rate']); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
-            name = item.get('name', 'Unknown')
-            orig_name = name
+            name = item.get('name', 'Unknown'); orig_name = name
             theme_raw = get_theme_for_stock(item['code'], name)
             theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
             theme_fmt = align_kr(theme_clean, 8)
             rate_str = f"{r:>+4.1f}%"
-            # ANSI 제외 plain 너비로 축약 여부 결정
-            plain = f"[{theme_fmt}][{item['code']}] {name} ({p:,}/{rate_str})"
-            while get_visual_width(plain) > width and len(name) > 1:
-                name = name[:-1]
-                plain = f"[{theme_fmt}][{item['code']}] {name}.. ({p:,}/{rate_str})"
-            suffix = ".." if name != orig_name else ""
-            txt = f"[{theme_fmt}][{item['code']}] {name}{suffix} ({p:,}/{c}{rate_str}\033[0m)"
+            
+            # 1. 가용 이름 너비 계산 (전체 - 접두어(19) - 가격너비(t_p) - 간격(1))
+            # 가격부(t_p)가 너무 크면 최소 이름 너비를 보장하기 위해 조정
+            price_area_w = min(t_p, width - 19 - 4) # 최소 이름 너비 2 + 간격 1 + 여유 1 보장
+            avail_n_w = max(2, width - 19 - price_area_w - 1)
+            final_n_w = min(avail_n_w, t_n) if t_n > 0 else avail_n_w
+            
+            # 2. 이름 축약
+            d_name = name
+            if get_visual_width(d_name) > final_n_w:
+                while get_visual_width(d_name + "..") > final_n_w and len(d_name) > 1: d_name = d_name[:-1]
+                d_name += ".."
+            
+            # 3. 조립 (이름 영역을 final_n_w로 고정 패딩)
+            name_txt = align_kr(d_name, final_n_w)
+            price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
+            txt = f"[{theme_fmt}][{item['code']}] {name_txt} {price_txt}"
             return align_kr(txt, width)
 
-        def fmt_ai(item, width=col_w):
+        def fmt_ai(item, width=col_w, t_n=0, t_p=0):
             if not item: return " " * width
             r = float(item.get('rate', 0)); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
-            name = item.get('name', 'Unknown')
-            orig_name = name
+            name = item.get('name', 'Unknown'); orig_name = name
             theme_raw = item.get('theme', '?')
             theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
             theme_fmt = align_kr(theme_clean, 8)
             rate_str = f"{r:>+4.1f}%"
-            # ANSI 제외 plain 너비로 축약 여부 결정
-            plain = f"[{theme_fmt}][{item['code']}] {name} ({p:,}/{rate_str})"
-            while get_visual_width(plain) > width and len(name) > 1:
-                name = name[:-1]
-                plain = f"[{theme_fmt}][{item['code']}] {name}.. ({p:,}/{rate_str})"
-            suffix = ".." if name != orig_name else ""
-            txt = f"[{theme_fmt}][{item['code']}] {name}{suffix} ({p:,}/{c}{rate_str}\033[0m)"
+            
+            price_area_w = min(t_p, width - 19 - 4)
+            avail_n_w = max(2, width - 19 - price_area_w - 1)
+            final_n_w = min(avail_n_w, t_n) if t_n > 0 else avail_n_w
+            
+            d_name = name
+            if get_visual_width(d_name) > final_n_w:
+                while get_visual_width(d_name + "..") > final_n_w and len(d_name) > 1: d_name = d_name[:-1]
+                d_name += ".."
+            
+            name_txt = align_kr(d_name, final_n_w)
+            price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
+            txt = f"[{theme_fmt}][{item['code']}] {name_txt} {price_txt}"
             return align_kr(txt, width)
 
         b_st = "ON" if strategy.auto_ai_trade else "OFF"
@@ -465,9 +506,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         buf.write("─" * tw + "\n")
         for i in range(ranking_items_count):
             buf.write(
-                f"{fmt_r(hot_list[i] if i < len(hot_list) else None)} ｜ "
-                f"{fmt_r(vol_list[i] if i < len(vol_list) else None)} ｜ "
-                f"{fmt_ai(ai_recs[i] if i < len(ai_recs) else None)}\n"
+                f"{fmt_r(hot_list[i] if i < len(hot_list) else None, col_w, m_n_hot, m_p_hot)} ｜ "
+                f"{fmt_r(vol_list[i] if i < len(vol_list) else None, col_w, m_n_vol, m_p_vol)} ｜ "
+                f"{fmt_ai(ai_recs[i] if i < len(ai_recs) else None, col_w, m_n_ai, m_p_ai)}\n"
             )
 
         # [Phase 3] 실시간 캔들 차트 대시보드 (하단 상시 노출)
@@ -803,7 +844,15 @@ def draw_trading_logs(strategy, dm):
                 
                 for t in trades[:trade_h]:
                     t_type = t.get('type', 'Unknown')
-                    t_color = "\033[91m" if "매수" in t_type else "\033[94m" if "매도" in t_type or "익절" in t_type or "손절" in t_type else ""
+                    # AI 매매는 보라색(95), 매수는 빨간색(91), 매도는 파란색(94)
+                    if "AI" in t_type or "🤖" in t_type:
+                        t_color = "\033[95m"
+                    elif "매수" in t_type:
+                        t_color = "\033[91m"
+                    elif any(k in t_type for k in ["매도", "익절", "손절", "청산"]):
+                        t_color = "\033[94m"
+                    else:
+                        t_color = ""
                     p_val = t.get('profit', 0)
                     p_color = "\033[91m" if p_val > 0 else "\033[94m" if p_val < 0 else ""
                     p_str = f"{p_color}{int(p_val):+,}원\033[0m" if p_val != 0 else "-"
@@ -828,10 +877,10 @@ def draw_trading_logs(strategy, dm):
                 last_times = dict(dm.last_times); worker_status = dict(dm._worker_statuses); worker_results = dict(dm.worker_results)
             
             worker_desc = {
-                "INDEX": "시황/지수 분석", "DATA": "데이터 동기화", "RANKING": "인기 종목 탐색",
-                "ASSET": "계좌 정보 수집", "BILLING": "API 비용 정산", "UPDATE": "최신 버전 확인",
-                "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 알림", "AI_ENGINE": "AI 전략 엔진",
-                "THEME": "테마 정보 수집", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진", 
+                "MARKET": "마켓 엔진 (수집)", "VIBE": "Vibe 분석 (AI)", "RANKING": "인기/테마 (랭킹)",
+                "DATA": "데이터 동기화", "ASSET": "계좌 정보 수집", "BILLING": "API 비용 정산", 
+                "UPDATE": "최신 버전 확인", "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 알림", 
+                "AI_ENGINE": "AI 전략 엔진", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진", 
                 "TRADE": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링",
                 "REPORT": "정기 리포트 발송"
             }
@@ -844,7 +893,7 @@ def draw_trading_logs(strategy, dm):
             header = f"  {h_name} | {h_desc} | {h_time} | {h_elap} | {h_stat} | {h_res} | 마지막 행동"
             buf.write("\033[1m" + header + "\033[0m\n" + "  " + "-" * (tw - 6) + "\n")
             
-            sort_order = {"INDEX": 1, "AI_ENGINE": 2, "DATA": 3, "RANKING": 4, "GLOBAL": 5, "TELEGRAM": 6, "ASSET": 7}
+            sort_order = {"MARKET": 0, "VIBE": 1, "RANKING": 2, "AI_ENGINE": 3, "DATA": 4, "GLOBAL": 5, "TELEGRAM": 6, "ASSET": 7}
             def get_sort_key(x): return (sort_order.get(x, 99), x) if not x.startswith("STOCK_") else (100, x)
             sorted_workers = sorted([w for w in all_workers if w and w != "..."], key=get_sort_key)
             if "TELEGRAM" not in sorted_workers: sorted_workers.append("TELEGRAM")

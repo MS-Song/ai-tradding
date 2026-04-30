@@ -21,21 +21,30 @@ class MarketAnalyzer:
         self.ai_override_msg = ""
         self.finalized_ai_vibe = None # 캐시된 마지막 AI 판정
         self.debug_mode = False
-        self.last_dema_update = 0     # [추가] DEMA 갱신 주기 관리
+        self.last_analyzed_rates = {} # [추가] 마지막 분석 시점의 등락률 저장
+        self.last_dema_update = 0     
+        self.last_vibe_update = 0     # [추가] 마지막 Vibe 분석 시간
 
-    def update(self, force_ai: bool = False) -> Tuple[str, bool]:
-        symbol_map = {
-            "KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KPI200": "KPI200", "VOSPI": "VOSPI",
-            "FX_USDKRW": "FX_USDKRW", "DOW": "DOW", "NASDAQ": "NASDAQ", "S&P500": "S&P500",
-            "NAS_FUT": "NAS_FUT", "SPX_FUT": "SPX_FUT", "BTC_USD": "BTC_USD", "BTC_KRW": "BTC_KRW"
-        }
-        try:
-            # [최적화] 개별 호출 대신 벌크 API를 사용하여 1회에 모든 지수 수집
-            batch_data = self.api.get_multiple_index_prices(symbol_map)
-            for s, data in batch_data.items():
+    def update(self, force_ai: bool = False, external_data: dict = None) -> Tuple[str, bool]:
+        """지수 데이터를 업데이트하고 시장 장세를 분석합니다."""
+        if external_data:
+            # 외부에서 주입된 데이터가 있으면 바로 사용
+            for s, data in external_data.items():
                 if data: self.current_data[s] = data
-        except RuntimeError:
-            return self.kr_vibe, self.is_panic 
+        else:
+            # 주입된 데이터가 없으면 기존처럼 직접 수집
+            symbol_map = {
+                "KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KPI200": "KPI200", "VOSPI": "VOSPI",
+                "FX_USDKRW": "FX_USDKRW", "DOW": "DOW", "NASDAQ": "NASDAQ", "S&P500": "S&P500",
+                "NAS_FUT": "NAS_FUT", "SPX_FUT": "SPX_FUT", "BTC_USD": "BTC_USD", "BTC_KRW": "BTC_KRW"
+            }
+            try:
+                # [최적화] 개별 호출 대신 벌크 API를 사용하여 1회에 모든 지수 수집
+                batch_data = self.api.get_multiple_index_prices(symbol_map)
+                for s, data in batch_data.items():
+                    if data: self.current_data[s] = data
+            except RuntimeError:
+                return self.kr_vibe, self.is_panic 
         # 1차 평가 (알고리즘 기반 휴리스틱)
         heuristic_vibe = self._check_circuit_breaker()
         if heuristic_vibe == "Neutral":

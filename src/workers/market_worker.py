@@ -15,82 +15,96 @@ class MarketWorker(BaseWorker):
     def run(self):
         curr_t = time.time()
         
-        # 1. 시장 트렌드 및 지수 패치
+        # 1. 지수 데이터 수집 (5초 주기)
+        symbol_map = {
+            "KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KPI200": "KPI200", "VOSPI": "VOSPI",
+            "FX_USDKRW": "FX_USDKRW", "DOW": "DOW", "NASDAQ": "NASDAQ", "S&P500": "S&P500",
+            "NAS_FUT": "NAS_FUT", "SPX_FUT": "SPX_FUT", "BTC_USD": "BTC-USD", "BTC_KRW": "BTC-KRW"
+        }
+        batch_data = {}
         try:
-            self.state.update_worker_status("INDEX", status="시장분석", friendly_name="MARKET_ANAL")
-            self.strategy.determine_market_trend()
-            
-            # [Task] 날짜 변경 감지 시 전일 추천 리스트 갱신
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            if not hasattr(self, "_last_date") or self._last_date != today_str:
-                self.strategy.state_mgr.update_yesterday_recs()
-                self._last_date = today_str
-
+            batch_data = self.api.get_multiple_index_prices(symbol_map)
             with self.state.lock:
-                self.state.market_data = self.strategy.current_market_data
-                self.state.vibe = self.strategy.current_market_vibe
-                self.state.is_panic = self.strategy.global_panic
-                self.state.dema_info = getattr(self.strategy.analyzer, 'dema_info', {})
-                
-                # 지수 상태에 따른 시장 활성화 여부 판단
-                kospi_info = self.state.market_data.get("KOSPI")
-                if kospi_info and "status" in kospi_info:
-                    self.state.is_kr_market_active = (kospi_info.get("status") == "02")
-                else:
-                    self.state.is_kr_market_active = is_market_open()
-                
-            self.state.update_worker_status("INDEX", status="대기 중 (IDLE)", result="성공", last_task="시장 지수 및 VIBE 분석", friendly_name="MARKET_ANAL")
-        except RuntimeError:
-            self.stop() # 시스템 종료 시
+                for s, data in batch_data.items():
+                    if data: self.state.market_data[s] = data
+            # MARKET 하트비트 갱신 (5초)
+            self.state.update_worker_status("MARKET", status="대기 중 (IDLE)", result="성공", last_task="하트비트 확인됨", friendly_name="MARKET_CORE")
         except Exception as e:
             from src.logger import log_error
-            log_error(f"MarketWorker Analysis Error: {e}")
-            self.state.update_worker_status("INDEX", status="대기 중 (IDLE)", result="실패", last_task=f"시장분석 오류: {e}", friendly_name="MARKET_ANAL")
+            log_error(f"MarketWorker Data Fetch Error: {e}")
+            self.state.update_worker_status("MARKET", status="대기 중 (IDLE)", result="실패", last_task=f"수집 오류: {e}")
 
-        # 2. VIBE 변화 및 장 개시 알림 로직
-        self._handle_notifications()
-
-        # 3. 네이버 인기/거래량 종목 수집
-        try:
-            self.state.update_worker_status("RANKING", status="종목 수집")
-            h_raw = self.api.get_naver_hot_stocks()
-            v_raw = self.api.get_naver_volume_stocks()
-            self.state.update_worker_status("THEME", status="테마 분석")
-            self.themes = analyze_popular_themes(h_raw, v_raw)
-            
-            shared_info = self._extract_price_info(h_raw + v_raw)
-            
-            with self.state.lock:
-                self.state.hot_raw = h_raw
-                self.state.vol_raw = v_raw
-                # 가격 정보 캐시에 병합
-                for c, info in shared_info.items():
-                    if c in self.state.stock_info:
-                        self.state.stock_info[c].update(info)
-                    else:
-                        base = {"tp": 0, "sl": 0, "spike": False, "ma_20": 0, "prev_vol": 0, 
-                                "day_val": 0, "day_rate": 0, "price": 0}
-                        base.update(info)
-                        self.state.stock_info[c] = base
-                
-            self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="성공", last_task="인기 종목 탐색 완료")
-            self.state.update_worker_status("THEME", status="대기 중 (IDLE)", result="성공", last_task="테마 분석 완료")
-            
-            # [추가] 전일 추천 종목 성과 실시간 갱신
-            self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
-        except Exception as e:
-            self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="실패", last_task=f"랭킹 수집 오류: {e}")
-            self.state.update_worker_status("THEME", status="대기 중 (IDLE)", result="실패", last_task=f"테마 분석 오류: {e}")
-
-        # 4. AI 추천 및 비용 갱신
-        try:
-            self._update_ai_data(curr_t)
-        except Exception as e:
-            from src.logger import log_error
-            log_error(f"MarketWorker AI Data Update Error: {e}")
+        # 2. VIBE 분석 (120초 주기 또는 급격한 지수 변동 시)
+        should_analyze_vibe = False
+        reason = ""
+        last_rates = getattr(self.strategy.analyzer, 'last_analyzed_rates', {})
+        for k in ["KOSPI", "KOSDAQ"]:
+            curr_rate = batch_data.get(k, {}).get('rate', 0.0)
+            last_rate = last_rates.get(k, curr_rate)
+            if abs(curr_rate - last_rate) >= 0.3:
+                should_analyze_vibe = True
+                reason = f"⚡ {k} 급변 ({last_rate:+.2f}% → {curr_rate:+.2f}%)"
+                break
         
-        # 5. 복기 엔진 상태 (장 마감 후 체크용)
-        self.state.update_worker_status("RETRO", status="대기 중 (IDLE)", result="성공", last_task="투자 복기 엔진 대기 중", friendly_name="RETRO")
+        vibe_interval = 120
+        if curr_t - getattr(self.strategy.analyzer, 'last_vibe_update', 0) > vibe_interval:
+            should_analyze_vibe = True
+            reason = "⏰ 정기 분석 (120s)"
+
+        if should_analyze_vibe:
+            try:
+                self.state.update_worker_status("VIBE", status="분석 중", friendly_name="MARKET_ANAL")
+                self.strategy.determine_market_trend(force_ai=("⚡" in reason), external_data=batch_data)
+                self.strategy.analyzer.last_vibe_update = curr_t
+                for k in ["KOSPI", "KOSDAQ"]:
+                    self.strategy.analyzer.last_analyzed_rates[k] = batch_data.get(k, {}).get('rate', 0.0)
+                
+                with self.state.lock:
+                    self.state.vibe = self.strategy.current_market_vibe
+                    self.state.is_panic = self.strategy.global_panic
+                    self.state.dema_info = getattr(self.strategy.analyzer, 'dema_info', {})
+                self.state.update_worker_status("VIBE", status="대기 중 (IDLE)", result="성공", last_task=reason)
+            except Exception as e:
+                from src.logger import log_error
+                log_error(f"MarketWorker Vibe Error: {e}")
+                self.state.update_worker_status("VIBE", status="대기 중 (IDLE)", result="실패", last_task=f"분석 오류: {e}")
+
+        # 3. 인기/테마 분석 (120초 고정 주기)
+        ranking_interval = 120
+        if curr_t - getattr(self, "_last_ranking_time", 0) > ranking_interval:
+            try:
+                self.state.update_worker_status("RANKING", status="수집 중")
+                h_raw = self.api.get_naver_hot_stocks()
+                v_raw = self.api.get_naver_volume_stocks()
+                self.themes = analyze_popular_themes(h_raw, v_raw)
+                
+                shared_info = self._extract_price_info(h_raw + v_raw)
+                with self.state.lock:
+                    self.state.hot_raw = h_raw
+                    self.state.vol_raw = v_raw
+                    for c, info in shared_info.items():
+                        if c in self.state.stock_info: self.state.stock_info[c].update(info)
+                        else: self.state.stock_info[c] = {"tp": 0, "sl": 0, "spike": False, "ma_20": 0, "prev_vol": 0, "day_val": 0, "day_rate": 0, "price": 0, **info}
+                
+                self._last_ranking_time = curr_t
+                self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
+                self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="성공", last_task="랭킹/테마 갱신 완료")
+            except Exception as e:
+                from src.logger import log_error
+                log_error(f"MarketWorker Ranking Error: {e}")
+                self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="실패", last_task=f"수집 오류: {e}")
+
+        # 4. 공통 기능 (5초)
+        self._handle_notifications()
+        self._update_ai_data(curr_t)
+        
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        if not hasattr(self, "_last_date") or self._last_date != today_str:
+            self.strategy.state_mgr.update_yesterday_recs()
+            self._last_date = today_str
+        
+        # RETRO 상태는 루프 마지막에 1회 업데이트 (5초)
+        self.state.update_worker_status("RETRO", status="대기 중 (IDLE)", result="성공", last_task="복기 엔진 대기 중")
 
     def _handle_notifications(self):
         with self.state.lock:

@@ -205,7 +205,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self._save_all_states()
         logger.info(f"📅 일일 수익률 기준점 초기화: {current_asset:,.0f}원")
 
-    def determine_market_trend(self, force_ai: bool = False): return self.analyzer.update(force_ai=force_ai)
+    def determine_market_trend(self, force_ai: bool = False, external_data: dict = None): 
+        return self.analyzer.update(force_ai=force_ai, external_data=external_data)
 
     def get_market_phase(self) -> dict:
         now = datetime.now().time()

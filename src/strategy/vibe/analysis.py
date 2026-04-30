@@ -60,7 +60,9 @@ class AnalysisMixin:
             # 1.1 보유 종목 통합 진단 및 자율 매도/전략 갱신 실행 (신규 통합 로직)
             batch_results = self.perform_portfolio_batch_review()
             for res in batch_results:
-                logger.info(f"  {res}")
+                msg = f"🏁 {res}"
+                logger.info(msg)
+                if dm: dm.add_trading_log(msg)
             
             # 2. AI 조언 수집
             self.get_ai_advice()
@@ -101,6 +103,12 @@ class AnalysisMixin:
                 inds = {}
                 if candles:
                     inds = self.indicator_eng.get_all_indicators(candles)
+                    
+                    # [추가] 추출된 지표 중 MA20을 상태 캐시에 즉시 반영 (매수 시 로그 기록용)
+                    sma_20 = inds.get("sma", {}).get("sma_20", 0.0)
+                    if sma_20 > 0 and self.state:
+                        with self.state.lock:
+                            self.state.ma_20_cache[code] = sma_20
                 
                 # 2. 이중 이평선 분석 수집
                 ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
@@ -111,7 +119,7 @@ class AnalysisMixin:
                 return code, None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            results = list(executor.map(fetch_indicators, self.ai_recommendations[:5]))
+            results = list(executor.map(fetch_indicators, self.ai_recommendations[:15]))
             for code, inds in results:
                 if inds:
                     candidate_indicators[code] = inds
@@ -124,11 +132,36 @@ class AnalysisMixin:
             else:
                 h['tp'], h['sl'], _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
 
-        # [개선] DEMA 정보를 포함하여 AI 브리핑 요청
+        # [개선] 하락장(BEAR/DEFENSIVE) 기술적 필터링 강화: 역배열/하락추세 종목 제외
+        v = self.analyzer.kr_vibe.upper()
+        if v in ["BEAR", "DEFENSIVE"] and candidate_indicators:
+            filtered_recs = []
+            for rec in self.ai_recommendations:
+                code = rec['code']
+                inds = candidate_indicators.get(code)
+                if inds and 'ma_analysis' in inds:
+                    ma_res = inds['ma_analysis']
+                    sig = ma_res.get('signal', 'NEUTRAL')
+                    trend = ma_res.get('daily', {}).get('trend', 'UNKNOWN')
+                    
+                    # 하락장에서는 일봉 추세가 UP이고 분봉 시그널이 CAUTION이 아닌 경우만 추천 유지
+                    if trend == "UP" and sig != "CAUTION":
+                        filtered_recs.append(rec)
+                    else:
+                        logger.info(f"🚫 [하락장 필터] {rec['name']} 제외 (추세:{trend}, 시그널:{sig})")
+                else:
+                    filtered_recs.append(rec)
+            
+            if len(filtered_recs) < len(self.ai_recommendations):
+                logger.info(f"📉 하락장 필터링 완료: {len(self.ai_recommendations)} -> {len(filtered_recs)} 종목 압축")
+                self.ai_recommendations = filtered_recs
+
+        # [복구] AI 컨텍스트 구성
         ai_market_context = {
             "indices": self.analyzer.current_data,
             "dema_trend": self.analyzer.dema_info
         }
+        
         with ThreadPoolExecutor(max_workers=3) as executor:
             future_briefing = executor.submit(self.ai_advisor.get_advice, ai_market_context, self.analyzer.kr_vibe, holdings, current_cfg, self.ai_recommendations, indicators=candidate_indicators)
             future_detailed = executor.submit(self.ai_advisor.get_detailed_report_advice, self.ai_recommendations, self.analyzer.kr_vibe, progress_cb=progress_cb)

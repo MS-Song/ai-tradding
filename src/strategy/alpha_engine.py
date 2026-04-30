@@ -116,90 +116,114 @@ class VibeAlphaEngine:
         return final_stocks + final_etfs
 
     def _calculate_ai_score(self, stock: dict, theme: dict, is_gem: bool, kr_vibe: str = "Neutral", market_data: dict = None, detail: dict = None, is_hot: bool = False) -> float:
-        """종목별 입체 점수 산정 (테마 + 등락률 + 실시간 수급 모멘텀 + 펀더멘털 + 장세 기반 보정)"""
-        score = 50.0 # 기본 베이스 점수 (핫 가점 축소에 따른 전체 점수 하락 보정)
+        """종목별 입체 점수 산정 (테마 + 등락률 + 상대 강도(RS) + 실시간 수급 + 펀더멘털 + 장세 기반 보정)"""
+        score = 50.0 # 기본 베이스 점수
         raw_rate = float(stock.get('rate', 0))
         rate = abs(raw_rate)
+        code = stock.get('code', '')
         
         # 1. 장세 기반 동적 가중치 설정
         v = str(kr_vibe).upper()
         mo_weight = 3.0   # 모멘텀 가중치 (기본)
         val_weight = 1.0  # 가치형 가중치 (기본)
         div_weight = 0.0  # 배당 가중치 (기본)
+        rs_weight = 2.0   # 상대 강도 가중치 (기본)
         
         if v == "BULL":
             mo_weight = 4.0      # 상승장엔 달리는 말 우선
+            rs_weight = 1.5
         elif v == "BEAR":
             mo_weight = 1.5      # 하락장에선 모멘텀 신뢰도 하락
-            val_weight = 2.0     # 펀더멘털 중요성 상승
-            div_weight = 5.0     # 배당(방어) 메리트 추가
+            val_weight = 2.5     # 펀더멘털 중요성 대폭 상승
+            div_weight = 6.0     # 배당(방어) 메리트 추가
+            rs_weight = 4.0      # 하락장일수록 지수보다 강한 종목(RS)이 진짜 우량주
         elif v == "DEFENSIVE":
             mo_weight = 1.0
-            val_weight = 2.5
-            div_weight = 8.0
+            val_weight = 3.5
+            div_weight = 10.0
+            rs_weight = 5.0      # 방어모드에선 RS가 최우선 지표
         
-        # 2. 등락률 기반 진입 필터 및 모멘텀 점수
-        # [CRITICAL] 당일 등락률 -1.5% ~ +8.0% 범위 밖의 종목은 대폭 감점 (GEMINI.md 진입 조건)
+        # 2. 지수 대비 상대 강도(RS) 계산 및 반영
+        if market_data:
+            # 종목 코드나 시장 구분(KSP/KDQ) 정보를 통해 적절한 지수 선택
+            # (여기서는 단순화하여 KOSPI/KOSDAQ 평균 또는 상세 데이터의 시장 구분 활용)
+            market_type = detail.get('market_type', 'KOSPI') if detail else 'KOSPI'
+            index_rate = 0.0
+            if 'KOSDAQ' in market_type.upper():
+                index_rate = float(market_data.get('KOSDAQ', {}).get('rate', 0))
+            else:
+                index_rate = float(market_data.get('KOSPI', {}).get('rate', 0))
+            
+            rs_value = raw_rate - index_rate # 지수보다 얼마나 더 강한가?
+            if rs_value > 0:
+                score += rs_value * rs_weight
+            elif v in ["BEAR", "DEFENSIVE"] and rs_value < -1.0:
+                # 하락장에서 지수보다 더 많이 빠지는 종목은 강하게 페널티
+                score -= abs(rs_value) * 3.0
+
+        # 3. 등락률 기반 진입 필터 (GEMINI.md 준수: -8.0% ~ +8.0%)
+        # [CRITICAL] 범위를 벗어난 종목은 점수를 대폭 삭감하여 추천 대상에서 원천 배제
         if raw_rate > 8.0:
-            # +8% 초과 상승 종목: 이미 과열 상태이므로 추격 매수 차단
-            score -= 50.0  # 사실상 추천 제외
-        elif raw_rate < -1.5:
-            # -1.5% 미만 급락 종목: 낙폭이 커서 리스크 과다
-            score -= 30.0
-        elif v == "BULL" and raw_rate > 0:
-            # 상승장에서는 오르는 종목(최대 +8%)에 모멘텀 가점 부여 (추격 매수 일부 허용)
+            return -100.0  # 과열 종목 진입 원천 차단
+        elif raw_rate < -8.0:
+            return -100.0  # 과매도/급락 종목 진입 차단
+        
+        # 정상 범위 내 모멘텀 점수 가산
+        if v == "BULL" and raw_rate > 0:
             score += min(8.0, raw_rate) * mo_weight
         else:
-            # 하락/보합장에서는 0%에 가까울수록 선취매 매력도 상승
             score += (5.0 - min(5.0, rate)) * mo_weight
         
         # 테마 내 밀집도 반영
         score += min(15, theme['count'] * (mo_weight / 2.0))
         
-        # 검색 상위 (핫 리스트) 종목 특별 가점 대폭 축소 (저평가 가치주 위주 편향 방지 및 모멘텀 편입, 기존 15.0 -> 5.0)
         if is_hot:
             score += 5.0 * mo_weight
         
-        # 3. 펀더멘털 지표 보정 및 상대 가치 평가 (업종 PER 비교)
+        # 4. 펀더멘털 지표 보정 (우량주 발굴 핵심)
         if not detail:
-            detail = self.api.get_naver_stock_detail(stock['code'])
+            detail = self.api.get_naver_stock_detail(code)
             
         try:
-            # PBR 보정
+            # PBR 보정 (저PBR 우량주 가중치)
             pbr_val = float(detail.get('pbr', '0').replace(',', '')) if detail.get('pbr') != 'N/A' else 1.0
-            if pbr_val <= 1.0: score += (15.0 * val_weight)
-            elif pbr_val <= 3.0: score += (8.0 * val_weight)
-            elif pbr_val >= 10.0: score -= (15.0 * val_weight)
+            if pbr_val <= 0.8: score += (20.0 * val_weight) # 극심한 저평가 우량주
+            elif pbr_val <= 1.2: score += (12.0 * val_weight)
+            elif pbr_val >= 5.0: score -= (10.0 * val_weight)
             
             # PER 보정
             per_val = float(detail.get('per', '0').replace(',', '')) if detail.get('per') != 'N/A' else 20.0
-            if per_val <= 10.0: score += (10.0 * val_weight)
-            elif per_val <= 20.0: score += (5.0 * val_weight)
-            elif per_val >= 50.0: score -= (10.0 * val_weight)
+            if per_val <= 8.0: score += (15.0 * val_weight)
+            elif per_val <= 15.0: score += (8.0 * val_weight)
             
-            # 업종 상대 PER 보정 (종목 PER가 업종 평균보다 낮을 경우 가산점)
+            # 시가총액 가중치 (우량주 선호)
+            mkt_cap = float(str(detail.get('market_cap', '0')).replace(',', '').replace('억', '')) if detail.get('market_cap') else 0
+            if mkt_cap >= 10000: # 시총 1조 이상 우량주
+                score += 5.0 * val_weight
+            
+            # 업종 상대 PER 보정
             sector_per_str = str(detail.get('sector_per', '0')).replace(',', '').replace('%', '')
             sector_per = float(sector_per_str) if sector_per_str != 'N/A' else 0.0
-            if sector_per > 0 and per_val > 0 and per_val < sector_per:
-                score += (8.0 * val_weight) # 업종 대비 저평가 보너스
+            if sector_per > 0 and per_val > 0 and per_val < sector_per * 0.7:
+                score += (10.0 * val_weight)
             
-            # 배당률(Yield) 보정 (하락장 방어주 발굴)
+            # 배당률(Yield) 보정 (하락장 핵심 방어 지표)
             yld_val = float(str(detail.get('yield', '0')).replace(',', '').replace('%', '')) if detail.get('yield') != 'N/A' else 0.0
-            if yld_val >= 4.0: score += div_weight
-            if yld_val >= 7.0: score += div_weight * 1.5
+            if yld_val >= 3.0: score += div_weight
+            if yld_val >= 5.0: score += div_weight * 1.5
                 
         except: pass
         
-        # 4. 인버스 ETF 가점 부여 (방어/하락장 전용)
+        # 5. 인버스 ETF 가점 (하락장 헷지)
         is_inverse = "인버스" in stock.get('name', ' ')
         if is_inverse:
-            if v in ["BEAR", "DEFENSIVE"]: score += 20.0
-            else: score -= 50.0 # 평소에는 인버스 추천 배제
+            if v in ["BEAR", "DEFENSIVE"]: score += 25.0
+            else: score -= 60.0
         
-        # 5. 거시 지표 기반 기본 컷오프 패널티 (지수 폭락 시 전체 점수 삭감)
+        # 6. 거시 지표 패널티 (환율 급등 등 리스크 반영)
         if market_data:
             usd_krw = market_data.get("FX_USDKRW")
-            if usd_krw and usd_krw.get('rate', 0) >= 1.0: score -= 3.0 # 환율 급등 시 패널티
+            if usd_krw and usd_krw.get('price', 0) >= 1380: score -= 5.0 # 환율 리스크 반영
             
         if is_gem: score += 10.0
         

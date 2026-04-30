@@ -29,7 +29,12 @@ class ExitManager:
         target_tp = base_tp if base_tp is not None else self.base_tp
         target_sl = base_sl if base_sl is not None else self.base_sl
         
-        # 3. 시장 분위기(Vibe)에 따른 실시간 보정 적용
+        # 3. 시장 분위기(Vibe) 및 페이즈 보정 적용
+        # [핵심 변경] AI가 할당한 개별 전략(Preset)이나 수동 설정값이 있는 경우, 
+        # 이미 해당 시점의 장세가 반영된 수치이므로 '추가 보정'을 생략하여 유저 혼란 방지 (Double-Counting 방지)
+        if base_tp is not None or base_sl is not None:
+            return round(target_tp, 1), round(target_sl, 1), False
+
         tp_mod, sl_mod = self.get_vibe_modifiers(kr_vibe)
         
         # 시간 페이즈 보정 합산
