@@ -77,52 +77,62 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         if level == 3: return dt.strftime('%H:%M:%S')
         return ""
 
-    # 시간 정보 최적화 및 레이아웃 조정 (클락 잘림 방지)
+    # 시간 정보 최적화 및 레이아웃 조정 (클락 잘림/흔들림 방지)
+    # [개선] 우측 시계를 고정폭으로 먼저 확보하고, 좌측 내용을 남은 공간에 채움
+    # ANSI 코드를 모두 제거한 순수 시각폭 기준으로 계산하여 계산 오차 원천 방지
+
+    def _ansi_strip(s):
+        return re.sub(r'\x1b\[[0-9;]*m', '', s)
+
+    def _vw(s):
+        return get_visual_width(_ansi_strip(s))
+
     time_level = 0
     header_line = ""
     while time_level < 4:
         time_text = get_time_text(now_dt, time_level)
+        # 우측 시계: 고정 형식 " (XX) HH:MM:SS " 또는 날짜 포함
         right_side = f" ({thread_count:02d}) {time_text} "
-        right_w = get_visual_width(right_side)
-        
-        # 왼쪽 기본 요소: 버전 | 시장상태
+        right_w = _vw(right_side)  # 한글 요일(목/수 등) 2폭 포함하여 시각폭으로 계산
+
+        # 좌측 기본 요소
         base_left = f"{version_text} | {market_text}"
-        base_left_w = get_visual_width(base_left)
-        
-        # 작업 정보를 포함할 여유 공간 계산 (최소 1칸 여백 보장)
-        # 구조: [버전 | 시장] | [작업내용] (공백) [시간]
-        # 중간 구분자 ' | ' 너비 3 포함
-        avail_work_w = tw - base_left_w - 3 - right_w - 1
-        
+        base_left_w = _vw(base_left)
+
+        # 우측을 위한 공간을 고정으로 확보한 뒤 남은 폭에 작업 정보 배치
+        # 구조: [버전 | 시장 | 작업정보 ....패딩....][시계]
+        # left_budget = 시계 + 최소패딩(1) 을 제외한 나머지
+        left_budget = tw - right_w  # 좌측이 사용 가능한 최대 시각폭
+
+        # 구분자 ' | ' 포함한 작업 정보 가용폭
+        sep = " | "
+        avail_work_w = left_budget - base_left_w - len(sep) - 1  # 최소 패딩 1
+
         if avail_work_w >= 10:
-            # 작업 정보를 표시할 공간이 어느 정도 있음
             display_work = truncate_log_line(work_text, avail_work_w)
-            left_side = f"{base_left} | {display_work}"
-            left_w = get_visual_width(left_side)
-            spaces = " " * max(1, tw - left_w - right_w)
-            header_line = left_side + spaces + right_side
+            left_content = f"{base_left}{sep}{display_work}"
+        elif left_budget - base_left_w >= 2:
+            # 작업 정보 생략, 버전+시장만
+            left_content = base_left
         else:
-            # 작업 정보 표시 공간이 너무 부족하면 작업 정보 생략 시도
-            left_side = base_left
-            left_w = get_visual_width(left_side)
-            if left_w + 1 + right_w <= tw:
-                spaces = " " * (tw - left_w - right_w)
-                header_line = left_side + spaces + right_side
-            else:
-                # 시장 정보까지 생략 (극단적 상황)
-                left_side = version_text
-                left_w = get_visual_width(left_side)
-                spaces = " " * max(1, tw - left_w - right_w)
-                header_line = left_side + spaces + right_side
-        
-        if get_visual_width(header_line) <= tw:
+            # 시장 정보까지 생략 (극단적 협소 상황)
+            left_content = version_text
+
+        left_w = _vw(left_content)
+        # 남은 공간을 스페이스로 채워 시계를 오른쪽 끝에 고정
+        pad = max(0, left_budget - left_w)
+        header_line = left_content + " " * pad + right_side
+
+        # 최종 시각폭이 tw 이하면 탈출
+        if _vw(header_line) <= tw:
             break
         time_level += 1
-    
+
     if not header_line:
-        header_line = align_kr(version_text, tw)[:tw]
-    
-    header_line = header_line[:tw]
+        header_line = align_kr(version_text, tw)
+
+    # ANSI 포함 문자열을 바이트 슬라이싱하면 색상 코드가 깨지므로 절대 [:tw] 금지
+    # 대신 시각폭이 tw를 초과하지 않도록 위 while 루프에서 보장
     # 모의 거래인 경우 보라색(45), 실 거래인 경우 파란색(44) 적용
     header_bg = "45" if is_v else "44"
     buf.write(f"\033[{header_bg};37m{header_line}\033[0m\n")
