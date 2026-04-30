@@ -220,14 +220,18 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             vals = self.exit_mgr.manual_thresholds[code]
             return float(vals[0]), float(vals[1]), False
         ps = self.preset_eng.preset_strategies.get(code)
+        
+        # [개선] 프리셋 전략(평균회귀 등)인 경우에도 시장 VIBE 및 페이즈(P1 등) 보정을 적용하도록 변경
+        # 이를 통해 장세가 좋을 때는 프리셋의 기본 익절가에 보너스(예: +2.0% 등)를 더하여 수익을 극대화함
         if ps and ps.get("preset_id") != "00":
             tp, sl = ps.get("tp", 0.0), ps.get("sl", 0.0)
             if tp == 0 or sl == 0:
-                # [Fix] 수치가 0인 경우 기본값으로 Fallback
-                default_tp, default_sl, _ = self.exit_mgr.get_thresholds(code, vibe, p_data, self.get_market_phase())
-                tp = tp if tp != 0 else default_tp
-                sl = sl if sl != 0 else default_sl
-            return tp, sl, False
+                # 수치가 0인 경우(설정 누락 등) 시스템 기본값으로 Fallback
+                return self.exit_mgr.get_thresholds(code, vibe, p_data, self.get_market_phase())
+            
+            # 프리셋 수치를 베이스로 하여 실시간 보정치 적용
+            return self.exit_mgr.get_thresholds(code, vibe, p_data, self.get_market_phase(), base_tp=tp, base_sl=sl)
+            
         return self.exit_mgr.get_thresholds(code, vibe, p_data, self.get_market_phase())
 
     def _cleanup_rejected_stocks(self):

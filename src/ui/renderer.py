@@ -3,9 +3,10 @@ import sys
 import io
 import time
 import threading
+import re
 from datetime import datetime
 from src.utils import is_market_open, is_us_market_open, get_visual_width, align_kr, ANSI_ESCAPE, get_market_name, get_key_immediate
-from src.theme_engine import get_cached_themes
+from src.theme_engine import get_cached_themes, get_theme_for_stock
 
 VERSION_CACHE = "Unknown"
 try:
@@ -79,7 +80,6 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     busy_str = busy_msg if busy_msg else "-"
 
     if status_active:
-        import re
         is_err = "[ERROR]" in dm.status_msg
         clean_msg = re.sub(r'\x1b\[[0-9;]*m', '', dm.status_msg).replace("[STATUS] ", "").strip()
         # 에러인 경우 빨간색, 일반 상태면 노란색
@@ -153,7 +153,6 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     buf.write(f"\033[{header_bg};37m{header_line}\033[0m\n")
     
     with dm.data_lock:
-        import re
         def fmt_idx(label, k, price_fmt="{:,.0f}"):
             d = dm.cached_market_data.get(k)
             if not d: return ""
@@ -403,7 +402,6 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             y_str = " | ".join(y_parts)
             y_line = f" 전일: {y_str}"
             # ANSI 제거 후 너비 체크
-            import re
             while get_visual_width(re.sub(r'\x1b\[[0-9;]*m', '', y_line)) > tw - 2 and " | " in y_str:
                 y_parts.pop()
                 y_str = " | ".join(y_parts)
@@ -425,16 +423,17 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             r = float(item['rate']); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
             name = item.get('name', 'Unknown')
             orig_name = name
-            from src.theme_engine import get_theme_for_stock
-            theme = get_theme_for_stock(item['code'], name)[0:4]
+            theme_raw = get_theme_for_stock(item['code'], name)
+            theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
+            theme_fmt = align_kr(theme_clean, 8)
             rate_str = f"{r:>+4.1f}%"
             # ANSI 제외 plain 너비로 축약 여부 결정
-            plain = f"({theme})[{item['code']}] {name} ({p:,}/{rate_str})"
+            plain = f"[{theme_fmt}][{item['code']}] {name} ({p:,}/{rate_str})"
             while get_visual_width(plain) > width and len(name) > 1:
                 name = name[:-1]
-                plain = f"({theme})[{item['code']}] {name}.. ({p:,}/{rate_str})"
+                plain = f"[{theme_fmt}][{item['code']}] {name}.. ({p:,}/{rate_str})"
             suffix = ".." if name != orig_name else ""
-            txt = f"({theme})[{item['code']}] {name}{suffix} ({p:,}/{c}{rate_str}\033[0m)"
+            txt = f"[{theme_fmt}][{item['code']}] {name}{suffix} ({p:,}/{c}{rate_str}\033[0m)"
             return align_kr(txt, width)
 
         def fmt_ai(item, width=col_w):
@@ -442,15 +441,17 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             r = float(item.get('rate', 0)); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
             name = item.get('name', 'Unknown')
             orig_name = name
-            theme = item.get('theme', '?')[0:4]
+            theme_raw = item.get('theme', '?')
+            theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
+            theme_fmt = align_kr(theme_clean, 8)
             rate_str = f"{r:>+4.1f}%"
             # ANSI 제외 plain 너비로 축약 여부 결정
-            plain = f"({theme})[{item['code']}] {name} ({p:,}/{rate_str})"
+            plain = f"[{theme_fmt}][{item['code']}] {name} ({p:,}/{rate_str})"
             while get_visual_width(plain) > width and len(name) > 1:
                 name = name[:-1]
-                plain = f"({theme})[{item['code']}] {name}.. ({p:,}/{rate_str})"
+                plain = f"[{theme_fmt}][{item['code']}] {name}.. ({p:,}/{rate_str})"
             suffix = ".." if name != orig_name else ""
-            txt = f"({theme})[{item['code']}] {name}{suffix} ({p:,}/{c}{rate_str}\033[0m)"
+            txt = f"[{theme_fmt}][{item['code']}] {name}{suffix} ({p:,}/{c}{rate_str}\033[0m)"
             return align_kr(txt, width)
 
         b_st = "ON" if strategy.auto_ai_trade else "OFF"
