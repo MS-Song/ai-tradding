@@ -79,7 +79,7 @@ def draw_ai_logs_report(strategy, dm):
             buf.write("\033[1;92m" + " [종목 한도(8개) 초과에 따른 당일 교체 히스토리]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             today = datetime.now().strftime('%Y-%m-%d')
-            today_replacements = [r for r in strategy.replacement_logs if r.get('time', '').startswith(today)]
+            today_replacements = [r for r in strategy.replacement_logs if r.get('time', '').startswith(today)][::-1]
             
             if not today_replacements:
                 buf.write("  오늘 기록된 종목 교체 내역이 없습니다.\n")

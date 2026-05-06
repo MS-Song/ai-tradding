@@ -162,72 +162,107 @@ class IndicatorEngine:
         return dema_val
 
     def get_dual_timeframe_analysis(self, api, code: str) -> Dict[str, any]:
-        """일봉(중기) + 분봉(단기) 이중 타임프레임 분석을 수행합니다."""
+        """일봉(중기) + 분봉(단기) 이중 타임프레임 분석을 수행합니다.
+        데이터 소스 우선순위:
+          분봉: 1) KIS API → 2) 네이버 F-Chart XML
+          일봉: 1) KIS API → 2) 네이버 모바일 JSON (get_naver_stocks_realtime 가격 + 과거 이력 없이 오늘 기준)
+        """
         analysis = {
             "daily": {"trend": "UNKNOWN", "ma": {}},
             "minute": {"ma": {}},
             "signal": "NEUTRAL",
             "reason": ""
         }
-        
+
+        def safe_float(v):
+            try: return float(str(v).strip()) if v and str(v).strip() else 0.0
+            except: return 0.0
+
         try:
-            # 1. 일봉 분석 (최근 60일 데이터)
-            daily_candles = api.get_daily_chart_price(code)
+            # ── 1. 일봉 분석 (KIS 우선) ──────────────────────────────────
+            daily_candles = []
+            try:
+                daily_candles = api.get_daily_chart_price(code)
+            except Exception as e:
+                from src.logger import logger
+                logger.warning(f"[MA폴백] {code} KIS 일봉 실패: {e}")
+
+            if not daily_candles:
+                # Fallback: 네이버 F-Chart XML 일봉 데이터
+                try:
+                    from src.logger import logger
+                    if hasattr(api, 'get_naver_daily_chart'):
+                        daily_candles = api.get_naver_daily_chart(code)
+                        if daily_candles:
+                            logger.info(f"[MA폴백] {code} 일봉 → 네이버 F-Chart 사용")
+                except Exception as fe:
+                    pass
+
             if daily_candles:
-                # KIS 일봉은 최신순 (Index 0이 당일 또는 전일)
-                def safe_float(v):
-                    try: return float(str(v).strip()) if v and str(v).strip() else 0.0
-                    except: return 0.0
                 closes = [safe_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in daily_candles]
                 ma_data = self.calculate_sma(closes, [5, 20, 60])
                 curr_price = closes[0]
-                
                 sma_20 = ma_data.get("sma_20", 0)
                 trend = "UP" if curr_price >= sma_20 and sma_20 > 0 else "DOWN"
-                
-                analysis["daily"] = {
-                    "trend": trend,
-                    "ma": ma_data,
-                    "curr": curr_price
-                }
-            
-            # 2. 분봉 분석 (최근 60분 데이터)
-            minute_candles = api.get_minute_chart_price(code)
+                analysis["daily"] = {"trend": trend, "ma": ma_data, "curr": curr_price}
+
+            # ── 2. 분봉 분석 (KIS 우선 → 네이버 F-Chart 폴백) ────────────
+            minute_candles = []
+            minute_source = "KIS"
+            try:
+                minute_candles = api.get_minute_chart_price(code)
+            except Exception as e:
+                from src.logger import logger
+                logger.warning(f"[MA폴백] {code} KIS 분봉 실패: {e}")
+
+            if not minute_candles:
+                # Fallback: 네이버 F-Chart XML 분봉 (이미 naver.py에 구현됨)
+                try:
+                    from src.logger import logger
+                    if hasattr(api, 'get_naver_minute_chart'):
+                        minute_candles = api.get_naver_minute_chart(code, count=40)
+                        if minute_candles:
+                            minute_source = "Naver-FChart"
+                            logger.info(f"[MA폴백] {code} 분봉 → 네이버 F-Chart XML 사용")
+                except Exception as fe:
+                    from src.logger import log_error
+                    log_error(f"[MA폴백] {code} 네이버 F-Chart 분봉 실패: {fe}")
+
             if minute_candles:
-                def safe_float(v):
-                    try: return float(str(v).strip()) if v and str(v).strip() else 0.0
-                    except: return 0.0
                 closes = [safe_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in minute_candles]
                 ma_data = self.calculate_sma(closes, [5, 20, 60])
                 curr_price = closes[0]
-                
-                analysis["minute"] = {
-                    "ma": ma_data,
-                    "curr": curr_price
-                }
-                
-                # 3. 복합 시그널 로직
+                analysis["minute"] = {"ma": ma_data, "curr": curr_price, "source": minute_source}
+
+                # ── 3. 복합 시그널 로직 ──────────────────────────────────
                 sma_20_min = ma_data.get("sma_20", 0)
                 daily_trend = analysis["daily"]["trend"]
-                
+
                 if daily_trend == "UP":
-                    # 상승 추세에서 분봉 20선 근접 시 매수 적기
                     if sma_20_min > 0:
                         gap_pct = ((curr_price - sma_20_min) / sma_20_min) * 100
                         if -1.5 <= gap_pct <= 1.0:
                             analysis["signal"] = "BUY_ZONE"
-                            analysis["reason"] = "일봉 상승추세 + 분봉 20MA 지지선 근접"
+                            analysis["reason"] = f"일봉 상승추세 + 분봉 20MA 지지선 근접 [{minute_source}]"
                         elif gap_pct > 3.0:
                             analysis["signal"] = "OVERBOUGHT"
-                            analysis["reason"] = "단기 이평선 괴리 과열 (추격 주의)"
+                            analysis["reason"] = f"단기 이평선 괴리 과열 (추격 주의) [{minute_source}]"
+                        else:
+                            analysis["signal"] = "NEUTRAL"
+                            analysis["reason"] = f"일봉 상승추세, 분봉 중립 [{minute_source}]"
                 else:
                     analysis["signal"] = "CAUTION"
                     analysis["reason"] = "일봉 하락추세 (역배열 주의)"
-                    
+            else:
+                # 분봉 데이터를 어디서도 가져오지 못한 경우 → UNKNOWN 으로 명시
+                analysis["signal"] = "UNKNOWN"
+                analysis["reason"] = "분봉 데이터 취득 실패 (KIS + Naver 모두 실패)"
+
         except Exception as e:
             analysis["reason"] = f"분석 오류: {str(e)}"
-            
+
         return analysis
+
 
     def get_all_indicators(self, candles: List[dict]) -> Dict[str, any]:
         """캔들 데이터를 받아 종합 지표 세트를 반환합니다."""

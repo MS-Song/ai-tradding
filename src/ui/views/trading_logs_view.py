@@ -20,7 +20,7 @@ def draw_trading_logs(strategy, dm):
     from src.logger import trading_log
     
     current_tab = 1
-    total_tabs = 4
+    total_tabs = 5
     
     while True:
         try:
@@ -35,19 +35,72 @@ def draw_trading_logs(strategy, dm):
         buf.write(f"\033[{header_bg};37m" + align_kr(" [SYSTEM LOGS & MONITORING DASHBOARD] ", tw, 'center') + "\033[0m\n")
         
         # 탭 메뉴 바
+        t0 = "\033[7m" if current_tab == 0 else ""
         t1 = "\033[7m" if current_tab == 1 else ""
         t2 = "\033[7m" if current_tab == 2 else ""
         t3 = "\033[7m" if current_tab == 3 else ""
         t4 = "\033[7m" if current_tab == 4 else ""
         
-        menu = f" {t1} 1.시스템로그(거래/설정) \033[0m | {t2} 2.모니터링(워커/상태) \033[0m | {t3} 3.에러로그(error.log) \033[0m | {t4} 4.TRADING LOG \033[0m "
+        menu = f" {t0} 0.주요지표 \033[0m | {t1} 1.시스템로그(거래/설정) \033[0m | {t2} 2.모니터링(워커/상태) \033[0m | {t3} 3.에러로그(error.log) \033[0m | {t4} 4.TRADING LOG \033[0m "
         buf.write(align_kr(menu, tw, 'center') + "\n")
         buf.write("=" * tw + "\n\n")
 
         available_h = max(5, th - 10)
         curr_time = time.time()
 
-        if current_tab == 1:
+        if current_tab == 0:
+            dm.set_busy("주요 지표 조회 중", "UI")
+            buf.write("\033[1;96m [주요 지표 갱신 현황 (중요도순)]\033[0m\n")
+            with dm.data_lock:
+                indicator_updates = dict(dm.state.indicator_updates)
+            
+            if not indicator_updates:
+                buf.write("  아직 갱신된 주요 지표가 없습니다.\n")
+            else:
+                h_name = align_kr('명칭', 12); h_desc = align_kr('설명', 16); h_time = align_kr('갱신 시간', 10)
+                h_stat = align_kr('상태', 6); h_val = align_kr('결과 값', 22)
+                h_rem = '비고'
+                header = f"  {h_name} | {h_desc} | {h_time} | {h_stat} | {h_val} | {h_rem}"
+                buf.write("\033[1m" + header + "\033[0m\n" + "  " + "-" * (tw - 4) + "\n")
+                
+                # 중요도 순으로 정렬
+                sort_order = {
+                    "한국장": 0, "KOSPI": 1, "KOSDAQ": 2, "KPI200": 3, "VOSPI": 4,
+                    "DOW": 5, "NASDAQ": 6, "S&P500": 7, "NAS_FUT": 8, "SPX_FUT": 9,
+                    "FX_USDKRW": 10, "BTC_KRW": 11, "BTC_USD": 12
+                }
+                desc_map = {
+                    "한국장": "장 개장 상태", "KOSPI": "코스피 종합", "KOSDAQ": "코스닥 종합", 
+                    "KPI200": "코스피 200", "VOSPI": "코스피 변동성", "DOW": "다우존스", 
+                    "NASDAQ": "나스닥 종합", "S&P500": "S&P 500", "NAS_FUT": "나스닥 선물", 
+                    "SPX_FUT": "S&P 선물", "FX_USDKRW": "원/달러 환율", "BTC_KRW": "비트코인(원)", 
+                    "BTC_USD": "비트코인($)", "지수통합수집": "API 수집상태"
+                }
+                def get_sort_key(item):
+                    name, data = item
+                    return (sort_order.get(name, 99), -data.get('time', 0))
+                
+                sorted_inds = sorted(indicator_updates.items(), key=get_sort_key)
+                for name, data in sorted_inds[:available_h-2]:
+                    desc = desc_map.get(name, '-')
+                    t_str = datetime.fromtimestamp(data.get('time', 0)).strftime('%H:%M:%S')
+                    stat = data.get('status', '-')
+                    stat_color = "\033[92m" if stat == "성공" else "\033[91m" if stat == "실패" else ""
+                    
+                    val = data.get('value', '-')
+                    rate = data.get('rate', 0.0)
+                    if val != "-" and val != "오픈" and val != "마감":
+                        val_color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
+                        val_display = f"{val_color}{align_kr(val, 22)}\033[0m" if val_color else align_kr(val, 22)
+                    else:
+                        val_display = align_kr(val, 22)
+
+                    rem = data.get('remark', '')
+                    
+                    line = f"  \033[1;94m{align_kr(name, 12)}\033[0m | \033[90m{align_kr(desc, 16)}\033[0m | {align_kr(t_str, 10, 'center')} | {stat_color}{align_kr(stat, 6, 'center')}\033[0m | {val_display} | {truncate_log_line(rem, max(10, tw-85))}"
+                    buf.write(line + "\n")
+
+        elif current_tab == 1:
             dm.set_busy("시스템 로그 조회 중", "UI")
             log_area_h = max(4, th - 15)
             trade_h = int(log_area_h * 0.7)
@@ -205,7 +258,7 @@ def draw_trading_logs(strategy, dm):
             except Exception as e: buf.write(f"  로그 읽기 오류: {e}\n")
 
         buf.write("\n" + "-" * tw + "\n")
-        buf.write(align_kr(" [1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 메인으로 복귀 ", tw, 'center') + "\n")
+        buf.write(align_kr(" [0, 1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 메인으로 복귀 ", tw, 'center') + "\n")
         
         # [수정] 버퍼 내용을 한 줄씩 출력하면서 각 줄을 소거 (\033[K) 하고 남은 영역 소거 (\033[J)
         # 드래그나 스크롤 시 화면이 밀리는 현상 방지
@@ -221,7 +274,8 @@ def draw_trading_logs(strategy, dm):
             k = get_key_immediate()
             if k:
                 kl = k.lower()
-                if kl == '1': current_tab = 1; break
+                if kl == '0': current_tab = 0; break
+                elif kl == '1': current_tab = 1; break
                 elif kl == '2': current_tab = 2; break
                 elif kl == '3': current_tab = 3; break
                 elif kl == '4': current_tab = 4; break

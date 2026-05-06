@@ -24,15 +24,75 @@ class MarketWorker(BaseWorker):
         batch_data = {}
         try:
             batch_data = self.api.get_multiple_index_prices(symbol_map)
+            
+            # 1.1 시장 개장 상태 확인 (API 호출)
+            market_status = None
+            if hasattr(self.api, 'get_market_open_status'):
+                market_status = self.api.get_market_open_status()
+            
             with self.state.lock:
                 for s, data in batch_data.items():
-                    if data: self.state.market_data[s] = data
+                    if data: 
+                        self.state.market_data[s] = data
+                        val = data.get('price', '')
+                        rate = data.get('rate', 0.0)
+                        source = data.get('source', '지수 API')
+                        self.state.indicator_updates[s] = {
+                            "time": curr_t, 
+                            "status": "성공", 
+                            "value": f"{val} ({rate:+.2f}%)",
+                            "rate": rate,
+                            "remark": f"{source} 갱신"
+                        }
+                
+                # 시장 상태 동기화 (API 성공 시 API 결과 사용, 실패 시 시간 기반 fallback)
+                if market_status is not None:
+                    self.state.is_kr_market_active = market_status
+                    self.state.indicator_updates["한국장"] = {
+                        "time": curr_t,
+                        "status": "성공",
+                        "value": "오픈" if market_status else "마감",
+                        "rate": 0,
+                        "remark": "KIS API 갱신"
+                    }
+                else:
+                    self.state.is_kr_market_active = is_market_open()
+                    self.state.indicator_updates["한국장"] = {
+                        "time": curr_t,
+                        "status": "성공",
+                        "value": "오픈" if self.state.is_kr_market_active else "마감",
+                        "rate": 0,
+                        "remark": "시간 기반 Fallback"
+                    }
+
             # MARKET 하트비트 갱신 (5초)
             self.state.update_worker_status("MARKET", status="대기 중 (IDLE)", result="성공", last_task="하트비트 확인됨", friendly_name="MARKET_CORE")
         except Exception as e:
             from src.logger import log_error
             log_error(f"MarketWorker Data Fetch Error: {e}")
             self.state.update_worker_status("MARKET", status="대기 중 (IDLE)", result="실패", last_task=f"수집 오류: {e}")
+            # 에러 발생 시 시간 기반 fallback 적용
+            with self.state.lock:
+                self.state.is_kr_market_active = is_market_open()
+                self.state.indicator_updates["한국장"] = {
+                    "time": time.time(),
+                    "status": "실패",
+                    "value": "오픈" if self.state.is_kr_market_active else "마감",
+                    "rate": 0,
+                    "remark": "API 수집 오류 (시간 기반 Fallback)"
+                }
+                self.state.indicator_updates["지수통합수집"] = {
+                    "time": time.time(),
+                    "status": "실패",
+                    "value": "-",
+                    "rate": 0,
+                    "remark": f"API 에러: {e}"
+                }
+            if self.notifier:
+                try:
+                    self.notifier.notify_alert("지표 갱신 실패", f"⚠️ <b>지수/시장 갱신</b> 중 오류가 발생했습니다.\n비고: {e}")
+                except:
+                    pass
 
         # 2. VIBE 분석 (120초 주기 또는 급격한 지수 변동 시)
         should_analyze_vibe = False

@@ -27,10 +27,16 @@ class TradeWorker(BaseWorker):
                 asset_info=self.state.asset
             )
             
-            # [추가] 매매 결과가 있으면 TUI 로그에 출력 (요구사항 반영)
+            # [추가] 매매 결과가 있으면 TUI 로그에 출력
+            # execution.py에서 체결 즉시 add_trading_log()를 호출한 메시지는 중복 방지를 위해 스킵
             if results:
                 for res in results:
-                    self.state.add_trading_log(res)
+                    # execution.py에서 이미 즉시 처리된 메시지는 건너뜀 (중복 방지)
+                    if not getattr(self.state, '_instant_logged_msgs', set()) or res not in self.state._instant_logged_msgs:
+                        self.state.add_trading_log(res)
+                # 즉시 처리 메시지 셋 초기화
+                if hasattr(self.state, '_instant_logged_msgs'):
+                    self.state._instant_logged_msgs.clear()
             
             self.set_result("성공", last_task="전략 매매 사이클 수행 완료", friendly_name="TRADE_EXECUTION")
         except Exception as e:

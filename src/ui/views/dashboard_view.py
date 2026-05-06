@@ -463,11 +463,18 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             name = item.get('name', 'Unknown'); orig_name = name
             theme_raw = item.get('theme', '?')
             theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
-            theme_fmt = align_kr(theme_clean, 8)
+            theme_fmt = align_kr(theme_clean, 6) # 약간 축소
             rate_str = f"{r:>+4.1f}%"
             
-            price_area_w = min(t_p, width - 19 - 4)
-            avail_n_w = max(2, width - 19 - price_area_w - 1)
+            # [자동]/[수동] 태그 추가
+            is_auto = item.get('auto_eligible', True)
+            auto_tag_text = "[자동]" if is_auto else "[수동]"
+            auto_tag_color = "\033[92m" if is_auto else "\033[90m"
+            
+            # [테마](8) + [코드](8) + [자동](6) = 22
+            base_w = 22
+            price_area_w = min(t_p, width - base_w - 2)
+            avail_n_w = max(2, width - base_w - price_area_w - 1)
             final_n_w = min(avail_n_w, t_n) if t_n > 0 else avail_n_w
             
             d_name = name
@@ -477,7 +484,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             
             name_txt = align_kr(d_name, final_n_w)
             price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
-            txt = f"[{theme_fmt}][{item['code']}] {name_txt} {price_txt}"
+            txt = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m{name_txt} {price_txt}"
             return align_kr(txt, width)
 
         b_st = "ON" if strategy.auto_ai_trade else "OFF"

@@ -15,15 +15,41 @@ class YahooAPIClient(BaseAPI):
         cached = self._index_cache.get(iscd)
         if cached and (curr_t - cached[0]) < 20: return cached[1]
 
-        # 1. Yahoo 시도
+        # 국장 지수는 네이버(Naver)를 최우선으로 수집 (Yahoo는 지연/프리징 발생 잦음)
+        if iscd in ["KOSPI", "KOSDAQ", "KPI200", "VOSPI"]:
+            try:
+                res = self._index_src_fetch_naver_api(iscd)
+                if res:
+                    self._index_cache[iscd] = (curr_t, res)
+                    return res
+            except Exception as e:
+                from src.logger import log_error
+                log_error(f"⚠️ Naver 국장 지수 수집 오류 ({iscd}): {e}")
+            
+            # 네이버 실패 시 야후 시도
+            try:
+                res = self._index_src_fetch_yahoo(iscd)
+                if res:
+                    self._index_cache[iscd] = (curr_t, res)
+                    return res
+            except Exception as e:
+                pass
+            return None
+
+        # 그 외(해외 지수 등)는 Yahoo를 최우선으로 수집
         try:
             res = self._index_src_fetch_yahoo(iscd)
             if res:
                 self._index_cache[iscd] = (curr_t, res)
                 return res
+        except requests.exceptions.Timeout:
+            pass  # 타임아웃은 조용히 Naver로 폴백
         except Exception as e:
-            from src.logger import log_error
-            log_error(f"⚠️ Yahoo 지수 수집 오류 ({iscd}): {e}")
+            if "timed out" in str(e).lower() or "timeout" in str(e).lower():
+                pass
+            else:
+                from src.logger import log_error
+                log_error(f"⚠️ Yahoo 지수 수집 오류 ({iscd}): {e}")
 
         # 2. Naver 시도 (Fallback)
         try:
@@ -50,7 +76,7 @@ class YahooAPIClient(BaseAPI):
         }
         target = symbol_map.get(iscd, iscd)
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{target}?interval=1m&range=1d"
-        res = requests.get(url, headers=self.headers, timeout=5)
+        res = requests.get(url, headers=self.headers, timeout=10)
         if res.status_code != 200:
             raise Exception(f"HTTP {res.status_code}")
         data = res.json()
@@ -59,7 +85,7 @@ class YahooAPIClient(BaseAPI):
             curr_p = meta.get('regularMarketPrice', 0)
             prev_c = meta.get('previousClose', 0)
             rate = ((curr_p - prev_c) / prev_c * 100) if prev_c else 0
-            return {"name": iscd, "price": curr_p, "rate": rate}
+            return {"name": iscd, "price": curr_p, "rate": rate, "source": "Yahoo API"}
         except Exception as e:
             raise Exception(f"Data Parse Error: {e}")
 
@@ -76,7 +102,8 @@ class YahooAPIClient(BaseAPI):
                     return {
                         "name": iscd, 
                         "price": float(d['closePrice'].replace(',', '')), 
-                        "rate": float(d['fluctuationsRatio'])
+                        "rate": float(d['fluctuationsRatio']),
+                        "source": "Naver API"
                     }
             except: pass
             
@@ -100,7 +127,7 @@ class YahooAPIClient(BaseAPI):
                                 rate = float(parts[1].replace('%', '').replace('+', ''))
                                 if '하락' in rate_val.get('class', []) or 'nv01' in str(rate_val):
                                     rate = -abs(rate)
-                        return {"name": iscd, "price": price, "rate": rate}
+                        return {"name": iscd, "price": price, "rate": rate, "source": "Naver Crawling"}
             except: pass
         
         # 해외 지수: 모바일 API 지원 확대 (DOW, NAS, S&P)
@@ -114,7 +141,8 @@ class YahooAPIClient(BaseAPI):
                     return {
                         "name": iscd,
                         "price": float(d['closePrice'].replace(',', '')),
-                        "rate": float(d['fluctuationsRatio'])
+                        "rate": float(d['fluctuationsRatio']),
+                        "source": "Naver API"
                     }
             except: pass
 

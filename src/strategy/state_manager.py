@@ -84,6 +84,7 @@ class StateManager:
                     "preset_strategies": s.preset_eng.preset_strategies,
                     "last_closing_bet_date": getattr(s, "_last_closing_bet_date", None),
                     "rejected_stocks": s.rejected_stocks,
+                    "bad_sell_times": getattr(s, 'bad_sell_times', {}),
                     "replacement_logs": s.replacement_logs,
                     "last_rejected_date": today,
                     "start_day_asset": s.start_day_asset,
@@ -140,6 +141,9 @@ class StateManager:
                     s.start_day_pnl = d.get("start_day_pnl", 0.0)
                     s.last_asset_date = d.get("last_asset_date", "")
                     s.replacement_logs = d.get("replacement_logs", [])
+                    # bad_sell_times 로드 (재시작 후에도 재진입 차단 유지)
+                    if not hasattr(s, 'bad_sell_times'): s.bad_sell_times = {}
+                    s.bad_sell_times = d.get("bad_sell_times", {})
                     if hasattr(s, 'state') and s.state is not None:
                         s.state.notified_dates = d.get("notified_dates", {})
             except Exception as e:

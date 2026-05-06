@@ -163,6 +163,8 @@ class ExecutionMixin:
                                     strategy_label = self.get_preset_label(code) or "P4손절"
                                     trading_log.log_trade("P4장마감손절", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, f"Phase4 비용절감 청산 ({strategy_label})", profit=p4_profit, model_id=m_id or "TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                                     self.record_sell(code, is_full_exit=True)
+                                    if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
+                                    self.bad_sell_times[code] = {"time": time.time(), "type": "P4손절"}  # 8시간 차단
                                     self._async_update_ma_cache(code)
                                     self._save_all_states()
                             except Exception as e: log_error(f"P4 청산 중 오류: {e}")
@@ -198,6 +200,8 @@ class ExecutionMixin:
                                             try:
                                                 trading_log.log_trade("🤖AI자율매도", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, f"P4 AI 장마감 청산 ({strategy_label}): {reason}", profit=p4_profit, model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                                                 self.record_sell(code, is_full_exit=True)
+                                                if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
+                                                self.bad_sell_times[code] = {"time": time.time(), "type": "AI매도"}  # 8시간 차단
                                                 self._async_update_ma_cache(code)
                                                 trading_log.log_config(f"{msg} | 사유: {reason}")
                                                 self._save_all_states()
@@ -242,12 +246,21 @@ class ExecutionMixin:
                         # [Fix] 익절(30%)은 부분 매도이므로 전략 삭제 제외, 손절은 전체 매도이므로 삭제
                         is_full = action in ["손절", "긴급손절"]
                         self.record_sell(code, is_full_exit=is_full)
+                        if is_full:
+                            if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
+                            self.bad_sell_times[code] = {"time": time.time(), "type": "손절"}  # 24시간 차단
                         m_id = self.last_buy_models.get(code, "")
                         strategy_label = self.get_preset_label(code) or "자동매매"
                         trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, f"{action_reason or action} ({strategy_label})", profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id=m_id or "TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                         self._async_update_ma_cache(code)
                         self._save_all_states()
-                        results.append(f"자동 {action}{f'({action_reason})' if action_reason else ''}: {item.get('prdt_name')} {sell_qty}주")
+                        log_msg = f"자동 {action}{f'({action_reason})' if action_reason else ''}: {item.get('prdt_name')} {sell_qty}주"
+                        results.append(log_msg)
+                        # [즉시 반영] run_cycle 종료 대기 없이 [TRADING] 라인에 실시간 표시
+                        if self.state:
+                            self.state.add_trading_log(log_msg)
+                            if not hasattr(self.state, '_instant_logged_msgs'): self.state._instant_logged_msgs = set()
+                            self.state._instant_logged_msgs.add(log_msg)
                     else:
                         logger.error(f"❌ {action} 주문 실패: {msg}")
                 except Exception as e:
@@ -294,7 +307,13 @@ class ExecutionMixin:
                             success, msg = self.api.order_market(code, qty, True)
                             if success:
                                 self.record_buy(code, price)
-                                results.append(f"🤖 {b_type}: {name} {qty}주")
+                                log_msg = f"🤖 {b_type}: {name} {qty}주"
+                                results.append(log_msg)
+                                # [즉시 반영] 불타기/물타기 체결 직후 [TRADING] 라인에 실시간 표시 (run_cycle 대기 없음)
+                                if self.state:
+                                    self.state.add_trading_log(log_msg)
+                                    if not hasattr(self.state, '_instant_logged_msgs'): self.state._instant_logged_msgs = set()
+                                    self.state._instant_logged_msgs.add(log_msg)
                                 strategy_label = self.get_preset_label(code) or b_type
                                 trading_log.log_trade(f"자동{b_type}", code, name, price, qty, f"{rec.get('reason', '')} ({strategy_label})", model_id="TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                                 self._async_update_ma_cache(code)
@@ -317,8 +336,11 @@ class ExecutionMixin:
                     code, name, score = rec['code'], rec['name'], rec.get('score', 0.0)
                     if any(h.get('pdno') == code for h in holdings): continue
                     
-                    # [Cooldown] 익절/손절 후 2시간 이내 재진입 금지 (핑퐁 방지)
+                    # [Cooldown] 익절 후 2시간 이내 재진입 금지 (핑퐁 방지)
                     if (time.time() - self.last_sell_times.get(code, 0)) < 7200: continue
+                    
+                    # [매도 사유별 차등 재진입 차단] 손절=24h, P4손절/AI매도=8h, 교체매도=4h
+                    if self._is_bad_sell_blocked(code): continue
                     
                     # [Cooldown] 최근 매수 이력이 있으면 중복 진입 금지 (잔고 동기화 지연 및 API 딜레이 대응)
                     if (time.time() - self.last_buy_times.get(code, 0)) < 600: continue
@@ -334,6 +356,41 @@ class ExecutionMixin:
                     # [Step 2] 한도 및 교체 판단
                     target_code = None
                     if curr_cnt >= max_cnt:
+                        # [교체 품질 게이트 #1] 후보 종목의 등락률이 OVERBOUGHT 구간이면 교체 금지
+                        # (MA 지표 없이 교체하는 경우도 차단하여 상투 교체 방지)
+                        cand_detail = self.api.get_naver_stock_detail(code)
+                        cand_rate = float(cand_detail.get('rate', 0))
+                        cand_ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+                        cand_sig = cand_ma_analysis.get('signal', 'NEUTRAL') if cand_ma_analysis else 'UNKNOWN'
+                        if cand_sig == 'OVERBOUGHT':
+                            logger.info(f"🚫 [교체품질게이트] {name} 후보 OVERBOUGHT - 교체 진입 차단")
+                            continue
+                        if cand_sig == 'UNKNOWN':
+                            logger.info(f"⚠️ [교체품질게이트] {name} MA지표 없음 - 교체 진입 차단")
+                            continue
+
+                        # [교체 품질 게이트 #2] 후보 score가 기존 보유 종목 중 가장 낮은 score보다 15pt 이상 높아야 교체 허용
+                        # Gemini의 주관적 판단에만 의존하지 않고 정량 기준 선제 검증
+                        min_holding_score = min(
+                            (self.ai_recommendations and next(
+                                (r.get('score', 0) for r in self.ai_recommendations if r['code'] == h.get('pdno')), 0
+                            ) or 0)
+                            for h in holdings
+                        ) if holdings else 0
+                        if score < min_holding_score + 15.0:
+                            logger.info(f"🚫 [교체품질게이트] {name} 점수({score:.1f}) 기존 최저({min_holding_score:.1f}) 대비 15pt 미달 - 교체 차단")
+                            continue
+
+                        # [교체 품질 게이트 #3] 교체 대상 후보 종목의 보유 시간이 30분 미만이면 교체 금지
+                        # (수수료 낭비 + 수익 실현 기회 박탈 방지)
+                        too_fresh = any(
+                            h.get('pdno') and (time.time() - self.last_buy_times.get(h['pdno'], 0)) < 1800
+                            for h in holdings
+                        )
+                        if too_fresh:
+                            logger.info(f"🚫 [교체품질게이트] 30분 미만 보유 종목 존재 - 교체 대기")
+                            continue
+
                         is_superior, t_code, t_reason = self.get_replacement_target(code, name, score, holdings)
                         if is_superior and t_code:
                             target_code = t_code
@@ -368,6 +425,8 @@ class ExecutionMixin:
                                     "reason": f"AI 교체 판단 (후보: {name})"
                                 })
                                 self.record_sell(target_code, is_full_exit=True)
+                                if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
+                                self.bad_sell_times[target_code] = {"time": time.time(), "type": "교체"}  # 4시간 차단
                                 results.append(f"🔄 교체매도: {t_item['prdt_name']} (-> {name})")
                                 # [추가] 매도 후 가용 현금 로컬 업데이트 (매수 qty 계산 및 안전 체크용)
                                 cash += (curr_price * int(float(t_item['hldg_qty'])))
@@ -385,7 +444,13 @@ class ExecutionMixin:
                         if success:
                             self.record_buy(code, price)
                             self.auto_assign_preset(code, name)
-                            results.append(f"🚀 AI자율매수: {name} {qty}주")
+                            log_msg = f"🚀 AI자율매수: {name} {qty}주"
+                            results.append(log_msg)
+                            # [즉시 반영] AI자율매수 체결 직후 [TRADING] 라인에 실시간 표시 (run_cycle 대기 없음)
+                            if self.state:
+                                self.state.add_trading_log(log_msg)
+                                if not hasattr(self.state, '_instant_logged_msgs'): self.state._instant_logged_msgs = set()
+                                self.state._instant_logged_msgs.add(log_msg)
                             m_id = self.last_buy_models.get(code, "AI")
                             strategy_label = self.get_preset_label(code) or "AI자율"
                             trading_log.log_trade("🤖AI자율매수", code, name, price, qty, f"{reason} ({strategy_label})", model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
@@ -468,6 +533,7 @@ class ExecutionMixin:
         news = self.api.get_naver_stock_news(code)
         
         # [개선] 캐시 우선 전략: 캐시 데이터가 있으면 즉시 활용하고, 없으면 실시간 계산하여 분석 품질 보장 (유저 요청 반영)
+        ma_fetch_success = False
         try:
             ma_20 = self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0
             if ma_20 == 0:
@@ -488,6 +554,7 @@ class ExecutionMixin:
             if ma_analysis:
                 indicators['ma_analysis'] = ma_analysis
                 sig = ma_analysis.get('signal', 'NEUTRAL')
+                ma_fetch_success = True
                 # [복기반영 #2] Bear/Defensive 장세에서 분봉 20MA CAUTION(이탈) 종목은 진입 직접 차단
                 # Bull/Neutral에서는 기존대로 score 감점만 적용
                 vibe_upper = self.current_market_vibe.upper()
@@ -497,8 +564,25 @@ class ExecutionMixin:
                         return False, f"분봉20MA 이탈 확인 중 진입 차단 ({vibe_upper} 장세)"
                     else:
                         score *= 0.8  # Bull/Neutral: 감점만 적용
+                elif sig == "OVERBOUGHT":
+                    # [핵심] 모든 장세에서 단기 과열(분봉 20MA 이격도 3% 초과)은 Python 코드에서 직접 차단
+                    # → Gemini의 '공격적 페르소나'가 우회하지 못하도록 AI 호출 이전에 하드 리턴
+                    logger.info(f"🚫 [MA필터] {name} 단기 과열(OVERBOUGHT) - 상투 추격 매수 차단")
+                    return False, "분봉 이평선 단기 과열 구간 진입 차단 (상투 매수 방지)"
+                elif sig == "BUY_ZONE":
+                    # 최적의 매수 타점 (분봉 20MA 지지선 근접) 시 AI 승인 확률 상향을 위해 가점
+                    score += 15.0
         except Exception as e:
             logger.warning(f"지표 수급 및 분석 중 오류 (스킵): {e}")
+
+        # [핵심 보완] MA 지표를 전혀 취득하지 못한 경우 → 과열 여부 불명이므로 score에 패널티 적용
+        # 데이터 없이 AI가 OVERBOUGHT를 묵인하는 것을 구조적으로 방지
+        if not ma_fetch_success:
+            score -= 30.0
+            logger.info(f"⚠️ [{name}] MA지표 취득 실패 → score 패널티 -30pt (현재: {score:.1f}pt)")
+            # 패널티 후 최소 기준(60점) 미달이면 AI 호출 없이 즉시 거절
+            if score < self.ai_config.get('min_score', 60.0):
+                return False, f"MA지표 없음 + 점수 미달 ({score:.1f}pt < {self.ai_config.get('min_score', 60.0):.1f}pt) - 데이터 충분 후 재시도"
 
         phase = self.get_market_phase()
         # [개선] AI 호출 실패 시 자동 재시도 로직 추가 (최대 3회)
@@ -635,6 +719,8 @@ class ExecutionMixin:
                                 try:
                                     trading_log.log_trade("🤖AI자율매도", code, name, curr_price, sell_qty, f"AI 선제적 매도 ({strategy_label}): {reason}", profit=profit, model_id=dm_tag, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                                     self.record_sell(code, is_full_exit=True)
+                                    if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
+                                    self.bad_sell_times[code] = {"time": time.time(), "type": "AI매도"}  # 8시간 차단
                                     self._async_update_ma_cache(code)
                                 except Exception as log_e:
                                     log_error(f"AI자율매도 로그 기록 오류 [{code}|{name}]: {log_e}")

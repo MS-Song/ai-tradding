@@ -186,35 +186,42 @@ class DataSyncWorker(BaseWorker):
             # MA20 계산 (보유 종목에 대해서만 수행하여 리소스 절약)
             # 매도된 종목은 매매 시점에 이미 기록된 MA20 값을 사용하므로 실시간 동기화 제외
             ma_20 = self.state.ma_20_cache.get(code, 0.0)
+            ma_source = "캐시"  # 기본값: 이미 캐시에 있는 경우
             if is_holding and (ma_20 == 0 or is_heavy_cycle):
                 try:
                     time.sleep(0.15) # API 속도 제한 방지용 미세 지연
                     m_candles = self.api.get_minute_chart_price(code)
-                    
+                    _used_fallback = False
+
                     # [Fallback] KIS 실패 시 Naver로 시도
                     if not m_candles:
                         m_candles = self.api.get_naver_minute_chart(code)
-                        
+                        _used_fallback = bool(m_candles)
+
                     if m_candles:
                         closes = [float(str(c.get('stck_prpr') or c.get('stck_clpr')).strip()) for c in m_candles if (c.get('stck_prpr') or c.get('stck_clpr'))]
                         if len(closes) >= 20:
                             ma_vals = self.strategy.indicator_eng.calculate_sma(closes, [20])
                             ma_20 = ma_vals.get("sma_20", 0.0)
+                            ma_source = "Naver" if _used_fallback else "KIS"
                         else:
+                            ma_source = "데이터부족"
                             # 데이터 부족은 에러가 아닌 정보성 로그로 처리
                             if is_heavy_cycle: logger.debug(f"MA20 데이터 부족 ({code}): {len(closes)}개")
                     else:
+                        ma_source = "취득실패"
                         # 빈 데이터는 에러가 아닌 정보성 로그로 처리하여 error.log 비대화 방지
                         if is_heavy_cycle: logger.debug(f"MA20 차트 데이터 수신 실패 (Empty) ({code})")
                 except Exception as e:
+                    ma_source = "오류"
                     logger.debug(f"MA20 Calculation Exception ({code}): {e}")
                     pass
 
             return code, {
-                "tp": tp if is_holding else 0, "sl": sl if is_holding else 0, "spike": spike if is_holding else False, 
+                "tp": tp if is_holding else 0, "sl": sl if is_holding else 0, "spike": spike if is_holding else False,
                 "day_val": day_val, "day_rate": day_rate,
-                "ma_20": ma_20, "price": curr_p, "prev_vol": p_vol, "name": s_name
-            }, task_id, ma_20, is_holding
+                "ma_20": ma_20, "price": curr_p, "prev_vol": p_vol, "name": s_name, "ma_source": ma_source
+            }, task_id, ma_20, is_holding, ma_source
 
         # [최적화] 모의투자는 Rate Limit(1.5s)이 엄격하므로 병렬도를 1로 제한하여 순차 처리 보장
         is_v = getattr(self.api.auth, 'is_virtual', True)
@@ -223,13 +230,19 @@ class DataSyncWorker(BaseWorker):
             futures = [executor.submit(fetch_stock_task, c) for c in all_codes]
             for f in concurrent.futures.as_completed(futures):
                 try:
-                    c, info, tid, ma, is_h = f.result()
+                    c, info, tid, ma, is_h, ma_src = f.result()
                     temp_info[c] = info
                     with self.state.lock:
                         if ma > 0: self.state.ma_20_cache[c] = ma
-                    
+
                     if is_h:
-                        self.state.update_worker_status(tid, status="대기 중 (IDLE)", result="성공", last_task=f"{info['name']} 동기화 완료", friendly_name=f"{c}_{info['name']}")
+                        # [개선] MA20 소스를 마지막 행동 텍스트에 () 안에 표기
+                        ma_src_tag = f" (MA:{ma_src})" if ma_src not in ("캐시", "") else ""
+                        self.state.update_worker_status(
+                            tid, status="대기 중 (IDLE)", result="성공",
+                            last_task=f"{info['name']} 동기화 완료{ma_src_tag}",
+                            friendly_name=f"{c}_{info['name']}"
+                        )
                 except: pass
 
         # 3.5 [신규] 보유 종목이 아닌 STOCK_ 워커 정리 (상태 제거)

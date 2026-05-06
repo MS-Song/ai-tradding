@@ -198,6 +198,23 @@ class DataManager:
     def update_worker_status(self, worker, result=None, last_task=None, friendly_name=None):
         self.state.update_worker_status(worker, result=result, last_task=last_task, friendly_name=friendly_name)
 
+    def update_indicator(self, name: str, status: str, value: str, remark: str):
+        """주요 지표 갱신 상태를 업데이트하고, 실패 시 텔레그램 알림을 발송합니다."""
+        with self.state.lock:
+            self.state.indicator_updates[name] = {
+                "time": time.time(),
+                "status": status,
+                "value": value,
+                "remark": remark
+            }
+        
+        if status == "실패" and self.notifier:
+            try:
+                self.notifier.notify_alert("지표 갱신 실패", f"⚠️ <b>{name}</b> 갱신 중 오류가 발생했습니다.\n비고: {remark}")
+            except Exception as e:
+                from src.logger import log_error
+                log_error(f"Telegram notification error in update_indicator: {e}")
+
     def is_busy(self):
         return self.state.is_worker_busy()
 

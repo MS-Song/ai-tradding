@@ -74,8 +74,12 @@ class VibeAlphaEngine:
                 if progress_cb and (current % 5 == 0 or current == total):
                     progress_cb(current, total, f"분석 중: {item['name']}")
 
+            # 자동 매수 가능 여부 판정 (±8.0% 제한)
+            raw_rate = float(item.get('rate', 0))
+            auto_eligible = -8.0 <= raw_rate <= 8.0
+
             if item_score >= dynamic_min_score:
-                res = {**item, "score": item_score, "theme": my_theme['name'], "is_gem": False, "reason": f"{my_theme['name']} 테마 수급 및 지표 우수"}
+                res = {**item, "score": item_score, "theme": my_theme['name'], "is_gem": False, "reason": f"{my_theme['name']} 테마 수급 및 지표 우수", "auto_eligible": auto_eligible}
                 if not is_etf:
                     with lock: stocks_pool.append(res)
                     if on_item_found: on_item_found(res)
@@ -161,16 +165,19 @@ class VibeAlphaEngine:
                 # 하락장에서 지수보다 더 많이 빠지는 종목은 강하게 페널티
                 score -= abs(rs_value) * 3.0
 
-        # 3. 등락률 기반 진입 필터 (GEMINI.md 준수: -8.0% ~ +8.0%)
-        # [CRITICAL] 범위를 벗어난 종목은 점수를 대폭 삭감하여 추천 대상에서 원천 배제
-        if raw_rate > 8.0:
-            return -100.0  # 과열 종목 진입 원천 차단
-        elif raw_rate < -8.0:
-            return -100.0  # 과매도/급락 종목 진입 차단
-        
+        # 3. 등락률 기반 진입 필터 (원천 차단 폐지)
+        # [개선] +8.0% 초과 종목을 -100점으로 원천 차단하면 사용자가 시장 주도주를 파악할 수 없습니다.
+        # 자동 매수 진입은 execution.py에서 안전하게 차단하므로, 여기서는 원천 배제를 없애고
+        # 하단의 '소프트 페널티(점수 차감)' 로직을 통해 자연스럽게 순위만 조정되도록 둡니다.
+
         # 정상 범위 내 모멘텀 점수 가산
         if v == "BULL" and raw_rate > 0:
-            score += min(8.0, raw_rate) * mo_weight
+            # [수정] 달리는 말 추격 시, +4.0% 까지는 비례해서 점수를 주되 (돌파 초기 선호)
+            # +4.0% 를 초과하여 +8.0% 에 가까워질수록 점수를 깎아 상투(고점) 잡는 것을 방지
+            if raw_rate <= 4.0:
+                score += raw_rate * mo_weight
+            else:
+                score += (4.0 - (raw_rate - 4.0)) * mo_weight
         else:
             score += (5.0 - min(5.0, rate)) * mo_weight
         

@@ -92,6 +92,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self.yesterday_recs_processed: List[dict] = []
         self._last_closing_bet_date = None
         self.rejected_stocks: Dict[str, dict] = {}
+        self.bad_sell_times: Dict[str, float] = {}
         self.last_buy_models: Dict[str, str] = {}
         self.replacement_logs: List[dict] = []
         self.start_day_asset = 0.0
@@ -243,6 +244,36 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         if to_remove:
             for c in to_remove: del self.rejected_stocks[c]
             self._save_all_states()
+
+    def _is_bad_sell_blocked(self, code: str) -> bool:
+        """매도 사유별 차등 재진입 차단 여부 반환.
+        - 손절 / 긴급손절: 24시간 (지지선 붕괴, 방향성 부적합)
+        - P4손절 / AI매도: 8시간  (오버나이트 리스크 or AI 판단 매도)
+        - 교체매도:         4시간  (상대적 열위일 뿐, 절대적 문제 아님)
+        """
+        if not hasattr(self, 'bad_sell_times'): return False
+        entry = self.bad_sell_times.get(code)
+        if not entry: return False
+
+        # 구버전 호환: 단순 timestamp(float)가 저장된 경우 → 24시간 적용
+        if isinstance(entry, (int, float)):
+            return (time.time() - entry) < 86400
+
+        sell_type = entry.get("type", "손절")
+        elapsed = time.time() - entry.get("time", 0)
+
+        cooldown_map = {
+            "손절":   86400,  # 24시간
+            "P4손절": 28800,  # 8시간
+            "AI매도": 28800,  # 8시간
+            "교체":   14400,  # 4시간
+        }
+        limit = cooldown_map.get(sell_type, 86400)
+        if elapsed >= limit:
+            del self.bad_sell_times[code]  # 만료된 항목 정리
+            return False
+        logger.debug(f"[재진입차단] {code} | 사유:{sell_type} | 잔여:{(limit-elapsed)/3600:.1f}h")
+        return True
 
     def _is_in_partial_sell_cooldown(self, code: str, curr_t: float) -> bool:
         return self.last_buy_times.get(code, 0) <= self.last_sell_times.get(code, 0) and (curr_t - self.last_sell_times.get(code, 0)) < 3600

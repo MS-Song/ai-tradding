@@ -268,3 +268,18 @@ class NaverAPIClient(BaseAPI):
             return list(reversed(candles))
         except:
             return []
+
+    def get_market_open_status(self) -> Optional[bool]:
+        """네이버 API를 통해 국내 증시 개장 상태를 확인합니다."""
+        try:
+            url = "https://m.stock.naver.com/api/index/KOSPI/basic"
+            self._wait_for_domain_delta(url)
+            res = requests.get(url, headers=self.headers, timeout=5)
+            if res.status_code == 200:
+                status = res.json().get('marketStatus')
+                if status:
+                    return status == "OPEN"
+        except Exception as e:
+            from src.logger import log_error
+            log_error(f"⚠️ 시장 상태 조회 오류: {e}")
+        return None
