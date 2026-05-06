@@ -13,7 +13,7 @@ class ExecutionMixin:
         if holdings is None: holdings = self.api.get_balance()
         if asset_info is None: asset_info = self.api.get_full_balance()[1] if not skip_trade else {}
         
-        results, curr_t = [], time.time()
+        results, curr_t = [], self.mock_tester.get_now().timestamp()
         phase = self.get_market_phase()
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         today = datetime.now().strftime('%Y-%m-%d')
@@ -65,7 +65,8 @@ class ExecutionMixin:
                             qty = 1
                             
                         if qty > 0 and not skip_trade:
-                            success, msg = self.api.order_market(code, qty, True)
+                            dry_res = self.mock_tester.intercept_order(code, qty, True)
+                            success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
                             if success:
                                 self._last_closing_bet_date = today
                                 results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
@@ -112,7 +113,9 @@ class ExecutionMixin:
                 if phase['id'] == "P3" and not p_strat.get('is_p3_processed') and float(item.get("evlu_pfls_rt", 0.0)) >= 0.5:
                     sell_qty = int(float(item.get('hldg_qty', 0))) // 2
                     if sell_qty > 0 and not skip_trade:
-                        if self.api.order_market(code, sell_qty, False)[0]:
+                        dry_res = self.mock_tester.intercept_order(code, sell_qty, False)
+                        success, msg = dry_res if dry_res else self.api.order_market(code, sell_qty, False)
+                        if success:
                             p_strat['is_p3_processed'], p_strat['sl'] = True, 0.2
                             p3_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                             results.append(f"🏁 P3 수익확정(50%): {item.get('prdt_name')} ({int(p3_profit):+,}원)")
@@ -128,7 +131,9 @@ class ExecutionMixin:
                 if phase['id'] == "P3" and p3_key not in self._p3_global_processed and float(item.get("evlu_pfls_rt", 0.0)) >= 0.5:
                     sell_qty = int(float(item.get('hldg_qty', 0))) // 2
                     if sell_qty > 0 and not skip_trade:
-                        if self.api.order_market(code, sell_qty, False)[0]:
+                        dry_res = self.mock_tester.intercept_order(code, sell_qty, False)
+                        success, msg = dry_res if dry_res else self.api.order_market(code, sell_qty, False)
+                        if success:
                             self._p3_global_processed[p3_key] = True
                             tp_cur, sl_cur, _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
                             self.exit_mgr.manual_thresholds[code] = [tp_cur, 0.2]
@@ -155,7 +160,9 @@ class ExecutionMixin:
                         if sell_qty > 0 and not skip_trade:
                             self.current_action = "P4청산실행"
                             try:
-                                if self.api.order_market(code, sell_qty, False)[0]:
+                                dry_res = self.mock_tester.intercept_order(code, sell_qty, False)
+                                success, msg = dry_res if dry_res else self.api.order_market(code, sell_qty, False)
+                                if success:
                                     self._p3_global_processed[p4_key] = True
                                     p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                                     results.append(f"💤 P4 장마감 손절: {item.get('prdt_name')} ({int(p4_profit):+,}원)")
@@ -190,7 +197,9 @@ class ExecutionMixin:
                                     should_sell, reason = self.ai_advisor.closing_sell_confirm(code, item.get('prdt_name'), self.current_market_vibe, rt, detail, news, tp=tp_cur, sl=sl_cur)
                                     self._p3_global_processed[p4_ai_key] = True
                                     if should_sell:
-                                        if self.api.order_market(code, sell_qty, False)[0]:
+                                        dry_res = self.mock_tester.intercept_order(code, sell_qty, False)
+                                        success, msg = dry_res if dry_res else self.api.order_market(code, sell_qty, False)
+                                        if success:
                                             p4_profit = (float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty
                                             msg = f"🤖 P4 AI청산: {item.get('prdt_name')} ({int(p4_profit):+,}원)"
                                             results.append(msg)
@@ -201,7 +210,7 @@ class ExecutionMixin:
                                                 trading_log.log_trade("🤖AI자율매도", code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, f"P4 AI 장마감 청산 ({strategy_label}): {reason}", profit=p4_profit, model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                                                 self.record_sell(code, is_full_exit=True)
                                                 if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
-                                                self.bad_sell_times[code] = {"time": time.time(), "type": "AI매도"}  # 8시간 차단
+                                                self.bad_sell_times[code] = {"time": curr_t, "type": "AI매도"}  # 8시간 차단
                                                 self._async_update_ma_cache(code)
                                                 trading_log.log_config(f"{msg} | 사유: {reason}")
                                                 self._save_all_states()
@@ -241,14 +250,15 @@ class ExecutionMixin:
                 self.current_action = f"{action}실행"
                 try:
                     logger.info(f"🚀 {action} 주문 시작: {item.get('prdt_name')}({code}) {sell_qty}주")
-                    success, msg = self.api.order_market(code, sell_qty, False)
+                    dry_res = self.mock_tester.intercept_order(code, sell_qty, False)
+                    success, msg = dry_res if dry_res else self.api.order_market(code, sell_qty, False)
                     if success:
                         # [Fix] 익절(30%)은 부분 매도이므로 전략 삭제 제외, 손절은 전체 매도이므로 삭제
                         is_full = action in ["손절", "긴급손절"]
                         self.record_sell(code, is_full_exit=is_full)
                         if is_full:
                             if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
-                            self.bad_sell_times[code] = {"time": time.time(), "type": "손절"}  # 24시간 차단
+                            self.bad_sell_times[code] = {"time": curr_t, "type": "손절"}  # 24시간 차단
                         m_id = self.last_buy_models.get(code, "")
                         strategy_label = self.get_preset_label(code) or "자동매매"
                         trading_log.log_trade(action, code, item.get('prdt_name'), float(item.get('prpr', 0)), sell_qty, f"{action_reason or action} ({strategy_label})", profit=(float(item.get('prpr', 0)) - float(item.get('pchs_avg_pric', 0))) * sell_qty, model_id=m_id or "TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
@@ -285,7 +295,7 @@ class ExecutionMixin:
                     code, name, amt, b_type = rec['code'], rec['name'], rec['suggested_amt'], rec['type']
                     
                     # [Cooldown] 익절/손절 후 2시간 이내 재진입 금지 (핑퐁 방지)
-                    if (time.time() - self.last_sell_times.get(code, 0)) < 7200: continue
+                    if (curr_t - self.last_sell_times.get(code, 0)) < 7200: continue
                     
                     # 현금 비중 보호
                     if b_type == "물타기":
@@ -304,7 +314,8 @@ class ExecutionMixin:
                         price = float(h_item.get('prpr', 0))
                         qty = math.floor(amt / price) if price > 0 else 0
                         if qty > 0:
-                            success, msg = self.api.order_market(code, qty, True)
+                            dry_res = self.mock_tester.intercept_order(code, qty, True)
+                            success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
                             if success:
                                 self.record_buy(code, price)
                                 log_msg = f"🤖 {b_type}: {name} {qty}주"
@@ -410,7 +421,8 @@ class ExecutionMixin:
                     if target_code:
                         t_item = next((h for h in holdings if h['pdno'] == target_code), None)
                         if t_item:
-                            success, _ = self.api.order_market(target_code, int(float(t_item['hldg_qty'])), False)
+                            dry_res = self.mock_tester.intercept_order(target_code, int(float(t_item['hldg_qty'])), False)
+                            success, _ = dry_res if dry_res else self.api.order_market(target_code, int(float(t_item['hldg_qty'])), False)
                             if success:
                                 curr_price = float(t_item.get('prpr', 0))
                                 profit = (curr_price - float(t_item.get('pchs_avg_pric', 0))) * int(float(t_item['hldg_qty']))
@@ -440,7 +452,8 @@ class ExecutionMixin:
                         qty = 1
                         
                     if qty > 0:
-                        success, msg = self.api.order_market(code, qty, True)
+                        dry_res = self.mock_tester.intercept_order(code, qty, True)
+                        success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
                         if success:
                             self.record_buy(code, price)
                             self.auto_assign_preset(code, name)

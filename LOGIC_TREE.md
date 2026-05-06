@@ -1,90 +1,92 @@
-# 🌲 KIS-Vibe-Trader Logic Tree & Checklist
+# 🌲 KIS-Vibe-Trader Logic Tree & Checklist (Advanced for Testing)
 
-이 문서는 KIS-Vibe-Trader의 핵심 비즈니스 로직을 트리 구조로 정리하고, 리팩토링 시 기능 누락을 방지하기 위한 점검 체크리스트를 제공합니다.
+이 문서는 시스템의 모든 기능 단위(자동/수동)를 정의하고, 테스트 코드가 커버해야 할 특정 조건과 트리거를 상세히 기술합니다.
 
-## 1. Core Trading Logic Tree
+## 1. System Architecture & Flow Tree
 
 ```mermaid
 graph TD
-    Main[VibeStrategy.run_cycle] --> Init[1. 초기화 및 리스크 체크]
-    Init --> CB[RiskManager: 서킷 브레이커 확인]
-    Init --> Cleanup[Rejected Stocks 정리]
+    %% [Core Flow]
+    Main[VibeStrategy.run_cycle] --> Init[1. 초기화 및 환경 진단]
+    Init --> MarketStat[MarketAnalyzer: 시장 개장/휴장/패닉 여부 진단]
+    Init --> VibeDetect[MarketAnalyzer: VIBE 판정 - Bull/Bear/Defensive]
+    Init --> RiskCheck[RiskManager: 서킷 브레이커 및 현금 비중 체크]
 
-    Main --> Phase4_Entry[2. Phase 4 종가 베팅 / 배치 리뷰]
-    Phase4_Entry --> ClosingBet[AI 추천 1~3순위 종가 베팅]
-    Phase4_Entry --> BatchReview[포트폴리오 통합 AI 배치 리뷰]
-    BatchReview --> BatchSell[AI 자율 매도 결정]
-    BatchReview --> BatchUpdate[전략 프리셋 일괄 갱신]
+    %% [Command & UI Units - Manual Control]
+    Main --> UI_Command[2. 사용자 커맨드 처리 - TUI Key Input]
+    UI_Command --> Reports[조회 리포트: B/D/H/P/A/L]
+    UI_Command --> Manual_Trade[직접 매매: 1-매도 / 2-매수]
+    UI_Command --> Manual_Config[임계치 수정: 3-TP/SL 수정]
+    UI_Command --> Engine_Config[엔진 설정: 4-AI / 5-물타기 / 6-불타기]
+    UI_Command --> AI_Manual[AI 수동 제어: 8-즉시 분석 / 9-전략 할당 / 7-종목 분석]
+    UI_Command --> Sys_Config[시스템 설정: S-환경설정 / U-업데이트 / Q-종료]
 
-    Main --> HoldingProc[3. 보유 종목 프로세싱]
-    HoldingProc --> TimeStop[Time-Stop: 전략 만료 시 재분석/Fallback]
-    HoldingProc --> Phase3[Phase 3: 50% 수익 확정 분할매도]
-    HoldingProc --> Phase4_Exit[Phase 4: 손실 청산 및 AI 개별 분석]
-    HoldingProc --> DynamicExit[동적 익절/손절 체크]
-    DynamicExit --> PartialExit[기본 익절: 30% 분할 매도 + 쿨다운]
-    DynamicExit --> FullExit[기본 손절: 전량 매도]
-    DynamicExit --> EmgExit[긴급 익절/손절: 변동성/패닉 대응]
+    %% [Holding Management]
+    Main --> HoldingProc[3. 보유 종목 프로세싱 - ExitManager]
+    HoldingProc --> PhaseCorrection[Phase별 TP/SL 보정 - P1/P2]
+    HoldingProc --> DynamicExit[실시간 익절/손절 감시]
+    DynamicExit --> EmergencyExit[긴급 탈출: 패닉/Defensive 전환/급락]
+    DynamicExit --> PartialExit[수익 확정: 분할 매도 및 쿨다운]
+    HoldingProc --> Phase4_Exit[Phase 4: 장 마감 전 AI 통합 배치 리뷰/정리]
 
-    Main --> BuyEngine[4. 매수 엔진 - P1/P2 전용]
-    BuyEngine --> Recovery[Recovery Engine: 물타기 - 하락 대응]
-    BuyEngine --> Pyramiding[Pyramiding Engine: 불타기 - 상승 추종]
-    BuyEngine --> AI_Buy[AI 자율 매수: 신규 진입]
-    AI_Buy --> AI_Confirm[Gemini 최종 구매 컨펌]
-    AI_Buy --> AI_Replace[보유 한도 도달 시 종목 교체 판단]
+    %% [Entry Engine]
+    Main --> EntryEngine[4. 매수 엔진 - EntryManager]
+    EntryEngine --> AI_Buy[AI 자율 매수: 신규 진입]
+    AI_Buy --> AI_Confirm[Gemini 최종 컨펌: 상투 방어/과열 체크]
+    EntryEngine --> Recovery[Recovery Engine: 물타기 - 하락 대응]
+    EntryEngine --> Pyramiding[Pyramiding Engine: 불타기 - 상승 추종]
 
-    AI_Confirm --> DataTrust[데이터 신뢰: 0원 데이터 오판 방지]
-    AI_Confirm --> DualMA[이중 타임프레임 MA 분석 적용]
-    AI_Confirm --> OverboughtBlock[상투 매수 방어: 과열/OVERBOUGHT 원천 차단]
+    %% [Infrastructure]
+    Main --> Infra[5. 인프라 및 상태 저장]
+    Infra --> StateSync[영속성: trading_state.json 실시간 동기화]
+    Infra --> DataReliability[데이터 신뢰: MA 3중 백업 및 소스 트래킹]
 ```
 
 ---
 
-## 2. Refactoring Verification Checklist
+## 2. Functional Unit & Test Case Checklist
 
-### ✅ [A] 매도 (Exit) 로직
-- [ ] **익절 (TP)**: 설정된 TP 도달 시 30% 분할 매도가 정상 작동하는가?
-- [ ] **손절 (SL)**: 설정된 SL 도달 시 전량 매도가 정상 작동하는가?
-- [ ] **익절 쿨다운**: 익절 후 1시간 동안 추가 익절이 제한되는가? (불타기 시 리셋 확인)
-- [ ] **긴급 바이패스**: 급등(+3.0%) 또는 거래량 폭발 시 쿨다운을 무시하고 익절하는가?
-- [ ] **물타기 유예**: 물타기 직후 30분간 손절이 유예되는가? (긴급 조건 시 즉시 실행 확인)
-- [ ] **AI 자율 매도**: AI가 SELL 판정 시 TP/SL 도달 전이라도 선제 매도하는가?
-- [ ] **매도 보호**: 매수 후 1시간 이내 종목은 AI 매도 권고를 차단하는가? (패닉 시 예외 확인)
+### ✅ [A] 수동 설정 및 제어 (Manual Commands)
+- [ ] **1/2 (매도/매수)**: 번호/코드 입력 시 지정된 수량과 가격(또는 시장가)으로 즉시 주문이 나가는가?
+- [ ] **3 (TP/SL 수정)**: 개별 종목 또는 기본 전략의 익절/손절선 변경이 즉시 반영되는가?
+- [ ] **4/5/6 (엔진 설정)**: AI매수, 물타기, 불타기 엔진의 금액/한도/자동모드 변경이 즉시 영속 저장되는가?
+- [ ] **8 (즉시 분석)**: 타이머와 무관하게 AI 시황 및 종목 분석이 즉시 실행되는가?
+- [ ] **9 (전략 할당)**: 특정 종목에 전략 프리셋(예: 05-추세추종)을 수동 할당 시 TP/SL이 갱신되는가?
+- [ ] **7 (심층 분석)**: 입력한 종목 코드에 대한 3D 분석 리포트가 생성되는가?
 
-### ✅ [B] 시장 페이즈 (Market Phase) 보정
-- [ ] **Phase 1 (OFFENSIVE)**: 익절 +2%, 손절 -1% 보정이 적용되는가?
-- [ ] **Phase 2 (CONVERGENCE)**: 익절 -1%, 손절 -1% 보수적 보정이 적용되는가?
-- [ ] **Phase 3 (CONCLUSION)**: 수익권 종목 50% 분할 매도 및 본전(+0.2%) 스탑 설정이 작동하는가?
-- [ ] **Phase 4 (PREPARATION)**:
-    - [ ] **배치 리뷰**: 전 종목 일괄 AI 진단 및 전략 갱신/청산이 수행되는가?
-    - [ ] **종가 베팅**: 1~3순위 종목 중 미보유 종목 매수 또는 기보유 종목 보호가 작동하는가?
-    - [ ] **손실 청산**: 수익률 < 0인 종목에 대해 당일 매수 보호(1시간) 제외하고 청산되는가?
+### ✅ [B] 시장 진단 및 리스크 (Market & Risk)
+- [ ] **VIBE 판정**: 지수 DEMA(20) 위치 및 당일 등락률에 따른 Bull/Bear/Defensive 정확도.
+- [ ] **글로벌 패닉**: 미지수 -1.5% 시 `is_panic` 활성화 및 모든 매수 차단.
+- [ ] **현금 비중**: Bear(30%) / Defensive(80%) 상황에서 매수 집행 거절 확인.
 
-### ✅ [C] 매수 (Entry) 로직
-- [ ] **물타기 (Recovery)**: SL+1.0% 구간에서 작동하며, 직전가 대비 -2% 하락 시에만 집행되는가?
-- [ ] **불타기 (Pyramiding)**: TP-1.0% 이하로 트리거가 제한되며, 직전가 대비 +2% 상승 시 집행되는가?
-- [ ] **AI 자율 매수**: 
-    - [ ] **컨펌**: Gemini가 최종 'YES'일 때만 매수하는가? (0원 오판 방지 포함)
-    - [ ] **상투 방어 (Bull Market)**: 상승장에서 모멘텀 가점을 +4%로 제한하고 초과 시 삭감하여 고점 추격 매수를 방지하는가?
-    - [ ] **과열/눌림목 제어**: 분봉 20MA 기준 `OVERBOUGHT` 시 기계적으로 매수 차단하고, `BUY_ZONE` 시 가점을 부여하는가?
-    - [ ] **교체**: 최대 보유 한도 도달 시 기존 종목과 비교하여 교체 매매를 수행하는가?
-    - [ ] **핑퐁 방지**: 익절/손절 후 2시간 이내 재진입이 금지되는가?
-- [ ] **현금 비중 (Cash Safety)**: 하락장(30%) / 방어모드(80%) 최소 현금 비중 원칙이 지켜지는가?
+### ✅ [C] 매도 로직 및 긴급 대응 (Exit Strategy)
+- [ ] **VIBE 보정**: Bull(+3%/-1%), Bear(-2%/-2%), Defensive(-3%/-3%) 보정치 적용.
+- [ ] **익절 쿨다운**: 분할 익절 후 1시간 제한 (불타기/수동 매수 시 리셋 확인).
+- [ ] **긴급 바이패스**: 수익률 ≥ TP + 3.0% 또는 거래량 폭발 시 즉시 전량 익절.
 
-### ✅ [D] 인프라 및 기타
-- [ ] **영속성 (Persistence)**: 매매 발생 시 `trading_state.json`에 즉시 반영되는가?
-- [ ] **API 안정성**: 5초 1종목 제한 및 KIS API Rate Limit 준수가 보장되는가?
-- [ ] **Fallback**: AI 장애 시 알고리즘 모드(기본 TP/SL)로 자동 전환되는가?
-- [ ] **TUI 가시화**: VIBE 상태, DEMA 지표, AI 분석 결과가 실시간으로 표기되는가?
+### ✅ [D] 매수 엔진 및 교체 (Entry Strategy)
+- [ ] **상투 방어**: 상승장 등락률 가점 제한(+4% Cap) 및 `OVERBOUGHT`(20MA +3%) 차단.
+- [ ] **종목 교체**: 15점 이상 우위 및 기존 종목 30분 보유 조건 충족 시에만 집행.
+- [ ] **물타기/불타기**: 트리거 조건(수익률, 평단 대비 위치) 및 현금 비중 체크.
+
+### ✅ [E] 상태 관리 및 영속성 (State Management)
+- [ ] **State Sync**: 모든 수동 설정(1~9번 커맨드 결과)이 `trading_state.json`에 즉시 기록되는가?
+- [ ] **데이터 Fallback**: KIS 실패 시 Naver XML/JSON 백업 소스 작동 확인.
 
 ---
 
-## 3. Current Branch Inspection Report (2026-04-29)
+## 3. Test Condition Matrix (Edge Cases)
 
-- **대상 브랜치**: current
-- **점검 결과**: 
-    - [x] Phase 4 통합 배치 리뷰 로직 (구현됨)
-    - [x] AI 자율 매도 및 타이트닝 (구현됨)
-    - [x] 종목 교체 매매 (구현됨)
-    - [x] 0원 데이터 오판 방지 (구현됨)
-    - [x] MA 이중 분석 및 AI 점수 보정 (구현됨)
-- **특이사항**: `ExecutionMixin.run_cycle` 내에서 Phase 4 로직이 순차적으로 잘 배치되어 있음.
+| 대상 로직 | 발동 조건 (Input) | 기대 결과 (Output) |
+| :--- | :--- | :--- |
+| **수동 전략 할당(9)** | 프리셋 03 적용, 수익률 +2.5% | **익절 실행** (03 프리셋 TP 도달 시) |
+| **설정 변경(4, 5, 6)** | 자동모드 OFF 설정 후 조건 충족 | **매매 스킵** (Manual Mode 유지) |
+| **수동 매수(2)** | 비보유 종목 수동 매수 집행 | **매수 후 AI 전략 자동 할당** 확인 |
+| **기본 전략 수정(3)** | 기본 TP를 +5%에서 +10%로 수정 | **미지정 종목 전체 TP 상향** 반영 |
+| **즉시 분석(8)** | 분석 실행 중 재실행 시도 | **중복 실행 차단** (is_analyzing 체크) |
+
+---
+
+## 4. Current Branch Status (2026-05-06)
+- **업데이트**: 숫자 커맨드(1~6, 8, 9) 전체 로직 트리 통합 완료.
+- **다음 단계**: 수동 설정 변경에 따른 자동 매매 엔진의 반응성 검증 테스트 구현.

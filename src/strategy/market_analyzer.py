@@ -50,6 +50,9 @@ class MarketAnalyzer:
         if heuristic_vibe == "Neutral":
             heuristic_vibe = self._check_kr_vibe()
         
+        # [Fix] 글로벌 패닉 상태 실시간 갱신 로직 누락 수정
+        self.is_panic = self._check_global_panic()
+        
         # BTC 기반 VIBE 추가 보정: 비트코인 급락 시 Bull -> Neutral 강제 하향
         btc = self.current_data.get("BTC_USD")
         if btc and btc['rate'] <= -2.5 and heuristic_vibe == "Bull":

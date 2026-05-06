@@ -11,12 +11,12 @@ class ExitManager:
         v = vibe.upper()
         if v == "BULL":
             tp_mod = 3.0    # 상승장: 수익 극대화 (익절가 상향)
-            sl_mod = 1.0    # 상승장: 손절선 소폭 완화
+            sl_mod = -1.0   # 상승장: 손절선 완화 (더 여유있게, -5 -> -6)
         elif v == "BEAR":
             tp_mod = -2.0   # 하락장: 짧은 익절 (보수적)
-            sl_mod = -2.0   # 하락장: 손절선 타이트하게 관리
+            sl_mod = 2.0    # 하락장: 손절선 타이트하게 관리 (-5 -> -3)
         elif v == "DEFENSIVE":
-            tp_mod, sl_mod = -3.0, -3.0 # 방어모드: 극도로 보수적
+            tp_mod, sl_mod = -3.0, 3.0 # 방어모드: 극도로 보수적 (-5 -> -2)
         return tp_mod, sl_mod
 
     def get_thresholds(self, code: str, kr_vibe: str, price_data: Optional[dict] = None, phase_cfg: dict = None, base_tp: float = None, base_sl: float = None) -> Tuple[float, float, bool]:

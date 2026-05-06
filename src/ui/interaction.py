@@ -77,7 +77,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
         mode = (key[-1] if 'alt+' in key else key).lower()
         if mode in key_map: mode = key_map[mode]
         
-        if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p', 'u']: return
+        if mode not in ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'd', 'h', 'l', 'm', 'q', 's', 'p', 'u', 'k']: return
         
         try:
             size = os.get_terminal_size()
@@ -91,11 +91,11 @@ def perform_interaction(key, api, strategy, dm, cycle):
             restore_terminal_settings(); exit_alt_screen()
             print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다."); os._exit(0)
         
-        if mode in ['m', 'l', 'b', 'd', 'h', 'a', 'p']:
+        if mode in ['m', 'l', 'b', 'd', 'h', 'a', 'p', 'k']:
             def run_display_task():
                 status_map = {
                     'm': "사용자 매뉴얼 조회 중", 'l': "시스템 로그 조회 중", 'b': "보유 종목 진단 중", 'd': "추천 종목 상세 조회 중",
-                    'h': "인기 테마 리포트 조회 중", 'a': "AI 결정 로그 조회 중", 'p': "성과 대시보드 조회 중"
+                    'h': "인기 테마 리포트 조회 중", 'a': "AI 결정 로그 조회 중", 'p': "성과 대시보드 조회 중", 'k': "모의거래 자가 진단 중"
                 }
                 dm.is_full_screen_active = True
                 dm.set_busy(status_map.get(mode, f"{mode} 처리"), "UI")
@@ -111,6 +111,12 @@ def perform_interaction(key, api, strategy, dm, cycle):
                     elif mode == 'h': draw_hot_stocks_detail(strategy, dm, tw_r, th_r)
                     elif mode == 'a': draw_ai_logs_report(strategy, dm)
                     elif mode == 'p': draw_performance_report(strategy, dm)
+                    elif mode == 'k':
+                        if strategy.mock_tester.is_active:
+                            draw_mock_tester_menu(strategy, dm)
+                        else:
+                            print("\n" + align_kr(" ❌ 자가 진단 메뉴는 모의투자 환경에서만 사용 가능합니다. ", tw_r, 'center'))
+                            time.sleep(1.5)
                     # 복귀 시 화면 깨짐 방지: alt screen을 새로 여는 대신 현재 화면을 확실히 청소
                     sys.stdout.write("\033[H\033[2J"); sys.stdout.flush()
                     set_terminal_raw(); flush_input(); dm.last_size = (0, 0)
@@ -176,7 +182,7 @@ def perform_interaction(key, api, strategy, dm, cycle):
             finally:
                 dm.is_full_screen_active = False
             return
-    
+
         if mode == '1':
             res = get_input(dm, "> 매도 [번호 수량 가격] 입력: ", tw)
             if res:
@@ -428,10 +434,57 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             finally: dm.clear_busy("AI_ENGINE")
                         command_queue.put((task_single, (res_strat,), {}))
 
-
-
     except Exception as e:
         from src.logger import log_error
         log_error(f"Interaction Error: {e}"); dm.show_status(f"오류: {e}", True)
     finally:
         sys.stdout.write("\033[7;1H\033[K\033[8;1H\033[K"); sys.stdout.flush(); set_terminal_raw(); flush_input()
+
+def draw_mock_tester_menu(strategy, dm):
+    """모의거래 전용 자가 진단 및 테스트 제어 메뉴"""
+    while True:
+        try:
+            size = os.get_terminal_size(); tw, th = size.columns, size.lines
+        except: tw, th = 80, 24
+        
+        sys.stdout.write("\033[H\033[2J")
+        print("="*tw)
+        print(align_kr("🧪 모의거래 자가 진단 및 테스트 메뉴 (MOCK TESTER)", tw, 'center'))
+        print("="*tw)
+        print(f"\n   현재 환경: {'모의투자(Paper)' if strategy.mock_tester.is_active else '실전(Real)'}")
+        print(f"   현재 시간: {strategy.mock_tester.get_now().strftime('%Y-%m-%d %H:%M:%S')} (Offset: {strategy.mock_tester.virtual_time_offset:+.0f}s)")
+        print(f"   드라이런 : {'✅ ENABLED (주문 차단)' if strategy.mock_tester.dry_run_enabled else '❌ DISABLED (실제 주문)'}")
+        print("\n   [제어 명령]")
+        print("   1. 드라이런(Dry-run) 모드 토글")
+        print("   2. 시간 워프 (P3: Conclusion 14:35 시점으로)")
+        print("   3. 시간 워프 (P4: Preparation 15:15 시점으로)")
+        print("   4. 시간 오프셋 리셋 (현재 시간으로)")
+        print("   5. 데이터 무결성 즉시 검증")
+        print("\n   Q. 메인 화면으로 돌아가기")
+        print("\n" + "="*tw)
+        sys.stdout.write(f"\n {B_YELLOW}명령을 선택하세요: {RESET}")
+        sys.stdout.flush()
+        
+        set_terminal_raw()
+        k = get_key_immediate()
+        if k:
+            k = k.lower()
+            if k == 'q' or k == 'ㅂ': break
+            elif k == '1':
+                strategy.mock_tester.dry_run_enabled = not strategy.mock_tester.dry_run_enabled
+                dm.show_status(f"드라이런 모드 {'활성화' if strategy.mock_tester.dry_run_enabled else '비활성화'}됨")
+            elif k == '2':
+                strategy.mock_tester.warp_to_phase("P3")
+            elif k == '3':
+                strategy.mock_tester.warp_to_phase("P4")
+            elif k == '4':
+                strategy.mock_tester.virtual_time_offset = 0
+                dm.show_status("가상 시간 오프셋이 초기화되었습니다.")
+            elif k == '5':
+                tui_data = {"vibe": dm.vibe, "holdings": dm.cached_holdings, "asset": dm.cached_asset}
+                if strategy.mock_tester.validate_tui_data(tui_data):
+                    print(f"\n   {G_GREEN}✅ 데이터 무결성 검증 통과!{RESET}")
+                else:
+                    print(f"\n   {B_RED}❌ 데이터 결함 감지됨 (로그 확인 필요){RESET}")
+                time.sleep(1.5)
+        time.sleep(0.1)

@@ -19,6 +19,7 @@ from src.strategy.state_manager import StateManager
 from src.strategy.retrospective_engine import RetrospectiveEngine
 from src.strategy.vibe.analysis import AnalysisMixin
 from src.strategy.vibe.execution import ExecutionMixin
+from src.strategy.vibe.mock_tester import MockTradingTester
 
 class VibeStrategy(AnalysisMixin, ExecutionMixin):
     def get_max_stock_count(self, total_asset: float = 0) -> int:
@@ -136,6 +137,9 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         # --- 투자 적중 복기 엔진 ---
         self.retrospective = RetrospectiveEngine(api=api, ai_advisor=self.ai_advisor)
         
+        # --- 모의거래 전용 테스트 서포터 ---
+        self.mock_tester = MockTradingTester(self)
+        
         self._load_all_states()
         self.state_mgr.update_yesterday_recs()
 
@@ -212,11 +216,11 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         return self.analyzer.update(force_ai=force_ai, external_data=external_data)
 
     def get_market_phase(self) -> dict:
-        now = datetime.now().time()
+        now = self.mock_tester.get_now().time()
         if dtime(9, 0) <= now < dtime(10, 0): return {"id": "P1", "name": "OFFENSIVE", "tp_delta": 2.0, "sl_delta": -1.0}
         elif dtime(14, 30) <= now < dtime(15, 10): return {"id": "P3", "name": "CONCLUSION", "tp_delta": 0.0, "sl_delta": 0.0}
         elif dtime(15, 10) <= now < dtime(15, 30): return {"id": "P4", "name": "PREPARATION", "tp_delta": 0.0, "sl_delta": 0.0}
-        elif dtime(10, 0) <= now < dtime(14, 30): return {"id": "P2", "name": "CONVERGENCE", "tp_delta": -1.0, "sl_delta": -1.0}
+        elif dtime(10, 0) <= now < dtime(14, 30): return {"id": "P2", "name": "CONVERGENCE", "tp_delta": -1.0, "sl_delta": 1.0}
         return {"id": "IDLE", "name": "IDLE", "tp_delta": 0.0, "sl_delta": 0.0}
 
     def get_dynamic_thresholds(self, code, vibe, p_data=None):

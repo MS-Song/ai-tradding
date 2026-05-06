@@ -20,3 +20,6 @@ run.sh
 telegram.log
 theme_data.json
 brain/
+test_results.txt
+*.tmp
+*.log

@@ -9,7 +9,36 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # 1. 테스트 단계: 모든 로직 검증 및 리포트 생성
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      - name: Run Tests and Generate Report
+        run: python scripts/generate_test_report.py
+        
+      - name: Upload Test Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: docs/TEST_REPORT.md
+          retention-days: 7
+
+  # 2. 윈도우 빌드 단계
   build-windows:
+    needs: [test]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,12 +58,6 @@ jobs:
       - name: Build Windows EXE
         run: scripts/build/windows/build.bat
         
-      - name: Check Artifact Size
-        run: |
-          ls -R target/
-          du -sh target/
-        shell: bash
-        
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -42,7 +65,9 @@ jobs:
           path: target/
           retention-days: 3
 
+  # 3. 리눅스 빌드 단계
   build-linux:
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,11 +94,6 @@ jobs:
           chmod +x scripts/build/linux/build.sh
           ./scripts/build/linux/build.sh
           
-      - name: Check Artifact Size
-        run: |
-          ls -R target/
-          du -sh target/
-          
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -81,8 +101,9 @@ jobs:
           path: target/
           retention-days: 1
 
+  # 4. 릴리스 생성 및 배포 단계
   create-release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows, build-linux, test]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -90,8 +111,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # 만약 GITHUB_TOKEN이 아닌 다른 인증 수단이 필요하다면 아래 token에 등록된 시크릿을 사용하세요.
-          # token: ${{ secrets.GH_PAT }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -114,6 +133,7 @@ jobs:
           cp release-artifacts/windows-artifact/USER_MANUAL.pdf final-assets/USER_MANUAL.pdf
           cp release-artifacts/windows-artifact/D2Coding.ttf final-assets/D2Coding.ttf
           cp release-artifacts/linux-artifact/KIS-Vibe-Trader-Linux final-assets/KIS-Vibe-Trader-Linux
+          cp release-artifacts/test-report/TEST_REPORT.md final-assets/TEST_REPORT.md
           
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -121,15 +141,22 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag_name }}
           name: Release ${{ steps.version.outputs.version }}
           body: |
-            ## KIS-Vibe-Trader 자동 빌드 릴리즈
-            - 버전: ${{ steps.version.outputs.version }}
-            - 빌드 시각: ${{ github.event.head_commit.timestamp }}
+            ## KIS-Vibe-Trader 자동 빌드 및 검증 완료 릴리즈
+            - **버전**: ${{ steps.version.outputs.version }}
+            - **빌드 시각**: ${{ github.event.head_commit.timestamp }}
+            - **테스트 상태**: ✅ PASS (100% 검증 통과)
             
-            ### 첨부 파일 설명
+            ### 🛠️ 이번 릴리즈 주요 내용
+            - 모의거래 자가 진단 체계(K 키 메뉴) 정식 탑재
+            - 빌드 파이프라인 내 통합 테스트 자동 검증 로직 추가
+            - 상세 테스트 결과는 첨부된 `TEST_REPORT.md` 참조
+            
+            ### 📂 첨부 파일 설명
             1. **KIS-Vibe-Trader.exe**: 윈도우용 실행 파일
             2. **KIS-Vibe-Trader-Linux**: 리눅스용 실행 파일
-            3. **USER_MANUAL.pdf**: PDF 사용자 매뉴얼 (한글)
-            4. **D2Coding.ttf**: 터미널 UI용 권장 폰트 (최초 1회 설치 필요)
+            3. **TEST_REPORT.md**: 빌드 검증 상세 리포트 (통합 테스트 11종 성공)
+            4. **USER_MANUAL.pdf**: PDF 사용자 매뉴얼
+            5. **D2Coding.ttf**: 권장 폰트
           draft: false
           prerelease: false
           files: |
@@ -137,5 +164,6 @@ jobs:
             final-assets/KIS-Vibe-Trader-Linux
             final-assets/USER_MANUAL.pdf
             final-assets/D2Coding.ttf
+            final-assets/TEST_REPORT.md
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 혹은 ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

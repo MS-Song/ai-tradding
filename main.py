@@ -78,7 +78,18 @@ def main():
                 # TUI 렌더링: 0.5초 주기 유지 (10 tick 마다)
                 _tui_tick += 1
                 if _tui_tick % 10 == 0:
-                    draw_tui(strategy, dm, cycle)
+                    # [추가] 모의거래 환경용 데이터 무결성 검증
+                    is_valid = True
+                    if strategy.mock_tester.is_active:
+                        tui_data = {
+                            "vibe": dm.vibe,
+                            "holdings": dm.cached_holdings,
+                            "asset": dm.cached_asset
+                        }
+                        is_valid = strategy.mock_tester.validate_tui_data(tui_data)
+                    
+                    if is_valid:
+                        draw_tui(strategy, dm, cycle)
                 
                 # 키 입력 감지 (0.05s 주기로 즉시 반응)
                 k = get_key_immediate()
