@@ -161,7 +161,7 @@ class IndicatorEngine:
         dema_val = (2 * ema1[-1]) - ema2[-1]
         return dema_val
 
-    def get_dual_timeframe_analysis(self, api, code: str) -> Dict[str, any]:
+    def get_dual_timeframe_analysis(self, api, code: str, name: str = "") -> Dict[str, any]:
         """일봉(중기) + 분봉(단기) 이중 타임프레임 분석을 수행합니다.
         데이터 소스 우선순위:
           분봉: 1) KIS API → 2) 네이버 F-Chart XML
@@ -174,6 +174,9 @@ class IndicatorEngine:
             "reason": ""
         }
 
+        # 로그용 명칭 (이름이 있으면 이름(코드), 없으면 코드)
+        display_name = f"{name}({code})" if name else code
+
         def safe_float(v):
             try: return float(str(v).strip()) if v and str(v).strip() else 0.0
             except: return 0.0
@@ -185,7 +188,7 @@ class IndicatorEngine:
                 daily_candles = api.get_daily_chart_price(code)
             except Exception as e:
                 from src.logger import logger
-                logger.warning(f"[MA폴백] {code} KIS 일봉 실패: {e}")
+                logger.warning(f"[MA폴백] {display_name} KIS 일봉 실패: {e}")
 
             if not daily_candles:
                 # Fallback: 네이버 F-Chart XML 일봉 데이터
@@ -194,7 +197,7 @@ class IndicatorEngine:
                     if hasattr(api, 'get_naver_daily_chart'):
                         daily_candles = api.get_naver_daily_chart(code)
                         if daily_candles:
-                            logger.info(f"[MA폴백] {code} 일봉 → 네이버 F-Chart 사용")
+                            logger.info(f"[MA폴백] {display_name} 일봉 → 네이버 F-Chart 사용")
                 except Exception as fe:
                     pass
 
@@ -213,7 +216,7 @@ class IndicatorEngine:
                 minute_candles = api.get_minute_chart_price(code)
             except Exception as e:
                 from src.logger import logger
-                logger.warning(f"[MA폴백] {code} KIS 분봉 실패: {e}")
+                logger.warning(f"[MA폴백] {display_name} KIS 분봉 실패: {e}")
 
             if not minute_candles:
                 # Fallback: 네이버 F-Chart XML 분봉 (이미 naver.py에 구현됨)
@@ -223,10 +226,10 @@ class IndicatorEngine:
                         minute_candles = api.get_naver_minute_chart(code, count=40)
                         if minute_candles:
                             minute_source = "Naver-FChart"
-                            logger.info(f"[MA폴백] {code} 분봉 → 네이버 F-Chart XML 사용")
+                            logger.info(f"[MA폴백] {display_name} 분봉 → 네이버 F-Chart XML 사용")
                 except Exception as fe:
                     from src.logger import log_error
-                    log_error(f"[MA폴백] {code} 네이버 F-Chart 분봉 실패: {fe}")
+                    log_error(f"[MA폴백] {display_name} 네이버 F-Chart 분봉 실패: {fe}")
 
             if minute_candles:
                 closes = [safe_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in minute_candles]

@@ -111,7 +111,7 @@ class AnalysisMixin:
                             self.state.ma_20_cache[code] = sma_20
                 
                 # 2. 이중 이평선 분석 수집
-                ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+                ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code, name=r.get('name', ''))
                 inds['ma_analysis'] = ma_analysis
                 return code, inds
             except Exception as e:

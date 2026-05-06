@@ -360,7 +360,7 @@ class ExecutionMixin:
                         # (MA 지표 없이 교체하는 경우도 차단하여 상투 교체 방지)
                         cand_detail = self.api.get_naver_stock_detail(code)
                         cand_rate = float(cand_detail.get('rate', 0))
-                        cand_ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+                        cand_ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code, name=name)
                         cand_sig = cand_ma_analysis.get('signal', 'NEUTRAL') if cand_ma_analysis else 'UNKNOWN'
                         if cand_sig == 'OVERBOUGHT':
                             logger.info(f"🚫 [교체품질게이트] {name} 후보 OVERBOUGHT - 교체 진입 차단")
@@ -484,7 +484,7 @@ class ExecutionMixin:
                 ma_info = f" [MA:{sig}]"
             else:
                 try:
-                    ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+                    ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code, name=name)
                     self._ma_analysis_cache[cache_key] = {'data': ma_analysis, 'time': time.time()}
                     sig = ma_analysis.get('signal', 'NEUTRAL')
                     ma_info = f" [MA:{sig}]"
@@ -550,7 +550,7 @@ class ExecutionMixin:
                 indicators['sma'] = {'sma_20': ma_20}
             
             # [추가] 이중 타임프레임 MA 분석 및 점수 보정 (품질 유지)
-            ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code)
+            ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code, name=name)
             if ma_analysis:
                 indicators['ma_analysis'] = ma_analysis
                 sig = ma_analysis.get('signal', 'NEUTRAL')
