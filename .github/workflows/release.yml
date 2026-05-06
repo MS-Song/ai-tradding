@@ -112,6 +112,7 @@ jobs:
           mkdir -p final-assets
           cp release-artifacts/windows-artifact/KIS-Vibe-Trader.exe final-assets/KIS-Vibe-Trader.exe
           cp release-artifacts/windows-artifact/USER_MANUAL.pdf final-assets/USER_MANUAL.pdf
+          cp release-artifacts/windows-artifact/D2Coding.ttf final-assets/D2Coding.ttf
           cp release-artifacts/linux-artifact/KIS-Vibe-Trader-Linux final-assets/KIS-Vibe-Trader-Linux
           
       - name: Create Release
@@ -128,11 +129,13 @@ jobs:
             1. **KIS-Vibe-Trader.exe**: 윈도우용 실행 파일
             2. **KIS-Vibe-Trader-Linux**: 리눅스용 실행 파일
             3. **USER_MANUAL.pdf**: PDF 사용자 매뉴얼 (한글)
+            4. **D2Coding.ttf**: 터미널 UI용 권장 폰트 (최초 1회 설치 필요)
           draft: false
           prerelease: false
           files: |
             final-assets/KIS-Vibe-Trader.exe
             final-assets/KIS-Vibe-Trader-Linux
             final-assets/USER_MANUAL.pdf
+            final-assets/D2Coding.ttf
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # 혹은 ${{ secrets.GH_PAT }}

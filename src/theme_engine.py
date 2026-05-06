@@ -46,17 +46,34 @@ def _rebuild_reverse_map():
     """역방향 매핑 테이블 재구축 (O(1) 조회를 위함)"""
     global _code_to_theme_map
     new_map = {}
+    
+    # 1. 일반 테마 우선 할당 (테마가 여러 개인 종목은 첫 번째 테마로 분류)
     for theme, stocks in _dynamic_theme_map.items():
+        if theme in BROAD_THEMES:
+            continue
         for s in stocks:
             code = s.get('code')
-            if code:
-                # 이미 구체적인 테마가 할당되어 있다면 광범위한 테마로 덮어쓰지 않음
-                if code in new_map and theme in BROAD_THEMES:
-                    continue
+            # 아직 테마가 할당되지 않은 경우에만 첫 번째 테마 적용
+            if code and code not in new_map:
                 new_map[code] = theme
+                
+    # 2. 광범위한 테마(BROAD_THEMES)는 일반 테마가 전혀 없는 종목에만 후순위 할당
+    for theme, stocks in _dynamic_theme_map.items():
+        if theme not in BROAD_THEMES:
+            continue
+        for s in stocks:
+            code = s.get('code')
+            if code and code not in new_map:
+                new_map[code] = theme
+                
     _code_to_theme_map = new_map
 
 def get_theme_for_stock(code: str, name: str) -> str:
+    # 0. 대표 종목명 직접 매칭 (가장 높은 우선순위: 삼성전자 등 대형주 테마 오염 방지)
+    for theme, keywords in THEME_KEYWORDS.items():
+        if name in keywords:
+            return theme
+
     # 1. 동적 데이터베이스 검색 (역매핑 테이블 활용 - O(1))
     if code in _code_to_theme_map:
         return _code_to_theme_map[code]

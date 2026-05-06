@@ -49,7 +49,7 @@ python3 scripts/build/gen_pdf.py
 # 5. Move to target
 mkdir -p target
 mv dist/KIS-Vibe-Trader-Linux target/
-cp target/USER_MANUAL.pdf target/
+cp fonts/D2Coding.ttf target/
 
 # 6. Cleanup
 rm -rf build dist KIS-Vibe-Trader-Linux.spec

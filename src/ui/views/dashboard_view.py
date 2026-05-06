@@ -408,10 +408,56 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
 
         buf.write("-" * tw + "\n")
 
-        # ` ｜ ` 구분자: 전각문자(2) + 공백 양쪽(1+1) = 시각너비 4, 구분자 2개 = 8
-        col_w = max(20, (tw - 8) // 3)
-        hot_list = [g for g in dm.cached_hot_raw if str(g.get('mkt','')).strip().upper() == dm.ranking_filter or dm.ranking_filter == "ALL"][:ranking_items_count]
-        vol_list = [l for l in dm.cached_vol_raw if str(l.get('mkt','')).strip().upper() == dm.ranking_filter or dm.ranking_filter == "ALL"][:ranking_items_count]
+        # ` | ` 구분자: 반각문자(1) + 공백 양쪽(1+1) = 시각너비 3, 구분자 3개 = 9
+        eff_w = tw - 9
+        col_w1 = max(15, int(eff_w * 0.24))
+        col_w2 = max(15, int(eff_w * 0.24))
+        col_w3 = max(15, int(eff_w * 0.24))
+        col_w4 = max(15, eff_w - col_w1 - col_w2 - col_w3)
+        
+        full_hot = [g for g in dm.cached_hot_raw if str(g.get('mkt','')).strip().upper() == dm.ranking_filter or dm.ranking_filter == "ALL"]
+        full_vol = [l for l in dm.cached_vol_raw if str(l.get('mkt','')).strip().upper() == dm.ranking_filter or dm.ranking_filter == "ALL"]
+        hot_list = full_hot[:ranking_items_count]
+        vol_list = full_vol[:ranking_items_count]
+        
+        # 테마 상품 구성
+        theme_products = []
+        themes = get_cached_themes()
+        
+        pool = []
+        seen_codes = set()
+        for g in full_hot + full_vol:
+            code = g.get('code')
+            if code and code not in seen_codes:
+                seen_codes.add(code)
+                pool.append(g)
+                
+        theme_groups = {}
+        for item in pool:
+            t_name = get_theme_for_stock(item['code'], item.get('name', ''))
+            if t_name != "기타":
+                if t_name not in theme_groups:
+                    theme_groups[t_name] = []
+                theme_groups[t_name].append(item)
+                
+        theme_names = [t['name'] for t in themes if t['name'] != "기타"]
+        for t_name in theme_names:
+            if t_name in theme_groups:
+                theme_products.extend(theme_groups[t_name][:2])
+            if len(theme_products) >= ranking_items_count:
+                break
+                
+        theme_products = theme_products[:ranking_items_count]
+        
+        # 그래도 부족하면 기타 포함
+        if len(theme_products) < ranking_items_count:
+            used_codes = {x['code'] for x in theme_products}
+            for item in pool:
+                if item['code'] not in used_codes:
+                    theme_products.append(item)
+                    if len(theme_products) >= ranking_items_count:
+                        break
+                        
         ai_recs = strategy.ai_recommendations[:ranking_items_count]
 
         # [v1.6.4] 동적 정렬을 위한 최대 너비 계산 유틸리티
@@ -428,42 +474,44 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
 
         m_n_hot, m_p_hot = get_col_metrics(hot_list)
         m_n_vol, m_p_vol = get_col_metrics(vol_list)
+        m_n_thm, m_p_thm = get_col_metrics(theme_products)
         m_n_ai, m_p_ai = get_col_metrics(ai_recs)
 
-        def fmt_r(item, width=col_w, t_n=0, t_p=0):
+        def fmt_r(item, width, t_n=0, t_p=0):
             if not item: return " " * width
             r = float(item['rate']); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
             name = item.get('name', 'Unknown'); orig_name = name
             theme_raw = get_theme_for_stock(item['code'], name)
             theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
-            theme_fmt = align_kr(theme_clean, 8)
+            theme_clean = theme_clean[:3] # 3글자로 제한
+            theme_fmt = align_kr(theme_clean, 6)
             rate_str = f"{r:>+4.1f}%"
             
-            # 1. 가용 이름 너비 계산 (전체 - 접두어(19) - 가격너비(t_p) - 간격(1))
-            # 가격부(t_p)가 너무 크면 최소 이름 너비를 보장하기 위해 조정
-            price_area_w = min(t_p, width - 19 - 4) # 최소 이름 너비 2 + 간격 1 + 여유 1 보장
-            avail_n_w = max(2, width - 19 - price_area_w - 1)
-            final_n_w = min(avail_n_w, t_n) if t_n > 0 else avail_n_w
+            price_vw = get_visual_width(f"({p:,}/{rate_str})")
+            # 가용 이름 너비 계산 (공백 없이 최대한 이름에 할당)
+            max_name_vw = width - 16 - price_vw
             
-            # 2. 이름 축약
+            # 이름 축약
             d_name = name
-            if get_visual_width(d_name) > final_n_w:
-                while get_visual_width(d_name + "..") > final_n_w and len(d_name) > 1: d_name = d_name[:-1]
+            if get_visual_width(d_name) > max_name_vw:
+                while get_visual_width(d_name + "..") > max_name_vw and len(d_name) > 1: d_name = d_name[:-1]
                 d_name += ".."
             
-            # 3. 조립 (이름 영역을 final_n_w로 고정 패딩)
-            name_txt = align_kr(d_name, final_n_w)
+            # 조립 (이름은 왼쪽, 가격은 오른쪽, 남는 공간은 가운데 띄어쓰기로 채움)
+            prefix = f"[{theme_fmt}][{item['code']}]"
+            spaces = max(0, width - 16 - get_visual_width(d_name) - price_vw)
             price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
-            txt = f"[{theme_fmt}][{item['code']}] {name_txt} {price_txt}"
-            return align_kr(txt, width)
+            
+            return f"{prefix}{d_name}{' ' * spaces}{price_txt}"
 
-        def fmt_ai(item, width=col_w, t_n=0, t_p=0):
+        def fmt_ai(item, width, t_n=0, t_p=0):
             if not item: return " " * width
             r = float(item.get('rate', 0)); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
             name = item.get('name', 'Unknown'); orig_name = name
             theme_raw = item.get('theme', '?')
             theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
-            theme_fmt = align_kr(theme_clean, 6) # 약간 축소
+            theme_clean = theme_clean[:3] # 3글자로 제한
+            theme_fmt = align_kr(theme_clean, 6)
             rate_str = f"{r:>+4.1f}%"
             
             # [자동]/[수동] 태그 추가
@@ -471,36 +519,39 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             auto_tag_text = "[자동]" if is_auto else "[수동]"
             auto_tag_color = "\033[92m" if is_auto else "\033[90m"
             
-            # [테마](8) + [코드](8) + [자동](6) = 22
             base_w = 22
-            price_area_w = min(t_p, width - base_w - 2)
-            avail_n_w = max(2, width - base_w - price_area_w - 1)
-            final_n_w = min(avail_n_w, t_n) if t_n > 0 else avail_n_w
+            price_vw = get_visual_width(f"({p:,}/{rate_str})")
+            # 가용 이름 너비 계산 (공백 없이 최대한 이름에 할당)
+            max_name_vw = width - base_w - price_vw
             
             d_name = name
-            if get_visual_width(d_name) > final_n_w:
-                while get_visual_width(d_name + "..") > final_n_w and len(d_name) > 1: d_name = d_name[:-1]
+            if get_visual_width(d_name) > max_name_vw:
+                while get_visual_width(d_name + "..") > max_name_vw and len(d_name) > 1: d_name = d_name[:-1]
                 d_name += ".."
             
-            name_txt = align_kr(d_name, final_n_w)
+            # 조립 (가운데 여백 채우기)
+            prefix = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m"
+            spaces = max(0, width - base_w - get_visual_width(d_name) - price_vw)
             price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
-            txt = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m{name_txt} {price_txt}"
-            return align_kr(txt, width)
+            
+            return f"{prefix}{d_name}{' ' * spaces}{price_txt}"
 
         b_st = "ON" if strategy.auto_ai_trade else "OFF"
         s_st = "ON" if strategy.auto_sell_mode else "OFF"
         ai_mode_label = f"매수:{b_st}|매도:{s_st}"
         buf.write(
-            f"\033[1;93m{align_kr('🔥 실시간 인기 종목', col_w)}\033[0m ｜ "
-            f"\033[1;96m{align_kr('📊 거래량 상위 종목', col_w)}\033[0m ｜ "
-            f"\033[1;92m{align_kr(f'✨ AI 추천 [{ai_mode_label}]', col_w)}\033[0m\n"
+            f"\033[1;93m{align_kr('🔥 실시간 인기 종목', col_w1)}\033[0m | "
+            f"\033[1;96m{align_kr('📊 거래량 상위 종목', col_w2)}\033[0m | "
+            f"\033[1;95m{align_kr('💡 테마 종목', col_w3)}\033[0m | "
+            f"\033[1;92m{align_kr(f'✨ AI 추천 [{ai_mode_label}]', col_w4)}\033[0m\n"
         )
         buf.write("─" * tw + "\n")
         for i in range(ranking_items_count):
             buf.write(
-                f"{fmt_r(hot_list[i] if i < len(hot_list) else None, col_w, m_n_hot, m_p_hot)} ｜ "
-                f"{fmt_r(vol_list[i] if i < len(vol_list) else None, col_w, m_n_vol, m_p_vol)} ｜ "
-                f"{fmt_ai(ai_recs[i] if i < len(ai_recs) else None, col_w, m_n_ai, m_p_ai)}\n"
+                f"{fmt_r(hot_list[i] if i < len(hot_list) else None, col_w1, m_n_hot, m_p_hot)} | "
+                f"{fmt_r(vol_list[i] if i < len(vol_list) else None, col_w2, m_n_vol, m_p_vol)} | "
+                f"{fmt_r(theme_products[i] if i < len(theme_products) else None, col_w3, m_n_thm, m_p_thm)} | "
+                f"{fmt_ai(ai_recs[i] if i < len(ai_recs) else None, col_w4, m_n_ai, m_p_ai)}\n"
             )
 
         # [Phase 3] 실시간 캔들 차트 대시보드 (하단 상시 노출)

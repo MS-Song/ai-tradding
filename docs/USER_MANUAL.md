@@ -10,6 +10,15 @@
 1.  **한국투자증권(KIS) API 키**: [한국투자증권 개발자 센터](https://apiportal.koreainvestment.com/)에서 앱키와 앱시크릿을 발급받으세요. (실전/모의계좌 모두 가능)
 2.  **Google Gemini API 키**: [Google AI Studio](https://aistudio.google.com/)에서 발급받으세요. (AI 분석 기능을 위해 필수)
 3.  **Groq API 키 (선택 사항)**: [Groq Console](https://console.groq.com/)에서 발급받으세요. Gemini 장애 시 백업 모델로 사용하거나 주 모델로 설정 가능합니다.
+4.  **D2Coding 폰트 (필수 권장)**: 완벽한 TUI(터미널) 화면 출력을 위해 배포 파일에 동봉된 `D2Coding.ttf` 폰트를 시스템에 설치해 주세요.
+    *   **[Windows]**: 다운로드한 `D2Coding.ttf` 파일을 더블클릭 후 **[설치]** 버튼을 누르거나, 우클릭하여 **[모든 사용자용으로 설치]**를 클릭합니다. 설치 후 현재 사용하는 터미널(명령 프롬프트, PowerShell, Windows Terminal 등) 설정에 들어가 글꼴(Font)을 `D2Coding`으로 변경합니다.
+    *   **[Linux]**: 배포된 폰트를 시스템 폴더로 복사한 뒤 캐시를 갱신합니다.
+        ```bash
+        sudo mkdir -p /usr/share/fonts/truetype/d2coding
+        sudo cp D2Coding.ttf /usr/share/fonts/truetype/d2coding/
+        fc-cache -fv
+        ```
+        이후 터미널 에뮬레이터의 설정 창에서 텍스트 글꼴을 `D2Coding`으로 지정합니다.
 
 ### B. 첫 실행 및 환경 설정
 1.  `KIS-Vibe-Trader.exe`를 더블 클릭하여 실행합니다.

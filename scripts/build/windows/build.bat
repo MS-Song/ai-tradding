@@ -55,6 +55,7 @@ REM 4. Move output
 echo [*] Moving executable to target folder...
 if not exist target mkdir target
 move /y dist\KIS-Vibe-Trader.exe target\
+copy /y fonts\D2Coding.ttf target\
 
 REM 5. Generate PDF
 echo [*] Generating PDF User Manual...

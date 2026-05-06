@@ -252,6 +252,8 @@ class DataManager:
             try:
                 self.set_busy("로그 정리", "CLEANUP")
                 cleanup_text_log("error.log", days_to_keep=2)
+                cleanup_text_log("trading.log", days_to_keep=2)
+                cleanup_text_log("telegram.log", days_to_keep=2)
                 trading_log.cleanup(days_to_keep=2)
                 self.update_worker_status("CLEANUP", result="성공", last_task="로그 파일 정리 완료")
                 

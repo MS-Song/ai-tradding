@@ -11,8 +11,9 @@ import re
 
 # OS별 폰트 경로 탐색
 FONT_PATHS = [
-    "NanumGothic.ttf", # 프로젝트 루트 내 오픈소스 폰트
-    "C:/Windows/Fonts/NanumGothic.ttf", # Windows 나눔고딕 경로
+    "fonts/D2Coding.ttf", # 프로젝트 내부 D2Coding 폰트
+    "C:/Windows/Fonts/D2Coding.ttf", # Windows D2Coding 경로
+    "C:/Windows/Fonts/NanumGothic.ttf", # Fallback
     "/usr/share/fonts/truetype/nanum/NanumGothic.ttf", # Ubuntu: 나눔고딕
     "/usr/share/fonts/nanum/NanumGothic.ttf", # CentOS: 나눔고딕
     "/usr/share/fonts/truetype/baekmuk/dotum.ttf", # Fallback: 백묵 돋움
