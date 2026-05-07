@@ -22,10 +22,11 @@ class KISAPIClient(BaseAPI):
             # 클래스 변수를 직접 참조하여 인스턴스에 상관없이 단일 큐 보장
             with KISAPIClient._req_lock:
                 now = time.time()
-                interval = 1.5 # 모의투자는 초당 약 0.6회 (1.5s 간격)로 보수적으로 제한
+                interval = 1.8 # 1.5 -> 1.8로 상향 (RT_CD:1 방어 강화)
                 elapsed = now - KISAPIClient._last_req_time
                 if elapsed < interval:
-                    time.sleep(interval - elapsed)
+                    # 미세한 랜덤 지터 추가하여 동시성 충돌 완화
+                    time.sleep(interval - elapsed + random.uniform(0.01, 0.05))
                 KISAPIClient._last_req_time = time.time()
         # 실전 거래는 별도의 대기 없이 즉시 실행 (호출 큐 해제)
 

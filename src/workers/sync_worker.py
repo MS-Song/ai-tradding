@@ -29,6 +29,12 @@ class DataSyncWorker(BaseWorker):
                 self.force_sync = False # 플래그 초기화
                 
                 if h or a.get('total_asset', 0) > 0:
+                    # [개선] KIS API의 자산 총계가 가끔 캐시+주식 합계와 맞지 않는 경우가 있어 직접 재계산하여 정정함
+                    # 특히 모의투자 환경에서 tot_evlu_amt가 구버전 데이터를 반환하는 경우가 많음
+                    actual_stock_eval = sum(float(item.get('evlu_amt', 0)) for item in h)
+                    a['stock_eval'] = actual_stock_eval
+                    a['total_asset'] = a.get('cash', 0) + actual_stock_eval
+                    
                     self._update_asset_metrics(a)
                     with self.state.lock:
                         self.state.holdings = h
@@ -37,7 +43,7 @@ class DataSyncWorker(BaseWorker):
                         if a.get('total_asset', 0) > 0:
                             self.strategy.last_known_asset = float(a['total_asset'])
                     
-                    self.state.update_worker_status("ASSET", status="대기 중 (IDLE)", result="성공", last_task="계좌 및 평가액 동기화 완료")
+                    self.state.update_worker_status("ASSET", status="대기중", result="성공", last_task="계좌 및 평가액 동기화 완료")
             
             # 2. 관련 종목 시세 동기화 (네이버 벌크 API 활용 - 이건 Rate Limit 없음)
             # 잔고 데이터가 없는 초기 상태가 아니라면 항상 실행
@@ -49,7 +55,7 @@ class DataSyncWorker(BaseWorker):
                 
         except Exception as e:
             if "초당 거래건수를 초과" in str(e):
-                self.state.update_worker_status("ASSET", status="대기 중 (IDLE)", result="대기", last_task="API 속도 제한으로 대기 중")
+                self.state.update_worker_status("ASSET", status="대기중", result="대기", last_task="API 속도 제한으로 대기 중")
             else:
                 log_error(f"DataSyncWorker Run Error: {e}")
             self.set_result("실패", last_task=f"동기화 오류: {e}")
@@ -196,14 +202,17 @@ class DataSyncWorker(BaseWorker):
             ma_source = "캐시"  # 기본값: 이미 캐시에 있는 경우
             if is_holding and (ma_20 == 0 or is_heavy_cycle):
                 try:
-                    time.sleep(0.15) # API 속도 제한 방지용 미세 지연
-                    m_candles = self.api.get_minute_chart_price(code)
-                    _used_fallback = False
-
-                    # [Fallback] KIS 실패 시 Naver로 시도
-                    if not m_candles:
+                    # [최적화] 모의투자는 KIS API를 아끼기 위해 Naver를 우선 시도
+                    is_v = getattr(self.api.auth, 'is_virtual', True)
+                    m_candles = None
+                    if is_v:
                         m_candles = self.api.get_naver_minute_chart(code)
                         _used_fallback = bool(m_candles)
+                    
+                    if not m_candles:
+                        time.sleep(0.15) # API 속도 제한 방지용 미세 지연
+                        m_candles = self.api.get_minute_chart_price(code)
+                        _used_fallback = False
 
                     if m_candles:
                         closes = [safe_cast_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in m_candles if (c.get('stck_prpr') or c.get('stck_clpr'))]

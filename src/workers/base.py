@@ -40,4 +40,4 @@ class BaseWorker:
         self.state.update_worker_status(self.name, status=msg, friendly_name=friendly_name)
 
     def set_result(self, result: str, last_task: Optional[str] = None, friendly_name: Optional[str] = None):
-        self.state.update_worker_status(self.name, status="대기 중 (IDLE)", result=result, last_task=last_task, friendly_name=friendly_name)
+        self.state.update_worker_status(self.name, status="대기중", result=result, last_task=last_task, friendly_name=friendly_name)

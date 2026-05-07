@@ -41,52 +41,67 @@ class ExecutionMixin:
             return [f"🛑 리스크 상한 도달: {self.risk_mgr.halt_reason} (매매 중단)"]
 
         if phase['id'] == "P4" and not self.global_panic and self.current_market_vibe.upper() in ["BULL", "NEUTRAL"] and self.auto_ai_trade:
-            if getattr(self, "_last_closing_bet_date", None) != today and self.ai_recommendations:
-                # 1~3순위까지 순회하며 종가 베팅 종목 탐색
+            # [개선] 종가 베팅 후보 종목(Top 3)에 대한 보호 갱신은 매 사이클 수행하여 청산 방어력 강화
+            # (기존에는 _last_closing_bet_date 체크 때문에 한 번만 실행되어 다른 종목 보호가 누락될 수 있었음)
+            if self.ai_recommendations:
                 for top_rec in self.ai_recommendations[:3]:
                     code, name = top_rec['code'], top_rec['name']
                     if any(h.get('pdno') == code for h in holdings):
-                        logger.info(f"P4 종가 베팅 기보유 종목 보호 갱신: {name} ({code})")
-                        msg = f"🛡️ P4 종가베팅 유지/보호: {name}"
-                        results.append(msg)
-                        if self.state: self.state.add_trading_log(msg)
-                        self.last_buy_times[code] = time.time()  # 당일 매수 보호 로직 적용 (청산 방어)
+                        # 기보유 종목이거나 방금 매수한 종목인 경우 보호 시간 갱신 (P4 청산 방지)
+                        # 단, 너무 잦은 로깅 방지를 위해 1분 주기로만 갱신/로깅
+                        now_t = time.time()
+                        if (now_t - self.last_buy_times.get(code, 0)) > 60:
+                            logger.info(f"🛡️ P4 종가 베팅 후보 보호 갱신: {name} ({code})")
+                            self.last_buy_times[code] = now_t
+                            # TUI에는 최초 1회 또는 상태 변화 시에만 기록 (노이즈 방지)
+                            if getattr(self, "_last_p4_protected_code", None) != code:
+                                msg = f"🛡️ 당일 매수 P4 보호: {name}"
+                                results.append(msg)
+                                if self.state: self.state.add_trading_log(msg)
+                                self._last_p4_protected_code = code
+
+            # 실제 신규 매수는 하루 한 번만 집행
+            if getattr(self, "_last_closing_bet_date", None) != today and self.ai_recommendations:
+                for top_rec in self.ai_recommendations[:3]:
+                    code, name = top_rec['code'], top_rec['name']
+                    # 이미 보유 중인 경우 위에서 보호 갱신만 하고 매수는 스킵 (다음 순위 탐색)
+                    if any(h.get('pdno') == code for h in holdings):
                         self._last_closing_bet_date = today
                         self._save_all_states()
-                        break  # 기보유 종목으로 베팅 확정하고 종료
-                    else:
-                        # [CRITICAL] 당일 등락률 하드 필터 (-1.5% ~ +8.0% 범위만 진입 허용)
-                        _p4_rate = safe_cast_float(top_rec.get('rate'))
-                        if _p4_rate > 8.0 or _p4_rate < -8.0:
-                            logger.warning(f"P4 종가 베팅 등락률 초과: {name} ({_p4_rate:+.1f}%) -> 다음 순위 탐색")
-                            continue
-                        price = safe_cast_float(top_rec.get('price'))
-                        qty = math.floor(self.ai_config["amount_per_trade"] / price) if price > 0 else 0
-                        # 가용 현금이 주가 이상이라면 최소 1주 매수 보장
-                        if qty == 0 and asset_info.get('cash', 0) >= price:
-                            qty = 1
-                            
-                        if qty > 0 and not skip_trade:
-                            dry_res = self.mock_tester.intercept_order(code, qty, True)
-                            success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
-                            if success:
-                                self._last_closing_bet_date = today
-                                results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
-                                m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else ""
-                                strategy_label = self.get_preset_label(code) or "P4종가"
-                                trading_log.log_trade("🤖P4종가매수", code, name, price, qty, f"AI 추천 기반 종가 베팅 ({strategy_label})", model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
-                                trading_log.log_buy_reason(code, name, f"AI 추천 기반 종가 베팅 ({strategy_label})", model_id=m_id)
-                                self.record_buy(code, price)
-                                self.auto_assign_preset(code, name)
-                                self._async_update_ma_cache(code) # [추가] 매수 후 비동기 지표 업데이트 (병목 방지)
-                                self._save_all_states()
-                                break  # 매수 성공 시 종료
-                            else:
-                                # [Fix] P4 종가 베팅 매수 실패 시 사유 로깅
-                                log_error(f"P4 종가 베팅 매수 실패: [{code}]{name} | {qty}주 | 사유: {msg}")
-                                msg_fail = f"❌ P4 종가 베팅 실패: {name} | 사유: {msg}"
-                                results.append(msg_fail)
-                                if self.state: self.state.add_trading_log(msg_fail)
+                        break 
+                    
+                    # [CRITICAL] 당일 등락률 하드 필터 (-1.5% ~ +8.0% 범위만 진입 허용)
+                    _p4_rate = safe_cast_float(top_rec.get('rate'))
+                    if _p4_rate > 8.0 or _p4_rate < -8.0:
+                        logger.warning(f"P4 종가 베팅 등락률 초과: {name} ({_p4_rate:+.1f}%) -> 다음 순위 탐색")
+                        continue
+                    
+                    price = safe_cast_float(top_rec.get('price'))
+                    qty = math.floor(self.ai_config["amount_per_trade"] / price) if price > 0 else 0
+                    if qty == 0 and asset_info.get('cash', 0) >= price:
+                        qty = 1
+                        
+                    if qty > 0 and not skip_trade:
+                        dry_res = self.mock_tester.intercept_order(code, qty, True)
+                        success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
+                        if success:
+                            self._last_closing_bet_date = today
+                            results.append(f"P4 종가 베팅 매수: {name} ({code}) {qty}주")
+                            m_id = self.ai_advisor.last_used_advisor.model_id if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor else ""
+                            strategy_label = self.get_preset_label(code) or "P4종가"
+                            trading_log.log_trade("🤖P4종가매수", code, name, price, qty, f"AI 추천 기반 종가 베팅 ({strategy_label})", model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
+                            trading_log.log_buy_reason(code, name, f"AI 추천 기반 종가 베팅 ({strategy_label})", model_id=m_id)
+                            self.record_buy(code, price)
+                            self.auto_assign_preset(code, name)
+                            self._async_update_ma_cache(code)
+                            self._save_all_states()
+                            break 
+                        else:
+                            log_error(f"P4 종가 베팅 매수 실패: [{code}]{name} | {qty}주 | 사유: {msg}")
+                            msg_fail = f"❌ P4 종가 베팅 실패: {name} | 사유: {msg}"
+                            results.append(msg_fail)
+                            if self.state: self.state.add_trading_log(msg_fail)
+
         # [Phase 4] 통합 배치 리뷰 트리거 (종목이 많은 경우 개별 AI 호출은 너무 느리므로 한 번에 처리)
         if phase['id'] == "P4" and getattr(self, "_last_p4_batch_date", None) != today and not skip_trade:
             self._last_p4_batch_date = today
@@ -251,6 +266,10 @@ class ExecutionMixin:
                                 log_error(f"P4 AI 매도 판단 오류 [{code}|{item.get('prdt_name')}]: {e}")
                                 self._p4_ai_done_this_cycle = False  # [Fix] 오류 시 플래그 리셋 → 다음 종목 AI 판단 허용
                             finally: self.current_action = "대기중"
+
+            # [추가] P4에서 이미 보호(🛡️) 또는 처리(🏁)된 종목은 일반 SL/TP 로직을 스킵하여 핑퐁 매매 방지
+            if phase['id'] == "P4" and p4_key in self._p3_global_processed:
+                continue
 
             tp, sl, vol_spike = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
             rt = safe_cast_float(item.get("evlu_pfls_rt"))
