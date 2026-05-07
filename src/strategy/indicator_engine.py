@@ -197,7 +197,7 @@ class IndicatorEngine:
                     if hasattr(api, 'get_naver_daily_chart'):
                         daily_candles = api.get_naver_daily_chart(code)
                         if daily_candles:
-                            logger.info(f"[MA폴백] {display_name} 일봉 → 네이버 F-Chart 사용")
+                            logger.debug(f"[MA폴백] {display_name} 일봉 → 네이버 F-Chart 사용")
                 except Exception as fe:
                     pass
 
@@ -226,7 +226,7 @@ class IndicatorEngine:
                         minute_candles = api.get_naver_minute_chart(code, count=40)
                         if minute_candles:
                             minute_source = "Naver-FChart"
-                            logger.info(f"[MA폴백] {display_name} 분봉 → 네이버 F-Chart XML 사용")
+                            logger.debug(f"[MA폴백] {display_name} 분봉 → 네이버 F-Chart XML 사용")
                 except Exception as fe:
                     from src.logger import log_error
                     log_error(f"[MA폴백] {display_name} 네이버 F-Chart 분봉 실패: {fe}")

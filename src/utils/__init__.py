@@ -282,3 +282,61 @@ def clean_ai_text(text: str) -> str:
     text = re.sub(r'```[a-zA-Z]*\n?', '', text)
     text = text.replace('```', '')
     return text.strip()
+
+def safe_cast_float(val: any, default: float = 0.0) -> float:
+    """한글 단위(조, 억, 원) 및 특수문자(%, ,)가 포함된 문자열을 안전하게 float으로 변환합니다.
+    시가총액의 경우 '억' 단위로 통일하여 반환합니다.
+    """
+    if val is None: return default
+    s = str(val).strip()
+    if not s or s.upper() in ['N/A', 'NAN']: return default
+    
+    try:
+        # 모든 공백(\n, \t, space 등) 제거 및 콤마 제거
+        s = re.sub(r'\s+', '', s).replace(',', '')
+        
+        # '원' 기호 제거
+        s = s.replace('원', '').replace('%', '')
+        
+        # 조/억 단위가 포함된 경우 처리
+        if '조' in s or '억' in s:
+            total = 0.0
+            
+            # '조' 처리
+            if '조' in s:
+                parts = s.split('조')
+                if parts[0]:
+                    total += float(parts[0]) * 10000
+                s = parts[1] if len(parts) > 1 else ""
+            
+            # '억' 처리
+            if '억' in s:
+                parts = s.split('억')
+                if parts[0]:
+                    total += float(parts[0])
+                # '억' 뒤에 남은 숫자가 있을 수 있으나 보통 시총에선 없음. 있으면 무시하거나 추가 처리
+            elif s: 
+                # '조' 뒤에 단위 없이 숫자만 있는 경우 (예: '7조 8983')
+                # 숫자가 아닌 문자(괄호 등)가 섞여있을 수 있으므로 정제
+                s_clean = re.sub(r'[^0-9.-]', '', s)
+                if s_clean:
+                    total += float(s_clean)
+            
+            return total
+            
+        # 단위가 없는 일반 숫자인 경우 (RSI, PBR 등)
+        # 숫자와 부호, 소수점만 남기고 제거 (예: "1.23배" -> "1.23")
+        s_clean = re.sub(r'[^0-9.-]', '', s)
+        if not s_clean: return default
+        return float(s_clean)
+    except:
+        return default
+# --- ANSI 컬러 상수 ---
+RESET = "\033[0m"
+B_RED = "\033[1;31m"
+G_GREEN = "\033[1;32m"
+B_YELLOW = "\033[1;33m"
+B_BLUE = "\033[1;34m"
+B_MAGENTA = "\033[1;35m"
+B_CYAN = "\033[1;36m"
+B_WHITE = "\033[1;37m"

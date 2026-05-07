@@ -20,9 +20,15 @@ def setup_logger(name="VibeTrader"):
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
     
-    # 포맷 설정
-    formatter = logging.Formatter(
+    # 1. 일반 로그 포맷 (간결함 유지)
+    default_formatter = logging.Formatter(
         '%(asctime)s | %(levelname)-7s | %(message)s', 
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # 2. 에러 로그 포맷 (파일명:라인번호 포함하여 디버깅 용이성 강화)
+    error_formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)-7s | [%(filename)s:%(lineno)d] %(message)s', 
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
@@ -34,12 +40,12 @@ def setup_logger(name="VibeTrader"):
         def filter(self, record):
             return record.levelno == logging.INFO
     trade_handler.addFilter(InfoOnlyFilter())
-    trade_handler.setFormatter(formatter)
+    trade_handler.setFormatter(default_formatter)
 
     # 2. 에러 전용 로그 (ERROR 이상)
     error_handler = logging.FileHandler("error.log", encoding="utf-8", delay=True)
     error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(formatter)
+    error_handler.setFormatter(error_formatter)
 
     if not logger.handlers:
         logger.addHandler(trade_handler)
@@ -64,14 +70,20 @@ telegram_logger = setup_telegram_logger()
 class TradingLogManager:
     def __init__(self, log_file="trading_logs.json"):
         self.log_file = log_file
-        self.data = {"trades": [], "configs": [], "rejections": [], "buy_reasons": []}
+        self.data = {"trades": [], "configs": [], "rejections": [], "buy_reasons": [], "ai_activities": []}
         self.lock = threading.Lock()
         self.notifier = None  # [추가] 텔레그램 알림 엔진 연동
+        self.state = None     # [추가] TUI 실시간 로그 연동용 state
+        self.last_tui_msg = "" # [통합] 최근 생성된 TUI용 메시지
         self._load()
 
     def set_notifier(self, notifier):
         """[추가] 알림 엔진 연동을 위한 세터"""
         self.notifier = notifier
+
+    def set_state(self, state):
+        """[통합] TradingState 주입 (TUI 실시간 로그 자동 반영용)"""
+        self.state = state
 
     def _load(self):
         with self.lock:
@@ -81,8 +93,9 @@ class TradingLogManager:
                         self.data = json.load(f)
                     if "rejections" not in self.data: self.data["rejections"] = []
                     if "buy_reasons" not in self.data: self.data["buy_reasons"] = []
+                    if "ai_activities" not in self.data: self.data["ai_activities"] = []
                 except:
-                    self.data = {"trades": [], "configs": [], "rejections": [], "buy_reasons": []}
+                    self.data = {"trades": [], "configs": [], "rejections": [], "buy_reasons": [], "ai_activities": []}
 
     def _save(self):
         """원자적 쓰기: tmp파일 기록 후 os.replace()로 교체 → 부분 쓰기 방지.
@@ -150,10 +163,10 @@ class TradingLogManager:
                 self.data["trades"].insert(0, log_entry) # 최신순
             self._save()
             
-            # 텍스트 로그 파일에도 동시 기록
+            # 텍스트 로그 파일에도 동시 기록 (stacklevel=2로 실제 호출 위치 기록)
             p_str = f" | 수익: {int(f_profit):+,}원" if f_profit != 0 else ""
             m_str = f" | 모델: {model_id}" if model_id else ""
-            logger.info(f"[TRADE] {trade_type} | {name}({code}) | {int(f_price):,}원 | {qty}주 | {memo}{p_str}{m_str}")
+            logger.info(f"[TRADE] {trade_type} | {name}({code}) | {int(f_price):,}원 | {qty}주 | {memo}{p_str}{m_str}", stacklevel=2)
 
             # [Phase 2] 텔레그램 및 TUI 로그 동시 기록
             if self.notifier:
@@ -161,8 +174,36 @@ class TradingLogManager:
                     self.notifier.notify_trade(trade_type, code, name, f_price, qty, memo, f_profit, model_id)
                 except Exception as e:
                     log_error(f"Telegram Notification Error: {e}")
+
+            # [통합] TUI 실시간 로그 자동 반영 (State 연동 시)
+            if self.state:
+                try:
+                    tui_msg = self._build_tui_message(trade_type, name, qty, f_profit)
+                    self.last_tui_msg = tui_msg
+                    self.state.add_trading_log(tui_msg)
+                except Exception as e:
+                    log_error(f"TUI Log Update Error: {e}")
         except Exception as e:
             log_error(f"log_trade 기록 중 치명적 오류: {e}")
+
+    def _build_tui_message(self, trade_type: str, name: str, qty: int, profit: float = 0.0) -> str:
+        """[통합] 거래 데이터를 TUI용 한 줄 요약 메시지로 변환"""
+        p_str = f" ({int(profit):+,}원)" if profit != 0 else ""
+        
+        # 타입별 아이콘 및 문구 매핑
+        if "AI자율매수" in trade_type: return f"🚀 AI자율매수: {name} {qty}주"
+        if "AI자율매도" in trade_type: return f"🤖 AI 자율 매도: {name}{p_str}"
+        if "물타기" in trade_type:     return f"🤖 물타기: {name} {qty}주"
+        if "불타기" in trade_type:     return f"🤖 불타기: {name} {qty}주"
+        if "익절" in trade_type:       return f"자동 익절: {name} {qty}주"
+        if "손절" in trade_type:       return f"자동 손절: {name} {qty}주"
+        if "교체매도" in trade_type:   return f"🔄 교체매도: {name}{p_str}"
+        if "P3" in trade_type:        return f"🏁 P3 수익확정: {name}{p_str}"
+        if "P4" in trade_type:        return f"💤 P4 청산: {name}{p_str}"
+        if "수동" in trade_type:      return f"✅ {trade_type}: {name} {qty}주"
+        
+        # 기본 형식
+        return f"{trade_type}: {name} {qty}주{p_str}"
         
 
     def log_config(self, content):
@@ -172,7 +213,7 @@ class TradingLogManager:
         with self.lock:
             self.data["configs"].insert(0, log_entry) # 최신순
         self._save()
-        logger.info(f"[CONFIG] {content}")
+        logger.info(f"[CONFIG] {content}", stacklevel=2)
 
     def log_rejection(self, code, name, reason, model_id=""):
         """AI 매수 거절 내역을 기록 (REJECTION)"""
@@ -190,7 +231,7 @@ class TradingLogManager:
             if len(self.data["rejections"]) > 100:
                 self.data["rejections"] = self.data["rejections"][:100]
         self._save()
-        logger.info(f"[REJECT] {name}({code}) | 사유: {reason} | 모델: {model_id}")
+        logger.info(f"[REJECT] {name}({code}) | 사유: {reason} | 모델: {model_id}", stacklevel=2)
 
     def log_buy_reason(self, code, name, reason, model_id=""):
         """AI 매수 승인 사유를 기록 (BUY_REASON)"""
@@ -207,7 +248,27 @@ class TradingLogManager:
             if len(self.data["buy_reasons"]) > 100:
                 self.data["buy_reasons"] = self.data["buy_reasons"][:100]
         self._save()
-        logger.info(f"[BUY_REASON] {name}({code}) | 사유: {reason} | 모델: {model_id}")
+        logger.info(f"[BUY_REASON] {name}({code}) | 사유: {reason} | 모델: {model_id}", stacklevel=2)
+
+    def log_ai_activity(self, category, content, result, remarks=""):
+        """AI의 주기적 활동(시황분석, 매수검토 등)을 기록 (AI_ACTIVITY)"""
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_entry = {
+            "time": now,
+            "category": category,
+            "content": content,
+            "result": result,
+            "remarks": remarks
+        }
+        with self.lock:
+            if "ai_activities" not in self.data: self.data["ai_activities"] = []
+            self.data["ai_activities"].insert(0, log_entry)
+            # 최근 200건 정도 유지
+            if len(self.data["ai_activities"]) > 200:
+                self.data["ai_activities"] = self.data["ai_activities"][:200]
+        self._save()
+        # [Architect] AI 활동 로그는 별도 UI(A키)가 있으므로 메인 로그(L키) 노이즈 방지를 위해 DEBUG로 기록
+        logger.debug(f"[AI_ACT] {category} | {content} | {result} | {remarks}", stacklevel=2)
 
     def cleanup(self, days_to_keep=2):
         """영업일 기준 n일 로그만 남기고 삭제"""
@@ -220,6 +281,7 @@ class TradingLogManager:
             self.data["configs"] = [c for c in self.data.get("configs", []) if c["time"] >= threshold_date]
             self.data["rejections"] = [r for r in self.data.get("rejections", []) if r["time"] >= threshold_date]
             self.data["buy_reasons"] = [b for b in self.data.get("buy_reasons", []) if b["time"] >= threshold_date]
+            self.data["ai_activities"] = [a for a in self.data.get("ai_activities", []) if a["time"] >= threshold_date]
             
             if len(self.data["trades"]) != original_trade_count:
                 # 내부에서 락이 걸린 상태이므로 _save 호출 시 주의 (이미 복사하므로 안전)
@@ -392,11 +454,11 @@ trading_log = TradingLogManager()
 
 def log_trade(msg):
     """구버전 호환용 (텍스트 로그만 남김)"""
-    logger.info(f"[TRADE] {msg}")
+    logger.info(f"[TRADE] {msg}", stacklevel=2)
 
 def log_error(msg):
-    """에러 관련 명시적 로그"""
-    logger.error(msg)
+    """에러 관련 명시적 로그 (stacklevel=2 적용)"""
+    logger.error(msg, stacklevel=2)
 
 def cleanup_text_log(file_path, days_to_keep=2):
     """텍스트 로그 파일을 영업일 기준 n일치만 남기고 정리 (윈도우 파일 잠금 대응)"""

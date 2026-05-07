@@ -390,7 +390,8 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
                 cost = float(count * 5.0)
                 if "gemini" in m_id.lower(): res["gemini"] += cost
                 else: res["groq"] += cost
-        except: pass
+        except Exception as e:
+            logger.debug(f"AI 사용량 추적기(Local) 조회 실패: {e}")
 
         # GCP 연동 성공 시 제미나이 비용만 보정 (샘플)
         p_id = os.getenv("GCP_PROJECT_ID")
@@ -408,5 +409,6 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
                 else:
                     # gcloud auth 실패 시 기존 방식 유지
                     pass
-            except: pass
+            except Exception as e:
+                logger.debug(f"GCP Billing API 연동 실패: {e}")
         return res

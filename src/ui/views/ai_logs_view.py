@@ -35,12 +35,47 @@ def draw_ai_logs_report(strategy, dm):
         tab2_s = "\033[7m" if current_tab == 2 else ""
         tab3_s = "\033[7m" if current_tab == 3 else ""
         tab4_s = "\033[7m" if current_tab == 4 else ""
+        tab5_s = "\033[7m" if current_tab == 5 else ""
         
-        menu_bar = f" {tab1_s} 1.매수거절 \033[0m | {tab2_s} 2.종목교체 \033[0m | {tab3_s} 3.매수사유 \033[0m | {tab4_s} 4.전략수립근거(보유) \033[0m "
+        menu_bar = f" {tab1_s} 1.AI로그 \033[0m | {tab2_s} 2.매수거절 \033[0m | {tab3_s} 3.종목교체 \033[0m | {tab4_s} 4.매수사유 \033[0m | {tab5_s} 5.전략수립근거 \033[0m "
         buf.write(align_kr(menu_bar, tw, 'center') + "\n")
         buf.write("=" * tw + "\n\n")
 
         if current_tab == 1:
+            buf.write("\033[1;94m" + " [AI 엔진 주기적 활동 로그 (오늘)]" + "\033[0m\n")
+            buf.write("-" * tw + "\n")
+            activities = trading_log.data.get("ai_activities", [])
+            today = datetime.now().strftime('%Y-%m-%d')
+            today_activities = [a for a in activities if a.get('time', '').startswith(today)]
+            
+            if not today_activities:
+                buf.write("  오늘 기록된 AI 활동 내역이 없습니다.\n")
+            else:
+                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('구분', 10)} | {align_kr('내용', 30)} | {align_kr('결과', 10)} | 비고" + "\033[0m\n")
+                buf.write("-" * tw + "\n")
+                max_items = max(3, th - 13)
+                for item in today_activities[:max_items]:
+                    t_str = item['time'].split(' ')[-1]
+                    cat = item.get('category', '')
+                    content = item.get('content', '')
+                    res = item.get('result', '')
+                    remarks = item.get('remarks', '').replace('\n', ' ')
+                    
+                    # 가용 너비 계산 (10 + 10 + 30 + 10 + 16 = 76)
+                    avail_w = max(20, tw - 76)
+                    if get_visual_width(remarks) > avail_w:
+                        while get_visual_width(remarks) > avail_w - 2: remarks = remarks[:-1]
+                        remarks += ".."
+                    
+                    # 결과 색상 처리
+                    res_color = ""
+                    if "SUCCESS" in res or "COMPLETED" in res or "승인" in res: res_color = "\033[92m"
+                    elif "REJECTED" in res or "거절" in res or "FAIL" in res: res_color = "\033[91m"
+                    elif "WAIT" in res or "진행" in res: res_color = "\033[93m"
+                    
+                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(cat, 10)} | {align_kr(content, 30)} | {res_color}{align_kr(res, 10)}\033[0m | {remarks}\n")
+
+        elif current_tab == 2:
             buf.write("\033[1;91m" + " [AI 매수 거절 히스토리 (오늘)]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             rejections = trading_log.data.get("rejections", [])
@@ -75,7 +110,7 @@ def draw_ai_logs_report(strategy, dm):
                         reason += ".."
                     buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {reason}\n")
 
-        elif current_tab == 2:
+        elif current_tab == 3:
             buf.write("\033[1;92m" + " [종목 한도(8개) 초과에 따른 당일 교체 히스토리]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             today = datetime.now().strftime('%Y-%m-%d')
@@ -99,7 +134,7 @@ def draw_ai_logs_report(strategy, dm):
                         reason += ".."
                     buf.write(f" {align_kr(t_str, 10)} | {align_kr(out_info, 22)} | {align_kr(in_info, 22)} | {reason}\n")
 
-        elif current_tab == 3:
+        elif current_tab == 4:
             buf.write("\033[1;93m" + " [AI 당일 매수 승인 및 진입 근거]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             reasons = trading_log.data.get("buy_reasons", [])
@@ -133,7 +168,7 @@ def draw_ai_logs_report(strategy, dm):
                         reason += ".."
                     buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {reason}\n")
 
-        elif current_tab == 4:
+        elif current_tab == 5:
             buf.write("\033[1;96m" + " [현재 보유 종목별 AI 전략 수립 근거]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             presets = strategy.preset_eng.preset_strategies
@@ -172,7 +207,7 @@ def draw_ai_logs_report(strategy, dm):
                     buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {reason}\n")
 
         buf.write("\n" + "-" * tw + "\n")
-        buf.write(align_kr(" [1, 2, 3, 4]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
+        buf.write(align_kr(" [1, 2, 3, 4, 5]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")
         
         # [수정] 부드러운 화면 갱신
         sys.stdout.write("\033[H")
@@ -183,6 +218,8 @@ def draw_ai_logs_report(strategy, dm):
         sys.stdout.flush()
 
         
+        # [수정] 1초마다 자동 새로고침을 위한 타임아웃 루프
+        start_t = time.time()
         while True:
             k = get_key_immediate()
             if k:
@@ -191,8 +228,13 @@ def draw_ai_logs_report(strategy, dm):
                 elif kl == '2': current_tab = 2; break
                 elif kl == '3': current_tab = 3; break
                 elif kl == '4': current_tab = 4; break
+                elif kl == '5': current_tab = 5; break
                 elif kl in ['q', 'esc', ' ']:
                     buf.close()
                     return
+            
+            # 1초 경과 시 루프 탈출하여 화면 재렌더링
+            if time.time() - start_t > 1.0:
+                break
             time.sleep(0.01)
 

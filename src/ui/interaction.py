@@ -210,7 +210,6 @@ def perform_interaction(key, api, strategy, dm, cycle):
                                 curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
                                 profit = (curr_p - float(h.get('pchs_avg_pric', 0))) * qty
                                 trading_log.log_trade("수동매도", code, name, curr_p, qty, f"수동 매도 ({p_disp})", profit=profit, model_id="수동", ma_20=dm.ma_20_cache.get(code, 0.0))
-                                dm.add_trading_log(f"✅ [{name}] {qty}주 매도 완료 ({p_disp})")
                                 dm.show_status(f"✅ 매도 성공: {name}"); dm.update_all_data(dm.api.auth.is_virtual, force=True)
                             else:
                                 from src.logger import log_error
@@ -278,7 +277,6 @@ def perform_interaction(key, api, strategy, dm, cycle):
                             if success:
                                 curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
                                 trading_log.log_trade("수동매수", code, buy_name, curr_p, qty, f"수동 매수 ({p_disp})", model_id="수동", ma_20=dm.ma_20_cache.get(code, 0.0))
-                                dm.add_trading_log(f"✅ [{buy_name}] {qty}주 매수 완료 ({p_disp})")
                                 dm.show_status(f"✅ 매수 성공: {buy_name}")
                                 if is_new:
                                     try:

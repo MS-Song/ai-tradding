@@ -3,6 +3,7 @@ import concurrent.futures
 from datetime import datetime
 from src.workers.base import BaseWorker
 from src.logger import trading_log, log_error, logger
+from src.utils import safe_cast_float
 
 class DataSyncWorker(BaseWorker):
     def __init__(self, state, api, strategy):
@@ -116,6 +117,12 @@ class DataSyncWorker(BaseWorker):
             if r.get('code'):
                 all_codes.add(r['code'].strip())
         
+        # [추가] 대시보드에 표시되는 인기/거래량 상위 종목도 실시간 가격 갱신 대상에 포함
+        for item_list in [self.state.hot_raw, self.state.vol_raw]:
+            for item in (item_list or [])[:20]:
+                if item.get('code'):
+                    all_codes.add(item['code'].strip())
+        
         all_codes = list(all_codes)
         if not all_codes: return
 
@@ -199,7 +206,7 @@ class DataSyncWorker(BaseWorker):
                         _used_fallback = bool(m_candles)
 
                     if m_candles:
-                        closes = [float(str(c.get('stck_prpr') or c.get('stck_clpr')).strip()) for c in m_candles if (c.get('stck_prpr') or c.get('stck_clpr'))]
+                        closes = [safe_cast_float(c.get('stck_prpr') or c.get('stck_clpr')) for c in m_candles if (c.get('stck_prpr') or c.get('stck_clpr'))]
                         if len(closes) >= 20:
                             ma_vals = self.strategy.indicator_eng.calculate_sma(closes, [20])
                             ma_20 = ma_vals.get("sma_20", 0.0)
@@ -243,7 +250,8 @@ class DataSyncWorker(BaseWorker):
                             last_task=f"{info['name']} 동기화 완료{ma_src_tag}",
                             friendly_name=f"{c}_{info['name']}"
                         )
-                except: pass
+                except Exception as e:
+                    logger.warning(f"종목 시세 동기화 실패: {e}")
 
         # 3.5 [신규] 보유 종목이 아닌 STOCK_ 워커 정리 (상태 제거)
         if self.state.holdings_fetched: # 잔고 데이터가 로드된 상태에서만 정리 수행
@@ -291,6 +299,22 @@ class DataSyncWorker(BaseWorker):
 
             self.state.stock_info.update(temp_info)
             self.state.last_update_time = datetime.now().strftime('%H:%M:%S')
+
+            # [Fix] 실시간 시세를 추천 종목 및 인기/거래량 리스트에 반영하여 TUI 가격 최신화
+            # ai_recommendations, hot_raw, vol_raw는 최초 수집 시점의 스냅샷 가격을 갖고 있으므로
+            # bulk_data(Naver 실시간 API)로 가격/등락률을 덮어씌워 대시보드 표시 정확성 보장
+            if bulk_data:
+                for rec in getattr(self.strategy, 'ai_recommendations', []):
+                    rt = bulk_data.get(rec.get('code'))
+                    if rt:
+                        rec['price'] = rt['price']
+                        rec['rate'] = rt['rate']
+                for item_list in [self.state.hot_raw, self.state.vol_raw]:
+                    for item in item_list:
+                        rt = bulk_data.get(item.get('code'))
+                        if rt:
+                            item['price'] = rt['price']
+                            item['rate'] = rt['rate']
 
         if is_heavy_cycle:
             self.last_heavy_sync = curr_t

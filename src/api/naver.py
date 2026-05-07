@@ -3,6 +3,7 @@ import time
 import random
 from typing import List, Dict, Optional, Any
 from src.api.base import BaseAPI
+from src.utils import safe_cast_float
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -136,7 +137,7 @@ class NaverAPIClient(BaseAPI):
                     if today:
                         price_em = today.find('em')
                         if price_em:
-                            detail["price"] = float(price_em.text.replace(',', '').strip())
+                            detail["price"] = safe_cast_float(price_em.text)
                 
                 # 투자 정보 (시총, PER, PBR 등)
                 aside = soup.find('div', {'class': 'aside_invest_info'})

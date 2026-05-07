@@ -41,7 +41,9 @@ class PresetStrategyEngine:
             try:
                 detail = self.api.get_naver_stock_detail(code)
                 if detail: name = detail.get('pdnm', '')
-            except: pass
+            except Exception as e:
+                from src.logger import logger
+                logger.debug(f"전략 할당 중 종목명 취득 실패 ({code}): {e}")
 
         if preset_id == "00":
             if code in self.preset_strategies:

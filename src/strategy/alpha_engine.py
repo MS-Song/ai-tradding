@@ -1,6 +1,7 @@
 import threading
 from typing import List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor
+from src.utils import safe_cast_float
 
 class VibeAlphaEngine:
     def __init__(self, api):
@@ -193,40 +194,42 @@ class VibeAlphaEngine:
             
         try:
             # PBR 보정 (저PBR 우량주 가중치)
-            pbr_val = float(detail.get('pbr', '0').replace(',', '')) if detail.get('pbr') != 'N/A' else 1.0
+            pbr_val = safe_cast_float(detail.get('pbr'), default=1.0)
             if pbr_val <= 0.8: score += (20.0 * val_weight) # 극심한 저평가 우량주
             elif pbr_val <= 1.2: score += (12.0 * val_weight)
             elif pbr_val >= 5.0: score -= (10.0 * val_weight)
             
             # PER 보정
-            per_val = float(detail.get('per', '0').replace(',', '')) if detail.get('per') != 'N/A' else 20.0
+            per_val = safe_cast_float(detail.get('per'), default=20.0)
             if per_val <= 8.0: score += (15.0 * val_weight)
             elif per_val <= 15.0: score += (8.0 * val_weight)
             
             # 시가총액 파싱 (페널티 계산에도 공용 사용)
-            mkt_cap = float(str(detail.get('market_cap', '0')).replace(',', '').replace('억', '')) if detail.get('market_cap') else 0
+            mkt_cap_raw = detail.get('market_cap')
+            mkt_cap = safe_cast_float(mkt_cap_raw)
             if mkt_cap >= 10000: # 시총 1조 이상 우량주
                 score += 5.0 * val_weight
             
             # [복기반영 #3] Bear/Defensive 장세에서 고PER 대형주 복합 감점
-            # 하락장에서는 지수 영향이 큰 고PER 대형주보다 지수 영향이 적은 개별 모멘텀 종목이 유리
             if v in ["BEAR", "DEFENSIVE"] and per_val > 25.0 and mkt_cap >= 10000:
                 large_cap_penalty = min(20.0, (per_val - 25.0) * 0.8)
                 score -= large_cap_penalty
+                from src.logger import logger
                 logger.debug(f"하락장 고PER대형주 페널티: PER={per_val:.1f} 시총={mkt_cap:.0f}억 → -{large_cap_penalty:.1f}pt")
             
             # 업종 상대 PER 보정
-            sector_per_str = str(detail.get('sector_per', '0')).replace(',', '').replace('%', '')
-            sector_per = float(sector_per_str) if sector_per_str != 'N/A' else 0.0
+            sector_per = safe_cast_float(detail.get('sector_per'))
             if sector_per > 0 and per_val > 0 and per_val < sector_per * 0.7:
                 score += (10.0 * val_weight)
             
             # 배당률(Yield) 보정 (하락장 핵심 방어 지표)
-            yld_val = float(str(detail.get('yield', '0')).replace(',', '').replace('%', '')) if detail.get('yield') != 'N/A' else 0.0
+            yld_val = safe_cast_float(detail.get('yield'))
             if yld_val >= 3.0: score += div_weight
             if yld_val >= 5.0: score += div_weight * 1.5
                 
-        except: pass
+        except Exception as e:
+            from src.logger import logger
+            logger.error(f"펀더멘털 지표 계산 중 예외 발생 ({code}): {e} | detail={detail}")
         
         # 5. 인버스 ETF 가점 (하락장 헷지)
         is_inverse = "인버스" in stock.get('name', ' ')

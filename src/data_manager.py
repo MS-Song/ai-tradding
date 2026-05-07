@@ -27,6 +27,7 @@ class DataManager:
         # --- 알림 엔진 초기화 ---
         self.notifier = TelegramNotifier(dm=self)
         trading_log.set_notifier(self.notifier)
+        trading_log.set_state(self.state)  # [통합] TUI 실시간 로그 자동 반영 활성화
         
         # --- 텔레그램 인바운드 명령 엔진 초기화 ---
         try:

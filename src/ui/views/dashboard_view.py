@@ -151,7 +151,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         kr_str = " ".join([p for p in kr_parts if p])
         us_str = " ".join([p for p in us_parts if p])
         line1 = f" 국장: {kr_str} | 미장: {us_str}"
-        buf.write(align_kr(line1, tw) + "\n")
+        buf.write(align_kr(line1, tw-1) + "\n")
 
         # Line 2: 환율 | 코인 | 선물
         fx_part = fmt_idx("", "FX_USDKRW", "{:,.1f}")
@@ -175,7 +175,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         ft_str = " ".join([p for p in ft_parts if p])
         
         line2 = f" 환율: {fx_part} | 코인: {coin_str} | 선물: {ft_str}"
-        buf.write(align_kr(line2, tw) + "\n")
+        buf.write(align_kr(line2, tw-1) + "\n")
 
         v_c = "\033[91m" if "Bull" in dm.cached_vibe else ("\033[94m" if "Bear" in dm.cached_vibe else "\033[93m")
         panic_txt = " !!! PANIC !!!" if dm.cached_panic else ""
@@ -202,10 +202,10 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         dema_txt = f" [DEMA: {' '.join(dema_parts)}]" if dema_parts else ""
 
         status_line = f" VIBE: {v_c}{dm.cached_vibe}\033[0m{panic_txt}{dema_txt} {vibe_desc}{phase_txt}{ai_msg_formatted}"
-        buf.write(align_kr(status_line, tw) + "\n")
+        buf.write(align_kr(status_line, tw-1) + "\n")
         # 업데이트 알림이 있는 경우 커맨드 바에 U:업데이트 추가
         cmd_update = " | U:업데이트" if dm.update_info.get("has_update") else ""
-        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 P:성과 B:보유 D:추천 H:인기 A:AI로그 L:로그 | M:매뉴얼 | S:셋업 | Q:종료{cmd_update}", tw) + "\033[0m\n")
+        buf.write("\033[93m" + align_kr(f" [COMMANDS] 1:매도 | 2:매수 | 3:자동 | 4:추천 | 5:물타기 6:불타기 | AI 7:분석 8:시황 | 9:전략 | 리포트 P:성과 B:보유 D:추천 H:인기 A:AI로그 L:로그 | M:매뉴얼 | S:셋업 | Q:종료{cmd_update}", tw-1) + "\033[0m\n")
         
         # [Task 4] 입력 모드 또는 AI 브리핑 영역 (커맨드 바로 아래 고정 위치)
         effective_mode = prompt_mode or dm.current_prompt_mode
@@ -334,18 +334,18 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         line_setup = (f"{label_setup} | {align_kr(strat_info, W1)} | {align_kr(algo_info, W2)} | "
                       f"{align_kr(bear_info, W3)} | {align_kr(bull_info, W4)} | "
                       f"{align_kr(risk_info, W5)} | {ai_cost_info}\033[0m")
-        buf.write(align_kr(line_setup, tw) + "\n")
+        buf.write(align_kr(line_setup, tw-1) + "\n")
         buf.write("-" * tw + "\n")
 
-        eff_w = tw - 4; w = [max(4, int(eff_w * 0.03)), max(5, int(eff_w * 0.04)), max(15, int(eff_w * 0.15)), max(10, int(eff_w * 0.09)), max(14, int(eff_w * 0.12)), max(10, int(eff_w * 0.08)), max(8, int(eff_w * 0.07)), max(10, int(eff_w * 0.08)), max(18, int(eff_w * 0.12)), max(10, int(eff_w * 0.07)), max(12, int(eff_w * 0.10)), max(6, int(eff_w * 0.05))]
-        buf.write("\033[1m" + align_kr(align_kr("NO",w[0])+align_kr("시장",w[1])+align_kr("종목코드/명",w[2])+align_kr("현재가",w[3],'right')+align_kr("전일대비",w[4],'right')+align_kr("평단가",w[5],'right')+align_kr("수량",w[6],'right')+align_kr("평가금액",w[7],'right')+align_kr("수익금(수익률)",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+"  "+align_kr("전략",w[10],'center')+align_kr("잔여",w[11],'right'), tw) + "\033[0m\n")
+        eff_w = tw - 10; w = [max(4, int(eff_w * 0.03)), max(5, int(eff_w * 0.04)), max(15, int(eff_w * 0.15)), max(10, int(eff_w * 0.09)), max(14, int(eff_w * 0.12)), max(10, int(eff_w * 0.08)), max(8, int(eff_w * 0.07)), max(10, int(eff_w * 0.08)), max(18, int(eff_w * 0.12)), max(10, int(eff_w * 0.07)), max(12, int(eff_w * 0.10)), max(6, int(eff_w * 0.05))]
+        buf.write("\033[1m" + align_kr(align_kr("NO",w[0])+align_kr("시장",w[1])+align_kr("종목코드/명",w[2])+align_kr("현재가",w[3],'right')+align_kr("전일대비",w[4],'right')+align_kr("평단가",w[5],'right')+align_kr("수량",w[6],'right')+align_kr("평가금액",w[7],'right')+align_kr("수익금(수익률)",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+"  "+align_kr("전략",w[10],'center')+align_kr("잔여",w[11],'right'), tw-1) + "\033[0m\n")
         
         f_h = dm.cached_holdings if dm.ranking_filter == "ALL" else [h for h in dm.cached_holdings if get_market_name(h.get('pdno','')) == dm.ranking_filter]
         base_fixed = 23; ranking_target = 10; asset_count = len(f_h); max_h_display = max(1, th - base_fixed - ranking_target)
         if asset_count < max_h_display: max_h_display = asset_count
         ranking_items_count = min(10, max(3, th - base_fixed - max_h_display))
         
-        if not f_h: buf.write(align_kr(f"No active {dm.ranking_filter} holdings found.", tw, 'center') + "\n")
+        if not f_h: buf.write(align_kr(f"No active {dm.ranking_filter} holdings found.", tw-1, 'center') + "\n")
         else:
             for idx, h in enumerate(f_h[:max_h_display], 1):
                 code, name = h.get("pdno", ""), h.get("prdt_name", "Unknown"); info = dm.cached_stock_info.get(code, {"tp": 0, "sl": 0, "spike": False})
@@ -362,7 +362,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 tp_txt = f"\033[91m{info['tp']:+.1f}\033[0m"
                 sl_txt = f"\033[94m{info['sl']:+.1f}\033[0m"
                 
-                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name[:(w[2]-10)//2*2]}" + (" *" if info['spike'] else ""), w[2]) + align_kr(f"{int(p_cu):,}", w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw) + "\n")
+                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name[:(w[2]-10)//2*2]}" + (" *" if info['spike'] else ""), w[2]) + align_kr(f"{int(p_cu):,}", w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw-1) + "\n")
             if len(f_h) > max_h_display: buf.write(align_kr(f"... 외 {len(f_h) - max_h_display}종목 생략됨 ...", tw, 'center') + "\n")
         
         buf.write("-" * tw + "\n"); themes = get_cached_themes()
@@ -372,7 +372,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             while get_visual_width(theme_line) > tw - 2 and " | " in theme_str:
                 theme_str = theme_str.rsplit(" | ", 1)[0]
                 theme_line = f" 테마: {theme_str}.."
-            buf.write("\033[93m" + align_kr(theme_line, tw) + "\033[0m\n")
+            buf.write("\033[93m" + align_kr(theme_line, tw-1) + "\033[0m\n")
         else:
             buf.write("\n")
         
@@ -402,14 +402,15 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 y_str = " | ".join(y_parts)
                 y_line = f" 전일: {y_str}.."
             
-            buf.write(align_kr(y_line, tw) + "\n")
+            buf.write(align_kr(y_line, tw-1) + "\n")
         else:
-            buf.write(align_kr("\033[90m 전일 추천 내역이 없습니다.\033[0m", tw) + "\n")
+            buf.write(align_kr("\033[90m 전일 추천 내역이 없습니다.\033[0m", tw-1) + "\n")
 
         buf.write("-" * tw + "\n")
 
         # ` | ` 구분자: 반각문자(1) + 공백 양쪽(1+1) = 시각너비 3, 구분자 3개 = 9
-        eff_w = tw - 9
+        # [Fix] 우측 끝 1칸 여백 확보 (tw - 9 -> tw - 10)
+        eff_w = tw - 10
         col_w1 = max(15, int(eff_w * 0.24))
         col_w2 = max(15, int(eff_w * 0.24))
         col_w3 = max(15, int(eff_w * 0.24))
@@ -498,6 +499,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 d_name += ".."
             
             # 조립 (이름은 왼쪽, 가격은 오른쪽, 남는 공간은 가운데 띄어쓰기로 채움)
+            # [Fix] 우측 끝 1칸 여백 고정 확보
             prefix = f"[{theme_fmt}][{item['code']}]"
             spaces = max(0, width - 16 - get_visual_width(d_name) - price_vw)
             price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
@@ -530,6 +532,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 d_name += ".."
             
             # 조립 (가운데 여백 채우기)
+            # [Fix] 우측 끝 1칸 여백 고정 확보
             prefix = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m"
             spaces = max(0, width - base_w - get_visual_width(d_name) - price_vw)
             price_txt = f"({p:,}/{c}{rate_str}\033[0m)"

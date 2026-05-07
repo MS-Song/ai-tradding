@@ -21,12 +21,18 @@ class MockTradingTester:
 
     def _check_mock_env(self):
         """API 키 또는 설정을 통해 모의거래 여부 확인"""
-        # KIS API 객체의 가상계좌 여부 확인 (예: appkey가 'PS'로 시작하거나 설정값 확인)
-        is_paper = getattr(self.strategy.api, 'is_paper_trading', False)
-        # 또는 설정 파일 기반 확인
-        if not is_paper:
-            is_paper = self.strategy.base_config.get("is_paper_trading", False)
-        return is_paper
+        # [수정] KIS API의 auth.is_virtual 속성을 우선 확인
+        api = self.strategy.api
+        is_mock = False
+        
+        if hasattr(api, 'auth') and hasattr(api.auth, 'is_virtual'):
+            is_mock = api.auth.is_virtual
+        
+        # 보조 수단: 설정 파일 기반 확인
+        if not is_mock:
+            is_mock = self.strategy.base_config.get("is_paper_trading", False)
+            
+        return is_mock
 
     def get_now(self):
         """가상 시간이 적용된 현재 시간 반환"""
