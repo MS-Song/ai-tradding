@@ -10,12 +10,31 @@ except ImportError:
     BeautifulSoup = None
 
 class NaverAPIClient(BaseAPI):
+    """네이버 금융(Finance) 데이터를 수집하는 클라이언트.
+
+    실시간 시세(polling API), 인기 검색 종목, 거래량 급증 종목, 종목 상세 정보(PER/PBR), 
+    뉴스, 테마 데이터 등을 크롤링 또는 API를 통해 수집합니다.
+
+    Attributes:
+        _detail_cache (dict): 종목 상세 정보 캐시.
+        _cache_duration (int): 캐시 유효 기간 (초).
+    """
     def __init__(self):
         super().__init__()
         self._detail_cache = {}
         self._cache_duration = 120
 
     def get_naver_stocks_realtime(self, codes: List[str]) -> Dict[str, dict]:
+        """여러 종목의 실시간 시세를 한 번에 조회합니다.
+
+        네이버 polling API를 사용하며, 등락률 부호(rf 필드)를 보정하여 반환합니다.
+
+        Args:
+            codes (List[str]): 종목 코드 리스트.
+
+        Returns:
+            Dict[str, dict]: 종목 코드를 키로 하는 시세 정보 맵.
+        """
         if not codes: return {}
         try:
             codes_str = ",".join(codes)
@@ -53,6 +72,11 @@ class NaverAPIClient(BaseAPI):
         except: return {}
 
     def get_naver_hot_stocks(self) -> List[dict]:
+        """네이버 금융 '인기 검색 종목' TOP 20을 수집합니다.
+
+        Returns:
+            List[dict]: 인기 종목 리스트 (코드, 이름, 가격, 등락률 등 포함).
+        """
         results = []
         try:
             url = "https://finance.naver.com/sise/lastsearch2.naver"
@@ -81,12 +105,25 @@ class NaverAPIClient(BaseAPI):
                                     elif 'up' in img_src: rate = abs(rate)
                             except: rate = 0.0
                             price_txt = cols[3].text.replace(',', '').strip()
+                            price = float(price_txt) if price_txt else 0.0
                             mkt = "KSP" if int(code) < 300000 else "KDQ"
-                            results.append({"code": code, "name": name, "price": price_txt, "rate": rate, "mkt": mkt})
+                            results.append({"code": code, "name": name, "price": price, "rate": rate, "mkt": mkt})
             return results[:20]
         except: return []
 
     def get_naver_stock_detail(self, code: str, force: bool = False, **kwargs) -> dict:
+        """종목의 상세 정보(시총, PER, PBR 등)를 수집합니다.
+
+        실시간 API와 HTML 크롤링을 결합하여 데이터를 구성하며, 
+        단기 캐싱을 통해 불필요한 네트워크 요청을 방지합니다.
+
+        Args:
+            code (str): 종목 코드.
+            force (bool): 캐시를 무시하고 새로 수집할지 여부.
+
+        Returns:
+            dict: 종목 상세 정보 딕셔너리.
+        """
         curr_t = time.time()
         if not force and code in self._detail_cache:
             ts, data = self._detail_cache[code]
@@ -166,7 +203,13 @@ class NaverAPIClient(BaseAPI):
             self._detail_cache[code] = (curr_t, detail)
             return detail
         except: return detail
+
     def get_naver_volume_stocks(self) -> List[dict]:
+        """네이버 금융 '거래량 급증 종목' 리스트를 수집합니다.
+
+        Returns:
+            List[dict]: 거래량 상위 종목 리스트 (코스피/코스닥 통합 최대 40개).
+        """
         results = []
         try:
             for sosok in ["0", "1"]:
@@ -195,11 +238,22 @@ class NaverAPIClient(BaseAPI):
                                         elif 'up' in img_src: rate = abs(rate)
                                 except: rate = 0.0
                                 price_txt = cols[2].text.replace(',', '').strip()
-                                results.append({"code": code, "name": name, "price": price_txt, "rate": rate, "mkt": "KSP" if sosok == "0" else "KDQ"})
+                                price = float(price_txt) if price_txt else 0.0
+                                vol_txt = cols[5].text.replace(',', '').strip()
+                                vol = float(vol_txt) if vol_txt else 0.0
+                                results.append({"code": code, "name": name, "price": price, "rate": rate, "vol": vol, "mkt": "KSP" if sosok == "0" else "KDQ"})
             return results[:40]
         except: return []
 
     def get_naver_stock_news(self, code: str) -> List[str]:
+        """특정 종목의 최신 뉴스 헤드라인을 수집합니다.
+
+        Args:
+            code (str): 종목 코드.
+
+        Returns:
+            List[str]: 뉴스 헤드라인 리스트 (최대 3개).
+        """
         try:
             url = f"https://finance.naver.com/item/news.naver?code={code}"
             self._wait_for_domain_delta(url)
@@ -215,6 +269,11 @@ class NaverAPIClient(BaseAPI):
         except: return []
 
     def get_naver_theme_data(self) -> dict:
+        """네이버 금융 '테마별 시세' 데이터를 수집하여 테마-종목 맵을 구축합니다.
+
+        Returns:
+            dict: {테마명: [{"name": 종목명, "code": 종목코드}, ...]} 형식의 데이터.
+        """
         theme_map = {}
         try:
             for page in range(1, 11):
@@ -246,8 +305,19 @@ class NaverAPIClient(BaseAPI):
                         except: continue
             return theme_map
         except: return {}
+
     def get_naver_minute_chart(self, code: str, count: int = 40) -> List[dict]:
-        """네이버 F-Chart XML API를 통해 분봉 데이터를 가져옵니다. (Fallback용)"""
+        """네이버 F-Chart XML API를 통해 분봉 데이터를 가져옵니다.
+
+        한국투자증권 API 장애 시 지표 분석을 위한 Fallback용으로 사용됩니다.
+
+        Args:
+            code (str): 종목 코드.
+            count (int): 가져올 봉 개수.
+
+        Returns:
+            List[dict]: 분봉 캔들 리스트.
+        """
         try:
             url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=minute&count={count}&requestType=0"
             res = requests.get(url, timeout=5)
@@ -271,7 +341,11 @@ class NaverAPIClient(BaseAPI):
             return []
 
     def get_market_open_status(self) -> Optional[bool]:
-        """네이버 API를 통해 국내 증시 개장 상태를 확인합니다."""
+        """네이버 모바일 API를 통해 국내 증시의 실시간 개장 상태를 확인합니다.
+
+        Returns:
+            Optional[bool]: 개장 시 True, 마감 시 False, 확인 불가 시 None.
+        """
         try:
             url = "https://m.stock.naver.com/api/index/KOSPI/basic"
             self._wait_for_domain_delta(url)

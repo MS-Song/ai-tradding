@@ -16,7 +16,15 @@ except: pass
 
 def truncate_log_line(text: str, max_width: int, suffix: str = '…') -> str:
     """ANSI 이스케이프 코드를 보존하면서 시각 너비(한글 2칸) 기준으로 텍스트를 잘라냅니다.
-    max_width를 초과하는 경우 suffix(기본 '…')를 붙입니다."""
+
+    Args:
+        text (str): 자를 원본 텍스트 (ANSI 색상 코드 포함 가능).
+        max_width (int): 제한할 최대 시각 너비.
+        suffix (str, optional): 잘린 위치에 붙일 접미사. 기본값 '…'.
+
+    Returns:
+        str: 잘린 텍스트와 ANSI 색상 초기화 코드가 포함된 문자열.
+    """
     import unicodedata
     plain = ANSI_ESCAPE.sub('', text)
     if get_visual_width(plain) <= max_width:

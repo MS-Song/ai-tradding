@@ -1,21 +1,45 @@
 import time
 import concurrent.futures
+from typing import List, Dict
 from datetime import datetime
 from src.workers.base import BaseWorker
 from src.logger import trading_log, log_error, logger
 from src.utils import safe_cast_float
 
 class DataSyncWorker(BaseWorker):
+    """시스템의 데이터 무결성을 유지하기 위해 계좌와 시장 데이터를 동기화하는 워커.
+    
+    KIS API를 통한 실시간 잔고/자산 정보 패치, Naver API를 활용한 벌크 시세 업데이트, 
+    일일 손익 및 수익률 재계산, 기술적 지표(MA20) 캐싱 등 핵심 데이터 수급을 담당합니다.
+
+    Attributes:
+        api: 자산 및 시세 조회를 위한 API 클라이언트.
+        strategy: 수익률 계산 및 임계치 결정을 위한 VibeStrategy 인스턴스.
+        force_sync (bool): 즉시 동기화 요청 플래그.
+    """
     def __init__(self, state, api, strategy):
+        """DataSyncWorker를 초기화합니다.
+
+        Args:
+            state (DataManager): 시스템 전역 상태 인스턴스.
+            api: 자산 및 시세 조회를 위한 API 클라이언트.
+            strategy (VibeStrategy): 수익률 계산 및 지표 분석을 위한 전략 엔진.
+        """
         super().__init__("DATA", state, interval=1.0)
         self.api = api
         self.strategy = strategy
         self.last_heavy_sync = 0
         self.first_run = True
         self.last_balance_sync = 0
-        self.force_sync = False # [추가] 즉시 동기화 요청 플래그
+        self.force_sync = False # 즉시 동기화 요청 플래그
 
     def run(self):
+        """데이터 동기화 루틴을 주기적으로 실행합니다.
+        
+        1. KIS API를 통해 계좌 잔고 및 총 자산을 동기화합니다 (5초 주기 또는 강제 요청).
+        2. Naver 벌크 API로 보유 종목 및 추천/인기 종목의 실시간 시세를 갱신합니다 (1초 주기).
+        3. 실시간 가격을 바탕으로 계좌 평가액과 일일 손익을 즉시 재계산하여 반영합니다.
+        """
         curr_t = time.time()
         
         # 1. 잔고 및 자산 정보 패치 (KIS API 호출) - 5초 주기로 제한 (단, force_sync 시 즉시 실행)
@@ -60,7 +84,16 @@ class DataSyncWorker(BaseWorker):
                 log_error(f"DataSyncWorker Run Error: {e}")
             self.set_result("실패", last_task=f"동기화 오류: {e}")
 
-    def _update_asset_metrics(self, a):
+    def _update_asset_metrics(self, a: dict):
+        """총 자산 및 일일 손익 지표를 재계산하여 업데이트합니다.
+        
+        입출금 내역과 관계없이 순수한 투자 성과를 측정하기 위해 
+        [실현손익 + 미실현손익 변동분] 공식을 사용하여 일일 수익금을 산출합니다.
+        프로그램 시작 시 당일 기준 자산과 기초 미실현 손익을 고정하여 상대적 성과를 추적합니다.
+
+        Args:
+            a (dict): KIS API로부터 수집된 자산 정보 딕셔너리.
+        """
         if not a or a.get('total_asset', 0) <= 0: return
         today_str = datetime.now().strftime('%Y-%m-%d')
         
@@ -108,7 +141,18 @@ class DataSyncWorker(BaseWorker):
             a['daily_pnl_amt'] = net_realized + unrealized_delta
             a['daily_pnl_rate'] = (a['daily_pnl_amt'] / self.strategy.start_day_asset * 100)
 
-    def _sync_stock_prices(self, holdings, curr_t):
+    def _sync_stock_prices(self, holdings: List[Dict], curr_t: float):
+        """보유 종목, 당일 매매 종목 및 주요 관심 종목의 실시간 시세를 병렬로 동기화합니다.
+
+        Args:
+            holdings (List[dict]): 현재 잔고 리스트.
+            curr_t (float): 현재 시각 (timestamp).
+
+        Logic:
+            1. Naver 벌크 API를 사용하여 전 종목 시세를 1회 호출로 수집.
+            2. ThreadPoolExecutor를 통해 종목별 기술적 지표(MA20) 및 동적 임계치(TP/SL) 병렬 계산.
+            3. 분석 완료된 데이터를 전역 상태(`stock_info`, `ma_20_cache`)에 업데이트.
+        """
         today_str = datetime.now().strftime('%Y-%m-%d')
         all_codes = set([s.get('pdno', '').strip() for s in holdings if s.get('pdno')])
         

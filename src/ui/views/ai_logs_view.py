@@ -12,6 +12,26 @@ from src.ui.renderer import truncate_log_line
 from src.logger import trading_log
 
 def draw_ai_logs_report(strategy, dm):
+    """AI 엔진의 백그라운드 활동 및 상세 의사결정 내역을 보여주는 TUI 리포트 화면을 렌더링합니다.
+
+    이 뷰는 5개의 탭으로 구성되어 AI의 주기적 분석 작업, 매수 거절 사유, 종목 교체 내역 등 
+    시스템의 '사고 과정'을 투명하게 시각화합니다. 1초 주기로 자동 새로고침됩니다.
+
+    Args:
+        strategy: 트레이딩 전략 객체 (AI 어드바이저 및 프리셋 엔진 포함).
+        dm: 데이터 매니저 객체 (계좌 및 보유 종목 데이터 참조용).
+
+    Tabs:
+        1. AI로그: 시황 분석, 배치 리뷰 등 엔진의 주기적 활동 로그.
+        2. 매수거절: AI 컨펌 단계에서 매수가 거절된 종목과 구체적 사유.
+        3. 종목교체: 최대 보유 한도 도달 시 수행된 종목 간 스위칭 내역.
+        4. 매수사유: AI가 최종 매수 승인을 내린 논리적 근거.
+        5. 전략수립근거: 현재 보유 종목에 할당된 프리셋 전략과 그 선정 사유.
+
+    Controls:
+        - [1~5]: 각 탭으로 전환.
+        - [Q, ESC, SPACE]: 리포트 화면을 닫고 메인 대시보드로 복귀.
+    """
     import io
     import os
     import copy

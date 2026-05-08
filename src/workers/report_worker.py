@@ -4,14 +4,36 @@ from src.workers.base import BaseWorker
 from src.utils import align_kr
 
 class ReportWorker(BaseWorker):
+    """정기적인 포트폴리오 및 시장 현황 리포트를 전송하는 워커.
+    
+    설정된 주기(예: 30분)마다 현재 자산 현황, 수익률, 보유 종목 상세 내역, 
+    시장 장세(Vibe) 등을 요약하여 텔레그램으로 전송합니다.
+
+    Attributes:
+        strategy: 리포트 설정을 확인하기 위한 VibeStrategy 인스턴스.
+        notifier: 리포트 전송을 위한 TelegramNotifier 인스턴스.
+    """
     def __init__(self, state, strategy, notifier=None):
-        # 모니터링을 위해 'REPORT' 워커로 등록, 10초마다 체크 (실제 발송은 30분 주기)
+        """ReportWorker를 초기화합니다.
+
+        Args:
+            state (DataManager): 시스템 전역 상태 인스턴스.
+            strategy (VibeStrategy): 리포트 설정을 읽어올 전략 엔진.
+            notifier (TelegramNotifier, optional): 텔레그램 알림 전송 인스턴스.
+        """
+        # 모니터링을 위해 'REPORT' 워커로 등록, 10초마다 체크 (실제 발송은 설정된 주기 기준)
         super().__init__("REPORT", state, interval=10.0)
         self.strategy = strategy
         self.notifier = notifier
         self._first_run = True
 
     def run(self):
+        """정기 리포트 전송 로직을 수행합니다.
+        
+        1. 엔진 시작 직후 데이터 로딩이 완료되면 최초 리포트를 발송합니다.
+        2. 이후 설정된 `report_interval` 주기에 따라 정기 리포트를 발송합니다.
+        3. 장 개시 시간(09:00~15:30) 내에서만 발송하며, 중복 발송을 방지합니다.
+        """
         if not self.notifier or not self.notifier.is_active:
             self.state.update_worker_status("REPORT", result="대기", last_task="텔레그램 비활성")
             return
@@ -53,7 +75,14 @@ class ReportWorker(BaseWorker):
             pass
 
     def _send_periodic_report(self, time_str):
-        """정기 포트폴리오 상태 리포트 생성 및 전송"""
+        """정기 포트폴리오 상태 리포트 생성 및 전송.
+
+        현재 계좌의 총 자산, 당일 손익, 보유 종목별 수익률 및 시장 지수 추세를 
+        HTML 서식으로 구성하여 텔레그램으로 전송합니다.
+
+        Args:
+            time_str (str): 리포트 식별을 위한 시간 문자열 (예: "10:30", "엔진 시작").
+        """
         try:
             with self.state.lock:
                 asset = dict(self.state.asset)

@@ -6,6 +6,12 @@ from src.logger import log_error
 
 class StateManager:
     def __init__(self, strategy, state_file="trading_state.json"):
+        """StateManager를 초기화하고 백그라운드 저장 워커를 시작합니다.
+
+        Args:
+            strategy (VibeStrategy): 상태 정보를 제공할 메인 전략 엔진 인스턴스.
+            state_file (str, optional): 상태 정보를 저장할 JSON 파일명. 기본값 "trading_state.json".
+        """
         self.strategy = strategy
         self.state_file = state_file
         self._lock = threading.Lock()       # 동시 쓰기 충돌 방지

@@ -4,6 +4,7 @@ import time
 import threading
 import queue
 import re
+from typing import Optional, Any
 from datetime import datetime
 from src.utils import *
 from src.theme_engine import get_cached_themes
@@ -14,7 +15,11 @@ from src.logger import trading_log
 command_queue = queue.Queue()
 
 def command_worker():
-    """작업 큐에서 명령을 꺼내 순차적으로 실행하는 워커 스레드"""
+    """비동기 작업 큐에서 명령을 꺼내 순차적으로 실행하는 전전용 워커 스레드입니다.
+    
+    TUI 렌더링 스레드가 무거운 작업(AI 분석, 주문 대기 등)에 의해 블로킹되는 것을 
+    방지하기 위해 사용됩니다.
+    """
     while True:
         try:
             item = command_queue.get()
@@ -44,8 +49,18 @@ from src.ui.views.stock_analysis_view import draw_stock_analysis
 from src.ui.views.ai_logs_view import draw_ai_logs_report
 from src.ui.views.performance_view import draw_performance_report
 
-def get_input(dm, prompt, tw, prompt_mode=None):
-    """[Task 4] 입력 중에도 렌더링이 멈추지 않도록 콜백 연동"""
+def get_input(dm, prompt: str, tw: int, prompt_mode: Optional[str] = None) -> str:
+    """사용자로부터 터미널 입력을 받으며, 입력 도중에도 TUI 렌더링이 유지되도록 콜백을 연동합니다.
+
+    Args:
+        dm (DataManager): 시스템 상태 관리자.
+        prompt (str): 입력창에 표시할 메시지.
+        tw (int): 터미널 가로 너비.
+        prompt_mode (str, optional): 입력 모드 식별자.
+
+    Returns:
+        str: 사용자가 입력한 문자열. ESC 입력 시 빈 문자열 반환.
+    """
     dm.current_prompt_mode = prompt_mode
     def cb(p, b):
         dm.input_prompt = p
@@ -58,7 +73,16 @@ def get_input(dm, prompt, tw, prompt_mode=None):
     dm.current_prompt_mode = None
     return res
 
-def perform_interaction(key, api, strategy, dm, cycle):
+def perform_interaction(key: str, api, strategy, dm, cycle: int):
+    """사용자의 키 입력을 해석하여 대응하는 액션(매매, 조회, 설정 등)을 실행합니다.
+
+    Args:
+        key (str): 눌린 키 값.
+        api (KISAPI): API 클라이언트.
+        strategy (VibeStrategy): 전략 엔진.
+        dm (DataManager): 상태 관리자.
+        cycle (int): 현재 시스템 사이클 번호.
+    """
     try:
         import os
         import sys
@@ -439,7 +463,15 @@ def perform_interaction(key, api, strategy, dm, cycle):
         sys.stdout.write("\033[7;1H\033[K\033[8;1H\033[K"); sys.stdout.flush(); set_terminal_raw(); flush_input()
 
 def draw_mock_tester_menu(strategy, dm):
-    """모의거래 전용 자가 진단 및 테스트 제어 메뉴"""
+    """모의거래 전용 자가 진단 및 테스트 제어 메뉴를 화면에 그립니다.
+
+    가상 시간 워프, 드라이런 토글, 데이터 무결성 검증 등 개발 및 테스트용 
+    특수 기능을 제공합니다.
+
+    Args:
+        strategy (VibeStrategy): 전략 엔진.
+        dm (DataManager): 상태 관리자.
+    """
     while True:
         try:
             size = os.get_terminal_size(); tw, th = size.columns, size.lines

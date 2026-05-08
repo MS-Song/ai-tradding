@@ -11,6 +11,26 @@ from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
 
 def draw_hot_stocks_detail(strategy, dm, tw, th):
+    """실시간 인기 테마와 종목 트렌드를 분석하여 AI 리포트 화면을 렌더링합니다.
+
+    이 뷰는 현재 시장에서 가장 뜨거운 관심을 받는 테마와 종목들의 정량적 데이터(PER, 업종PER) 및 
+    AI 트렌드 분석가의 정성적 평가를 제공하여 시장의 주도주를 파악하도록 돕습니다.
+
+    Args:
+        strategy: 트레이딩 전략 객체 (AI 트렌드 분석 기능 포함).
+        dm: 데이터 매니저 객체 (실시간 인기 종목 데이터 참조용).
+        tw (int): 터미널 너비.
+        th (int): 터미널 높이.
+
+    Logic:
+        - `run_bg_analysis`: UI 프리징 없이 인기 테마 및 종목에 대한 AI 진단을 수행합니다.
+        - `데이터 캐싱`: AI 리포트는 5분간 캐싱되며, 실패 시 30초의 재시도 유예 기간을 둡니다.
+        - `입체 분석`: 종목의 개별 PER과 업종 평균 PER을 비교하여 고평가/저평가 여부를 직관적으로 보여줍니다.
+
+    Controls:
+        - [R]: 인기 테마 AI 분석 강제 갱신.
+        - [Q, ESC, SPACE]: 화면을 닫고 메인 대시보드로 복귀.
+    """
     import io
     import threading
     

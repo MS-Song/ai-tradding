@@ -12,6 +12,31 @@ from src.logger import trading_log
 from src.ui.renderer import truncate_log_line
 
 def draw_trading_logs(strategy, dm):
+    """시스템의 원시 로그와 실시간 워커 상태를 모니터링하는 통합 로그 대시보드를 렌더링합니다.
+
+    이 뷰는 거래 내역, 설정 변경 이력, 백그라운드 스레드들의 실시간 동작 상태, 
+    그리고 실제 로그 파일(error.log, trading.log)의 내용을 5개의 탭으로 시각화합니다.
+
+    Args:
+        strategy: 트레이딩 전략 객체 (엔진 상태 참조용).
+        dm: 데이터 매니저 객체 (워커 상태 및 지표 갱신 현황 참조용).
+
+    Tabs:
+        0. 주요지표: KOSPI, 환율, 비트코인 등 주요 외부 지표의 실시간 수집 성공 여부와 갱신 시점.
+        1. 시스템로그: 최근 체결된 거래 내역과 사용자에 의한 설정 변경(TP/SL 등) 히스토리.
+        2. 모니터링: 마켓, AI, 텔레그램 등 모든 백그라운드 워커의 현재 Task, 경과 시간, 마지막 결과.
+        3. 에러로그: `error.log` 파일의 최근 내용을 역순으로 읽어 런타임 오류 확인.
+        4. TRADING LOG: `trading.log` 파일의 상세 실행 기록 확인.
+
+    Logic:
+        - `워커 감시`: 각 워커의 마지막 동작 시각(ts)을 기반으로 'N초 전' 형태로 지연 여부를 표시합니다.
+        - `로그 가공`: ANSI 색상 코드를 사용하여 에러는 빨간색, 성공은 초록색 등으로 하이라이팅합니다.
+        - `동적 레이아웃`: 터미널 높이에 따라 표시되는 로그의 줄 수를 자동으로 조정합니다.
+
+    Controls:
+        - [0~4]: 각 모니터링 탭으로 전환.
+        - [Q, ESC, SPACE, ENTER]: 로그 화면을 닫고 메인 대시보드로 복귀.
+    """
     import io
     import os
     import copy

@@ -11,6 +11,22 @@ from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
 
 def draw_manual_page():
+    """시스템의 상세 사용 설명서와 핵심 로직 가이드를 보여주는 TUI 뷰를 렌더링합니다.
+
+    이 뷰는 단축키, 시장 페이즈별 전략, 매매 엔진 작동 원리, 리스크 관리 규칙 등 
+    시스템 운영에 필요한 모든 정보를 5개의 탭으로 나누어 제공합니다.
+
+    Tabs:
+        1. 단축키: 매매 조작, AI 분석, 리포트 확인 등 모든 키 명령 맵.
+        2. 페이즈&전략: 시간대별 자동 전략(P1~P4) 및 VIBE 장세별 TP/SL 보정값.
+        3. 매매엔진: 물타기(Recovery), 불타기(Pyramiding), AI 자율 매매 엔진의 상세 작동 조건.
+        4. 리스크관리: 익절/손절 쿨다운, 글로벌 패닉 차단, 자산 보호 안전장치.
+        5. 설정&텔레그램: 텔레그램 원격 명령어 리스트 및 시스템 설정 영속성 안내.
+
+    Controls:
+        - [1~5]: 각 도움말 탭으로 전환.
+        - [Q, ESC, SPACE, ENTER]: 도움말을 닫고 메인 대시보드로 복귀.
+    """
     current_tab = 1
     total_tabs = 5
     

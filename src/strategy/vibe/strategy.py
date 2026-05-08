@@ -22,8 +22,38 @@ from src.strategy.vibe.execution import ExecutionMixin
 from src.strategy.vibe.mock_tester import MockTradingTester
 
 class VibeStrategy(AnalysisMixin, ExecutionMixin):
+    """트레이딩 시스템의 심장이자 중앙 조정자 역할을 하는 메인 전략 클래스.
+    
+    `MarketAnalyzer`, `ExitManager`, `RecoveryEngine`, `VibeAlphaEngine` 등 모든 세부 엔진을 
+    통합하여 전체적인 트레이딩 프로세스를 오케스트레이션합니다. 
+    `AnalysisMixin`과 `ExecutionMixin`을 상속받아 시장 분석과 매매 실행 기능을 모두 포함합니다.
+
+    Attributes:
+        api: KIS API 인스턴스.
+        state: 실시간 데이터를 관리하는 DataManager 인스턴스.
+        analyzer: 시장 장세(Vibe) 분석기.
+        exit_mgr: 익절/손절 임계치 관리자.
+        recovery_eng: 물타기(하락 대응) 엔진.
+        pyramid_eng: 불타기(상승 추종) 엔진.
+        alpha_eng: 퀀트 기반 AI 추천 엔진.
+        ai_advisor: LLM 기반의 최종 의사결정 자문가.
+        state_mgr: 영속적 상태 저장 관리자.
+        risk_mgr: 리스크 관리 및 서킷 브레이커 엔진.
+    """
     def get_max_stock_count(self, total_asset: float = 0) -> int:
-        """현재 장세(Vibe)와 사용자 설정에 따른 최대 보유 종목 수 반환"""
+        """현재 장세(Vibe)와 총 자산 규모에 따른 최대 보유 종목 수를 계산합니다.
+
+        [동적 제한 원칙]
+        1. AI 자동화(Y) 모드: 자산 규모별 포트폴리오 최적화 (1천만 미만: 3, 3천만 미만: 5, 그 이상: 8).
+        2. 하락장(BEAR): 리스크 분산을 위해 최대 3종목으로 제한.
+        3. 방어모드(DEFENSIVE): 극도의 리스크 회피를 위해 최대 1종목으로 제한.
+
+        Args:
+            total_asset (float): 현재 총 평가 자산 (원 단위).
+
+        Returns:
+            int: 허용되는 최대 보유 종목 수.
+        """
         cfg = getattr(self, "max_stock_count_config", "8").upper()
         
         # 1. 베이스라인(천장) 결정

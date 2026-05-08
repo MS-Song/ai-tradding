@@ -15,6 +15,19 @@ from src.utils.notifier import TelegramNotifier
 from src.logger import log_error, cleanup_text_log, trading_log, logger
 
 class DataManager:
+    """시스템의 데이터 관리 및 워커(Worker) 오케스트레이션을 담당하는 중앙 허브 클래스.
+
+    모든 백그라운드 워커(Market, Data, Trade, Report, Retro)를 초기화 및 관리하며,
+    시스템의 전역 상태(TradingState)를 유지합니다. 또한 텔레그램 알림 및 
+    명령 수신 엔진과 UI 사이의 중개자 역할을 수행합니다.
+
+    Attributes:
+        api: KIS 및 Naver 통합 API 클라이언트.
+        strategy: 매매 전략 엔진 (Vibe-Strategy).
+        state (TradingState): 시스템의 전역 상태 관리 객체.
+        notifier (TelegramNotifier): 텔레그램 알림 발송 엔진.
+        workers (dict): 기능별 백그라운드 워커 인스턴스 맵.
+    """
     def __init__(self, api, strategy):
         self.api = api
         self.strategy = strategy
@@ -57,12 +70,16 @@ class DataManager:
 
     # --- 하위 호환성을 위한 프로퍼티 매핑 ---
     @property
-    def is_running(self): return self.state.is_running
+    def is_running(self): 
+        """시스템 가동 여부."""
+        return self.state.is_running
     @is_running.setter
     def is_running(self, val): self.state.is_running = val
     
     @property
-    def status_msg(self): return self.state.status_msg
+    def status_msg(self): 
+        """하단 상태바 메시지."""
+        return self.state.status_msg
     @status_msg.setter
     def status_msg(self, val): self.state.status_msg = val
     
@@ -72,7 +89,9 @@ class DataManager:
     def status_time(self, val): self.state.status_time = val
     
     @property
-    def trading_logs(self): return self.state.trading_logs
+    def trading_logs(self): 
+        """TUI 표시용 실시간 매매 로그 리스트."""
+        return self.state.trading_logs
     
     @property
     def cached_holdings(self): return self.state.holdings
@@ -105,9 +124,13 @@ class DataManager:
     @property
     def cached_holdings_fetched(self): return self.state.holdings_fetched
     @property
-    def is_kr_market_active(self): return self.state.is_kr_market_active
+    def is_kr_market_active(self): 
+        """한국 증시 개장 여부."""
+        return self.state.is_kr_market_active
     @property
-    def is_input_active(self): return self.state.is_input_active
+    def is_input_active(self): 
+        """TUI 입력 모드 활성화 여부."""
+        return self.state.is_input_active
     @is_input_active.setter
     def is_input_active(self, val): self.state.is_input_active = val
     @property
@@ -127,13 +150,17 @@ class DataManager:
     @property
     def global_busy_msg(self): return self.state.get_global_busy_msg()
     @property
-    def vibe(self): return self.state.vibe
+    def vibe(self): 
+        """현재 시장 VIBE (Bull, Bear, Neutral, Defensive)."""
+        return self.state.vibe
     @property
     def is_panic(self): return self.state.is_panic
     @property
     def dema_info(self): return self.state.dema_info
     @property
-    def asset_info(self): return self.state.asset
+    def asset_info(self): 
+        """계좌 자산 정보 (총자산, 예수금, 수익률 등)."""
+        return self.state.asset
     @property
     def update_time(self): return self.state.last_update_time
     @property
@@ -160,7 +187,9 @@ class DataManager:
     def current_prompt_mode(self, val): self.state.current_prompt_mode = val
     
     @property
-    def is_trading_paused(self): return self.state.is_trading_paused
+    def is_trading_paused(self): 
+        """매매 일시 정지 여부."""
+        return self.state.is_trading_paused
     @property
     def market_info_status(self):
         res = self.state.worker_results.get("INDEX")
@@ -191,16 +220,19 @@ class DataManager:
 
     # --- 필수 메서드 구현 (UI/Interaction 호출용) ---
     def set_busy(self, msg, worker="GLOBAL", friendly_name=None):
+        """특정 워커의 상태를 '작업 중(Busy)'으로 설정합니다."""
         self.state.update_worker_status(worker, status=msg, friendly_name=friendly_name)
 
     def clear_busy(self, worker="GLOBAL"):
+        """워커의 '작업 중' 상태를 해제합니다."""
         self.state.clear_worker_status(worker)
 
     def update_worker_status(self, worker, result=None, last_task=None, friendly_name=None):
+        """워커의 최근 작업 결과 및 정보를 갱신합니다."""
         self.state.update_worker_status(worker, result=result, last_task=last_task, friendly_name=friendly_name)
 
     def update_indicator(self, name: str, status: str, value: str, remark: str):
-        """주요 지표 갱신 상태를 업데이트하고, 실패 시 텔레그램 알림을 발송합니다."""
+        """주요 지표(API, 네트워크 등)의 상태를 업데이트하고 실패 시 알림을 보냅니다."""
         with self.state.lock:
             self.state.indicator_updates[name] = {
                 "time": time.time(),
@@ -217,37 +249,42 @@ class DataManager:
                 log_error(f"Telegram notification error in update_indicator: {e}")
 
     def is_busy(self):
+        """현재 가동 중인 백그라운드 작업이 있는지 확인합니다."""
         return self.state.is_worker_busy()
 
     def is_blocking_busy(self):
+        """매매를 차단해야 하는 중요한 작업(GLOBAL)이 진행 중인지 확인합니다."""
         # GLOBAL 작업 중이면 매매 차단
         return self.state.is_worker_busy("GLOBAL")
 
     def show_status(self, msg, is_error=False):
+        """하단 상태바에 메시지를 출력합니다."""
         self.state.set_status(msg, is_error)
 
     def add_log(self, msg):
+        """TUI 하단에 일회성 로그를 출력합니다."""
         with self.state.lock:
             self.state.last_log_msg = f"\033[96m[LOG] {msg}\033[0m"
             self.state.last_log_time = time.time()
 
     def add_trading_log(self, msg):
+        """영구 매매 로그 파일 및 TUI 실시간 로그 창에 메시지를 추가합니다."""
         self.state.add_trading_log(msg)
         trading_log.log_config(msg)
 
     def start_workers(self, is_virtual: bool):
-        """메인 루프에서 호출하여 백그라운드 스레드 가동"""
+        """모든 백그라운드 워커 스레드를 가동합니다."""
         for worker in self.workers.values():
             worker.start()
         
-        # 로그 정리 및 테마 수집은 별도 스레드로 유지 (추후 별도 워커화 가능)
+        # 로그 정리 및 테마 수집은 별도 스레드로 유지
         threading.Thread(target=self._maintenance_loop, daemon=True).start()
         
         # [Auto-Update] 시작 시 즉시 1회 버전 체크 (비동기)
         threading.Thread(target=self._check_update_once, daemon=True).start()
 
     def _maintenance_loop(self):
-        """로그 정리 및 주기적 관리 작업"""
+        """주기적인 시스템 관리(로그 정리, 버전 체크)를 수행하는 루프."""
         _last_update_check = 0  # 마지막 버전 체크 시각
         while self.state.is_running:
             try:
@@ -272,12 +309,12 @@ class DataManager:
             time.sleep(3600) # 1시간 주기
 
     def _check_update_once(self):
-        """시작 직후 즉시 1회 GitHub 버전 체크 (비동기 호출용)"""
+        """시스템 시작 직후 비동기로 1회 업데이트를 체크합니다."""
         time.sleep(5)  # 시스템 안정화 후 체크
         self._run_update_check()
 
     def _run_update_check(self):
-        """GitHub 릴리스 API로 버전 체크 후 state.update_info 갱신"""
+        """GitHub 릴리스를 확인하여 신규 버전 존재 시 정보를 갱신합니다."""
         try:
             from src.updater import check_for_updates, is_running_as_executable
             from src.ui.renderer import VERSION_CACHE
@@ -289,7 +326,7 @@ class DataManager:
             
             if result.get("has_update"):
                 is_exe = is_running_as_executable()
-                # 자동 업데이트 설정값 읽기 (strategy.config 또는 .env 직접)
+                # 자동 업데이트 설정값 읽기
                 auto_update_enabled = False
                 try:
                     cfg = self.strategy.config.get("vibe_strategy", {})
@@ -317,7 +354,7 @@ class DataManager:
             log_error(f"Update Check Error: {e}")
 
     def _apply_auto_update(self, result: dict):
-        """실행파일 모드에서만 호출: 다운로드 → 적용 → 재기동"""
+        """새 버전을 다운로드하고 시스템을 재기동하여 업데이트를 적용합니다."""
         try:
             from src.updater import download_update, apply_update_and_restart
             import platform
@@ -357,7 +394,7 @@ class DataManager:
             self.clear_busy("UPDATE")
 
     def _build_system_msg(self, headline: str) -> str:
-        """실행 시스템 정보를 포함한 알림 메시지를 생성합니다."""
+        """시스템 사양 및 실행 환경 정보를 포함한 알림 메시지를 생성합니다."""
         import socket, platform, sys, os
         from src.updater import is_running_as_executable
         from src.ui.renderer import VERSION_CACHE
@@ -398,6 +435,7 @@ class DataManager:
         return "\n".join(lines)
 
     def shutdown(self, reason="사용자 종료"):
+        """시스템 종료 절차를 수행하고 모든 워커와 알림 엔진을 정지합니다."""
         self.notifier.notify_alert("시스템 종료", self._build_system_msg(f"🛑 트레이딩 엔진이 종료되었습니다.\n📌 사유: {reason}"))
         self.state.is_running = False
         for worker in self.workers.values():
@@ -414,6 +452,7 @@ class DataManager:
 
     # --- 긴급 제어 메서드 (Telegram Inbound) ---
     def toggle_trading_pause(self, pause: bool):
+        """매매 일시 정지 상태를 토글합니다."""
         with self.state.lock:
             self.state.is_trading_paused = pause
         if pause:
@@ -426,6 +465,7 @@ class DataManager:
             self.add_trading_log("▶️ [TELEGRAM] 매매 정상 재개")
 
     def execute_emergency_panic(self):
+        """긴급 패닉 모드를 발동하여 전 종목 청산을 시도합니다."""
         with self.state.lock:
             self.state.manual_panic = True
             self.state.is_panic = True
@@ -435,6 +475,7 @@ class DataManager:
         self.add_trading_log("🚨 [긴급] 텔레그램 패닉 명령 수신 - 전 종목 청산 시도")
 
     def force_defensive_mode(self):
+        """강제로 방어모드(Defensive VIBE)로 전환합니다."""
         with self.state.lock:
             self.state.force_vibe = "Defensive"
             self.state.vibe = "Defensive"
@@ -443,6 +484,7 @@ class DataManager:
         self.add_trading_log("🛡️ [TELEGRAM] 강제 방어모드(Defensive) 전환")
         
     def reset_emergency_state(self):
+        """모든 긴급 상태(패닉, 정지, 강제 VIBE)를 해제하고 정상화합니다."""
         with self.state.lock:
             self.state.manual_panic = False
             self.state.is_panic = False
@@ -453,7 +495,17 @@ class DataManager:
         self.add_trading_log("🔄 [TELEGRAM] 모든 긴급 제어 해제 (정상 운용 복귀)")
 
     def execute_manual_trade(self, action: str, code: str, qty: int, price: Optional[float] = None) -> Tuple[bool, str]:
-        # action: "BUY" or "SELL"
+        """텔레그램 명령 또는 UI를 통한 수동 주문을 실행합니다.
+
+        Args:
+            action (str): 'BUY' 또는 'SELL'.
+            code (str): 종목 코드.
+            qty (int): 주문 수량.
+            price (float, optional): 지정가 (None일 경우 시장가).
+
+        Returns:
+            Tuple[bool, str]: (성공 여부, 결과 메시지).
+        """
         is_buy = action.upper() == "BUY"
         action_kr = "매수" if is_buy else "매도"
         
@@ -522,14 +574,14 @@ class DataManager:
             return False, msg
 
     def trigger_ai_diagnosis(self):
-        """AI 진단(시황 및 추천)을 즉시 실행하도록 워커에게 요청"""
+        """AI 진단(시황 및 추천)을 즉시 실행하도록 워커에게 요청합니다."""
         with self.state.lock:
             self.state.force_ai_diagnosis = True
         self.add_log("🧠 [TELEGRAM] AI 즉시 진단 요청됨")
         return "🧠 <b>AI 즉시 진단을 시작합니다...</b>\n(약 10~20초 소요될 수 있습니다)"
 
     def get_recent_logs(self, count=10) -> str:
-        """최신 트레이딩 로그를 가져옴"""
+        """최신 트레이딩 로그의 요약 내용을 가져옵니다."""
         try:
             if not os.path.exists("trading.log"):
                 return "📂 트레이딩 로그 파일이 없습니다."
@@ -559,7 +611,7 @@ class DataManager:
             return f"❌ 로그 읽기 오류: {e}"
 
     def get_recent_errors(self, count=10) -> str:
-        """최신 에러 로그를 가져옴"""
+        """최근 발생한 에러 로그 요약을 가져옵니다."""
         try:
             if not os.path.exists("error.log"):
                 return "📂 에러 로그 파일이 없습니다."
@@ -587,7 +639,7 @@ class DataManager:
 
     # --- 호환성용 더미/대행 메서드 ---
     def update_all_data(self, is_virtual, force=False, lite=False):
-        """수동 매매 등으로 인해 즉시 데이터 갱신이 필요할 때 호출"""
+        """수동 매매 등으로 인해 즉시 데이터 갱신이 필요할 때 호출합니다."""
         if force:
             worker = self.workers.get("DATA")
             if worker and hasattr(worker, "force_sync"):
@@ -595,6 +647,6 @@ class DataManager:
                 self.show_status("잔고 동기화 요청됨...")
 
     def notify_latest_trades(self):
-        """TradeWorker에서 호출하거나 여기서 별도 처리"""
+        """최신 체결 내역을 알림 엔진에 전달합니다."""
         # TelegramNotifier가 이미 dm(self)을 가지고 있으므로 내부에서 처리 가능
         pass

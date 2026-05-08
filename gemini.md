@@ -6,7 +6,9 @@
 * **Architecture**: `ExitManager`, `MarketAnalyzer`, `RecoveryEngine`, `PyramidingEngine`, `VibeAlphaEngine`, `PresetStrategyEngine`, `RetrospectiveEngine` 7대 모듈 중심.
 * **Response Policy**: 모든 답변과 설명은 반드시 **한국어**로 작성함.
 * **Documentation Policy**: 
-    *   모든 주요 기능 변경 및 추가 시 `gemini.md`, `LOGIC_TREE.md`, `TEST_SCENARIOS.md` 및 관련 **테스트 코드**와 설계서(`specs/`)를 통합 최신화하여 시스템 정합성을 유지함.
+    *   모든 주요 기능 변경 및 추가 시 `gemini.md`, `LOGIC_TREE.md`, `TEST_SCENARIOS.md`, `PROGRAM_SPECIFICATIONS.md` 및 관련 **테스트 코드**와 설계서(`specs/`)를 통합 최신화하여 시스템 정합성을 유지함.
+    *   **[필수] 파일 목록 동기화**: `src/` 내 파일이 추가, 삭제 또는 이동될 경우 반드시 아래 명령어를 통해 `PROGRAM_SPECIFICATIONS.md`를 최신화함.
+        *   `Get-ChildItem -Path src -Filter *.py -Recurse | Resolve-Path -Relative`
     *   사용자 인터페이스(UI) 및 단축키 변경 사항은 반드시 `USER_MANUAL.md`에 즉시 반영함.
 
 ---

@@ -4,13 +4,36 @@ from src.workers.base import BaseWorker
 from src.logger import log_error
 
 class RetrospectiveWorker(BaseWorker):
+    """장 마감 후 당일 매매 내역을 분석하고 복기 리포트를 생성하는 워커.
+    
+    평일 16:00부터 22:00까지 30분 주기로 동작하며, 당일의 수익/손실 TOP 3 종목을 
+    AI가 분석하여 매매 적절성과 교훈을 도출합니다. 데이터 보충을 위해 종가 정보를 
+    지속적으로 업데이트하며 최대 3회까지 분석을 고도화합니다.
+
+    Attributes:
+        strategy: 복기 로직을 실행하기 위한 VibeStrategy 인스턴스.
+        notifier: 복기 리포트 전송을 위한 TelegramNotifier 인스턴스.
+    """
     def __init__(self, state, strategy, notifier=None):
+        """RetrospectiveWorker를 초기화합니다.
+
+        Args:
+            state (DataManager): 시스템 전역 상태 인스턴스.
+            strategy (VibeStrategy): 복기 로직을 수행할 전략 엔진.
+            notifier (TelegramNotifier, optional): 복기 리포트 전송 인스턴스.
+        """
         # 30분 단위로 체크하지만 1분 간격으로 루프 돌며 시간 체크
         super().__init__("RETRO", state, interval=60.0)
         self.strategy = strategy
         self.notifier = notifier
 
     def run(self):
+        """복기 리포트 생성 및 업데이트 루틴을 수행합니다.
+        
+        1. 작동 시간(16:00~22:00) 및 주말 여부를 확인합니다.
+        2. 30분 단위 정기 시점 또는 16:00 리포트 누락 시 분석을 트리거합니다.
+        3. `RetrospectiveEngine`을 통해 AI 복기 분석을 수행하고 텔레그램으로 전송합니다.
+        """
         now = datetime.now()
         curr_time_str = now.strftime('%H:%M')
         today_str = now.strftime('%Y-%m-%d')
@@ -62,6 +85,12 @@ class RetrospectiveWorker(BaseWorker):
             self.state.update_worker_status("RETRO", result="대기", last_task="발송 주기 대기 중", friendly_name="RETRO_ENG")
 
     def _send_notification(self, report, mode):
+        """생성된 복기 리포트를 텔레그램으로 전송합니다.
+
+        Args:
+            report (dict): 분석 결과 데이터 (수익/손실 리스트, AI 총평 등).
+            mode (str): 리포트 상태 설명 ("생성" 또는 "업데이트").
+        """
         if not self.notifier or not self.notifier.is_active:
             return
             

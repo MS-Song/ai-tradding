@@ -4,10 +4,22 @@ import io
 import os
 import json
 import threading
+from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
 
 # --- 1. 기본 로깅 설정 ---
 def setup_logger(name="VibeTrader"):
+    """시스템 전역 로거를 설정하고 반환합니다.
+    
+    일반 정보(INFO)는 `trading.log`에, 에러 정보(ERROR)는 파일명과 라인 번호를 포함하여 
+    `error.log`에 분리하여 기록합니다. 윈도우 환경에서의 한글 인코딩 문제를 해결합니다.
+
+    Args:
+        name (str): 로거의 이름.
+
+    Returns:
+        logging.Logger: 설정된 로거 인스턴스.
+    """
     # 윈도우 터미널(win32) 한글 깨짐 방지
     if sys.platform == "win32":
         try:
@@ -35,7 +47,6 @@ def setup_logger(name="VibeTrader"):
     # 1. 거래 및 일반 로그 (ONLY INFO)
     trade_handler = logging.FileHandler("trading.log", encoding="utf-8", delay=True)
     trade_handler.setLevel(logging.INFO)
-    # INFO 레벨만 허용하고 그 이상의 레벨(WARNING, ERROR)은 거르는 필터 추가
     class InfoOnlyFilter(logging.Filter):
         def filter(self, record):
             return record.levelno == logging.INFO
@@ -55,6 +66,11 @@ def setup_logger(name="VibeTrader"):
         
 # 3. 텔레그램 발송 로그 (별도 관리)
 def setup_telegram_logger():
+    """텔레그램 발송 내역만을 전문적으로 기록하는 로거를 설정합니다.
+
+    Returns:
+        logging.Logger: 텔레그램 전용 로거 인스턴스.
+    """
     logger = logging.getLogger("TelegramLog")
     logger.setLevel(logging.INFO)
     if not logger.handlers:
@@ -68,24 +84,49 @@ telegram_logger = setup_telegram_logger()
 
 # --- 2. 구조화된 JSON 로그 관리 (Spec: Group 2 반영) ---
 class TradingLogManager:
+    """트레이딩 과정에서 발생하는 모든 데이터를 구조화된 JSON으로 관리하는 매니저.
+    
+    체결 내역(TRADE), 전략 변경(CONFIG), AI 거절 사유(REJECTION), AI 활동 로그 등을 
+    메모리에 보유하고 주기적으로 파일에 영속 저장합니다. TUI와 텔레그램 알림 엔진의 
+    데이터 소스 역할을 하며, 일일 손익 및 모델별 성과 분석 기능을 제공합니다.
+
+    Attributes:
+        log_file (str): 로그 데이터가 저장될 JSON 파일 경로.
+        data (dict): 메모리 내 로그 데이터 저장소.
+        lock (threading.Lock): 스레드 안전성 보장을 위한 락.
+    """
     def __init__(self, log_file="trading_logs.json"):
+        """TradingLogManager를 초기화하고 기존 로그를 로드합니다.
+
+        Args:
+            log_file (str, optional): 로그를 저장할 JSON 파일 경로. 기본값 "trading_logs.json".
+        """
         self.log_file = log_file
         self.data = {"trades": [], "configs": [], "rejections": [], "buy_reasons": [], "ai_activities": []}
         self.lock = threading.Lock()
-        self.notifier = None  # [추가] 텔레그램 알림 엔진 연동
-        self.state = None     # [추가] TUI 실시간 로그 연동용 state
-        self.last_tui_msg = "" # [통합] 최근 생성된 TUI용 메시지
+        self.notifier = None  # 텔레그램 알림 엔진 연동
+        self.state = None     # TUI 실시간 로그 연동용 state
+        self.last_tui_msg = "" # 최근 생성된 TUI용 메시지
         self._load()
 
     def set_notifier(self, notifier):
-        """[추가] 알림 엔진 연동을 위한 세터"""
+        """매매 알림 발송을 위해 텔레그램 알림 엔진을 연동합니다.
+
+        Args:
+            notifier (TelegramNotifier): 알림 엔진 인스턴스.
+        """
         self.notifier = notifier
 
     def set_state(self, state):
-        """[통합] TradingState 주입 (TUI 실시간 로그 자동 반영용)"""
+        """TUI 화면에 실시간 로그를 출력하기 위해 시스템 상태 관리자를 연동합니다.
+
+        Args:
+            state (DataManager): 시스템 전역 상태 관리자.
+        """
         self.state = state
 
     def _load(self):
+        """파일로부터 기존 로그 데이터를 로드합니다."""
         with self.lock:
             if os.path.exists(self.log_file):
                 try:
@@ -98,8 +139,11 @@ class TradingLogManager:
                     self.data = {"trades": [], "configs": [], "rejections": [], "buy_reasons": [], "ai_activities": []}
 
     def _save(self):
-        """원자적 쓰기: tmp파일 기록 후 os.replace()로 교체 → 부분 쓰기 방지.
-        메인 스레드 프리징을 방지하기 위해 데이터를 복사하여 별도 스레드에서 저장."""
+        """로그 데이터를 원자적으로(Atomic) 파일에 저장합니다.
+        
+        메인 스레드 지연을 방지하기 위해 데이터를 딥카피하여 별도 데몬 스레드에서 
+        임시 파일 생성 후 교체(replace) 방식으로 기록합니다.
+        """
         import copy
         with self.lock:
             data_to_save = copy.deepcopy(self.data)
@@ -129,7 +173,19 @@ class TradingLogManager:
         threading.Thread(target=_do, args=(data_to_save,), daemon=True, name="LogSaveWorker").start()
 
     def log_trade(self, trade_type, code, name, price, qty, memo="", profit=0.0, model_id="", ma_20=0.0):
-        """실제 체결 데이터를 기록 (TRADE). 매도 시 profit(수익금) 포함 가능"""
+        """실제 체결 데이터를 기록하고 텔레그램/TUI에 실시간 전파합니다.
+
+        Args:
+            trade_type (str): 매수, 매도, 익절, 손절 등 매매 유형.
+            code (str): 종목 코드.
+            name (str): 종목 명칭.
+            price (float): 체결 단가.
+            qty (int): 체결 수량.
+            memo (str): 매매 근거 또는 참고 사항.
+            profit (float): 매도 시 발생한 확정 수익금.
+            model_id (str): 해당 매매를 결정한 AI 모델 ID 또는 로직명.
+            ma_20 (float): 매매 시점의 분봉 20MA 값.
+        """
         try:
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
@@ -187,7 +243,17 @@ class TradingLogManager:
             log_error(f"log_trade 기록 중 치명적 오류: {e}")
 
     def _build_tui_message(self, trade_type: str, name: str, qty: int, profit: float = 0.0) -> str:
-        """[통합] 거래 데이터를 TUI용 한 줄 요약 메시지로 변환"""
+        """거래 데이터를 TUI 대시보드 하단 로그 영역에 표시할 한 줄 요약 메시지로 변환합니다.
+
+        Args:
+            trade_type (str): 매매 유형.
+            name (str): 종목명.
+            qty (int): 수량.
+            profit (float, optional): 수익금.
+
+        Returns:
+            str: 아이콘과 색상이 포함된 요약 메시지.
+        """
         p_str = f" ({int(profit):+,}원)" if profit != 0 else ""
         
         # 타입별 아이콘 및 문구 매핑
@@ -206,8 +272,15 @@ class TradingLogManager:
         return f"{trade_type}: {name} {qty}주{p_str}"
         
 
-    def log_config(self, content):
-        """환경 설정 및 전략 변경을 기록 (CONFIG)"""
+    def log_config(self, content: str):
+        """환경 설정 및 전략 변경 내역을 기록합니다.
+
+        시스템의 핵심 파라미터(TP/SL, AI 모드 등)가 변경되었을 때의 시점과 
+        변경 내용을 JSON 및 텍스트 로그에 보관합니다.
+
+        Args:
+            content (str): 변경된 설정의 상세 내용.
+        """
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {"time": now, "content": content}
         with self.lock:
@@ -215,8 +288,18 @@ class TradingLogManager:
         self._save()
         logger.info(f"[CONFIG] {content}", stacklevel=2)
 
-    def log_rejection(self, code, name, reason, model_id=""):
-        """AI 매수 거절 내역을 기록 (REJECTION)"""
+    def log_rejection(self, code: str, name: str, reason: str, model_id: str = ""):
+        """AI가 매수 검토 후 진입을 거절한 구체적 사유를 기록합니다.
+
+        분석된 종목이 AI 컨펌 단계에서 승인되지 않았을 때, 나중에 사용자가 
+        사유를 복기할 수 있도록 관련 정보를 저장합니다.
+
+        Args:
+            code (str): 종목 코드.
+            name (str): 종목명.
+            reason (str): 거절 사유 (예: '고점 돌파 실패', '데이터 오류').
+            model_id (str, optional): 판단을 내린 모델 ID.
+        """
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {
             "time": now,
@@ -233,8 +316,18 @@ class TradingLogManager:
         self._save()
         logger.info(f"[REJECT] {name}({code}) | 사유: {reason} | 모델: {model_id}", stacklevel=2)
 
-    def log_buy_reason(self, code, name, reason, model_id=""):
-        """AI 매수 승인 사유를 기록 (BUY_REASON)"""
+    def log_buy_reason(self, code: str, name: str, reason: str, model_id: str = ""):
+        """AI가 매수를 최종 승인한 논리적 근거를 기록합니다.
+
+        진입 시점의 시장 상황과 AI가 해당 종목을 선택한 핵심 이유를 보관하여 
+        사후 성과 분석의 기초 데이터로 활용합니다.
+
+        Args:
+            code (str): 종목 코드.
+            name (str): 종목명.
+            reason (str): 승인 근거 및 전략 설명.
+            model_id (str, optional): 판단을 내린 모델 ID.
+        """
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {
             "time": now,
@@ -250,8 +343,17 @@ class TradingLogManager:
         self._save()
         logger.info(f"[BUY_REASON] {name}({code}) | 사유: {reason} | 모델: {model_id}", stacklevel=2)
 
-    def log_ai_activity(self, category, content, result, remarks=""):
-        """AI의 주기적 활동(시황분석, 매수검토 등)을 기록 (AI_ACTIVITY)"""
+    def log_ai_activity(self, category: str, content: str, result: str, remarks: str = ""):
+        """AI의 주기적 활동(시황 분석, 배치 리뷰 등) 내역을 기록합니다.
+        
+        TUI의 'AI 로그' 탭에서 표시될 엔진의 사고 과정을 시간순으로 저장합니다.
+
+        Args:
+            category (str): 활동 범주 (예: '시황분석', '배치리뷰').
+            content (str): 구체적인 활동 내용 설명.
+            result (str): 실행 결과 (SUCCESS, REJECTED 등).
+            remarks (str, optional): 결과에 대한 추가 설명 또는 비고.
+        """
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {
             "time": now,
@@ -270,8 +372,15 @@ class TradingLogManager:
         # [Architect] AI 활동 로그는 별도 UI(A키)가 있으므로 메인 로그(L키) 노이즈 방지를 위해 DEBUG로 기록
         logger.debug(f"[AI_ACT] {category} | {content} | {result} | {remarks}", stacklevel=2)
 
-    def cleanup(self, days_to_keep=2):
-        """영업일 기준 n일 로그만 남기고 삭제"""
+    def cleanup(self, days_to_keep: int = 2) -> bool:
+        """지정된 영업일 이전의 오래된 로그 데이터를 삭제하여 저장소를 최적화합니다.
+
+        Args:
+            days_to_keep (int, optional): 보관할 영업일 수. 기본값 2일.
+
+        Returns:
+            bool: 실제 데이터 삭제가 발생했으면 True, 아니면 False.
+        """
         from src.utils import get_business_days_ago
         threshold_date = get_business_days_ago(days_to_keep).strftime('%Y-%m-%d')
         
@@ -292,8 +401,12 @@ class TradingLogManager:
         self._save()
         return True
 
-    def get_daily_profit(self):
-        """금일 발생한 TRADE 로그 중 profit을 모두 합산 (요구사항 9)"""
+    def get_daily_profit(self) -> int:
+        """금일 발생한 확정(실현) 수익금의 총 합계를 계산하여 반환합니다.
+
+        Returns:
+            int: 오늘 정산된 총 수익금 (원 단위).
+        """
         today = datetime.now().strftime('%Y-%m-%d')
         total_profit = 0.0
         with self.lock:
@@ -302,8 +415,12 @@ class TradingLogManager:
                     total_profit += t.get("profit", 0.0)
         return int(total_profit)
 
-    def get_daily_amounts(self):
-        """금일 발생한 BEAR, BULL, ALGO 트레이딩의 누적 집행 금액 합산 (요구사항 9)"""
+    def get_daily_amounts(self) -> Dict[str, float]:
+        """금일 매매 유형별(물타기, 불타기, AI자율) 누적 집행 금액을 합산하여 반환합니다.
+
+        Returns:
+            Dict[str, float]: {'BEAR': 물타기총액, 'BULL': 불타기총액, 'ALGO': AI자율총액} 형태의 맵.
+        """
         today = datetime.now().strftime('%Y-%m-%d')
         amounts = {"BEAR": 0, "BULL": 0, "ALGO": 0}
         with self.lock:
@@ -320,7 +437,7 @@ class TradingLogManager:
         return amounts
 
     def get_daily_trading_fees(self, fee_rate=0.00015, tax_rate=0.0018):
-        """금일 발생한 거래에 대한 예상 수수료 및 세금 합산"""
+        """금일 거래 내역을 바탕으로 예상 수수료 및 제세금을 합산합니다."""
         today = datetime.now().strftime('%Y-%m-%d')
         total_fees = 0.0
         with self.lock:
@@ -336,8 +453,15 @@ class TradingLogManager:
                         total_fees += amt * (fee_rate + tax_rate)
         return int(total_fees)
 
-    def get_top_profitable_stocks(self, limit=10):
-        """누적 수익금이 0원 초과인 상위 종목 집계 (모델별 상세 포함)"""
+    def get_top_profitable_stocks(self, limit: int = 10) -> List[Tuple]:
+        """누적 수익금이 높은 상위 종목 리스트를 반환합니다.
+
+        Args:
+            limit (int, optional): 반환할 상위 종목 개수. 기본값 10.
+
+        Returns:
+            List[Tuple]: (종목코드, 통계데이터) 리스트. 수익금이 0보다 큰 종목만 포함됩니다.
+        """
         stock_stats = {}
         with self.lock:
             for t in self.data.get("trades", []):
@@ -372,7 +496,7 @@ class TradingLogManager:
         return profitable[:limit]
 
     def get_top_loss_stocks(self, limit=10):
-        """누적 손실금이 발생한 상위 종목 집계 (모델별 상세 포함)"""
+        """누적 손실금이 큰 하위 종목 리스트를 반환합니다."""
         stock_stats = {}
         with self.lock:
             for t in self.data.get("trades", []):
@@ -407,7 +531,7 @@ class TradingLogManager:
         return losses[:limit]
 
     def _normalize_model_name(self, m_id: str, t_type: str = "") -> str:
-        """모델 코드를 사람이 읽기 쉬운 약어로 정규화. 모델 정보가 없으면 타입을 통해 추론 시도."""
+        """모델 코드를 사람이 읽기 쉬운 약어(G3.1P, G3.1FL 등)로 정규화합니다."""
         if not m_id:
             # 과거 로그 호환: 타입을 보고 수동/TL/SP 추론
             t_low = t_type.lower()
@@ -427,8 +551,12 @@ class TradingLogManager:
         if "gemini-2.1-flash-lite" in m_id_low: return "G2.1FL"
         return m_id[:8].upper()
 
-    def get_model_performance(self):
-        """모델별 승률 및 수익금 집계 ([Phase 4])"""
+    def get_model_performance(self) -> Dict[str, Dict]:
+        """AI 모델별 승률, 수익금, 매수 횟수 등 성과 지표를 집계하여 반환합니다.
+
+        Returns:
+            Dict[str, Dict]: 모델명을 키로 하고 승수, 수익금, 매수횟수 등을 포함하는 통계 맵.
+        """
         model_stats = {}
         with self.lock:
             for t in self.data.get("trades", []):
@@ -453,15 +581,18 @@ class TradingLogManager:
 trading_log = TradingLogManager()
 
 def log_trade(msg):
-    """구버전 호환용 (텍스트 로그만 남김)"""
+    """구버전 호환용 텍스트 로깅 함수입니다."""
     logger.info(f"[TRADE] {msg}", stacklevel=2)
 
 def log_error(msg):
-    """에러 관련 명시적 로그 (stacklevel=2 적용)"""
+    """에러 발생 시 명시적으로 호출하는 로깅 함수입니다."""
     logger.error(msg, stacklevel=2)
 
 def cleanup_text_log(file_path, days_to_keep=2):
-    """텍스트 로그 파일을 영업일 기준 n일치만 남기고 정리 (윈도우 파일 잠금 대응)"""
+    """텍스트 로그 파일(.log)을 영업일 기준으로 정리합니다. 
+    
+    윈도우의 파일 잠금 문제를 해결하기 위해 활성 핸들러를 일시적으로 닫고 교체합니다.
+    """
     from src.utils import get_business_days_ago
     import uuid
     import logging

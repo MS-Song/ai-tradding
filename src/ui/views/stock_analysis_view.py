@@ -11,6 +11,26 @@ from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
 
 def draw_stock_analysis(strategy, dm, code, tw, th):
+    """특정 종목에 대한 AI 심층 분석 리포트 화면을 렌더링합니다.
+
+    사용자가 입력한 종목 코드 또는 순번을 바탕으로 실시간 시세, 재무 지표(PER/PBR), 
+    최신 뉴스, 그리고 분봉 차트를 수집하여 AI의 종합적인 투자 의견을 제시합니다.
+
+    Args:
+        strategy: 트레이딩 전략 객체 (AI 심층 분석 로직 포함).
+        dm: 데이터 매니저 객체 (UI 상태 및 워커 제어용).
+        code (str): 분석할 종목의 6자리 코드.
+        tw (int): 터미널 너비.
+        th (int): 터미널 높이.
+
+    Logic:
+        - `run_bg_analysis`: 별도 스레드에서 종목 상세 데이터, 뉴스, 차트 데이터를 수집한 후 AI 리포트를 생성합니다.
+        - `입체 분석`: 단순 가격뿐만 아니라 펀더멘털 지표와 최신 뉴스 모멘텀을 결합하여 분석합니다.
+        - `기술적 분석`: `ChartRenderer`를 통해 해당 종목의 최근 분봉 흐름을 시각화합니다.
+
+    Controls:
+        - [아무 키]: 분석 화면을 닫고 메인 대시보드로 복귀.
+    """
     import io
     import threading
     

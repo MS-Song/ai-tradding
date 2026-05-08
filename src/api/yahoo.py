@@ -4,13 +4,39 @@ from typing import Optional, Dict
 from src.api.base import BaseAPI
 
 class YahooAPIClient(BaseAPI):
+    """Yahoo Finance 및 Naver Finance를 통한 글로벌 지수 수집 클라이언트.
+    
+    Yahoo Finance API를 주 데이터 소스로 사용하되, 국내 지수(KOSPI, KOSDAQ)의 정확성과 
+    해외 지수 지연 방지를 위해 Naver Finance API 및 웹 크롤링을 Fallback으로 활용하는 
+    하이브리드 지수 수집 엔진입니다.
+
+    Attributes:
+        _index_cache (dict): 지수별 최근 데이터 캐시 (Time, Data).
+        _index_src (str): 현재 주력 데이터 소스.
+    """
     def __init__(self):
+        """YahooAPIClient를 초기화합니다.
+        
+        기본 소스인 Yahoo Finance와 보조 소스인 Naver Finance에 대한 
+        캐시 및 상태 정보를 초기화합니다.
+        """
         super().__init__()
         self._index_cache = {}
         self._index_src = "yahoo"
         self._index_src_fail_counts = {"yahoo": 0, "naver_api": 0}
 
     def get_index_price(self, iscd: str) -> Optional[dict]:
+        """특정 지수의 현재가와 등락률을 조회합니다.
+
+        국내 지수는 Naver를 최우선으로, 해외 지수는 Yahoo를 최우선으로 조회하며 
+        장애 발생 시 상호 Fallback 처리합니다. 20초간 유효한 로컬 캐시를 사용합니다.
+
+        Args:
+            iscd (str): 지수 심볼명 (예: KOSPI, NASDAQ, BTC_USD).
+
+        Returns:
+            Optional[dict]: 지수 정보(price, rate, source 등)가 포함된 딕셔너리 또는 None.
+        """
         curr_t = time.time()
         cached = self._index_cache.get(iscd)
         if cached and (curr_t - cached[0]) < 20: return cached[1]
@@ -64,6 +90,14 @@ class YahooAPIClient(BaseAPI):
         return None
 
     def _index_src_fetch_yahoo(self, iscd: str) -> Optional[dict]:
+        """Yahoo Finance v8 API를 통해 지수 데이터를 수집합니다.
+
+        Args:
+            iscd (str): 지수 심볼명.
+
+        Returns:
+            Optional[dict]: 수집된 지수 정보. 실패 시 Exception 발생 또는 None 반환.
+        """
         # 야후에서 지원하지 않거나 404가 발생하는 심볼은 네이버로 즉시 패스
         if iscd in ["KPI200", "VOSPI"]:
             return None
@@ -90,6 +124,14 @@ class YahooAPIClient(BaseAPI):
             raise Exception(f"Data Parse Error: {e}")
 
     def _index_src_fetch_naver_api(self, iscd: str) -> Optional[dict]:
+        """Naver Mobile API 및 웹 크롤링을 통해 지수 데이터를 수집합니다. (Fallback용)
+
+        Args:
+            iscd (str): 지수 심볼명.
+
+        Returns:
+            Optional[dict]: 수집된 지수 정보. 모든 단계 실패 시 None 반환.
+        """
         # 국장 지수: 모바일 API -> 웹 크롤링 2단계 시도
         kr_map = {"KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KPI200": "KPI200", "VOSPI": "VOSPI"}
         if iscd in kr_map:
@@ -149,7 +191,14 @@ class YahooAPIClient(BaseAPI):
         return None
 
     def get_multiple_index_prices(self, symbol_map: dict) -> dict:
-        """[최적화] ThreadPoolExecutor를 사용하여 지수 데이터를 병렬로 수집합니다."""
+        """ThreadPoolExecutor를 사용하여 여러 지수 데이터를 병렬로 수집합니다.
+
+        Args:
+            symbol_map (dict): {내부_식별자: 외부_심볼} 형태의 맵.
+
+        Returns:
+            dict: 수집된 지수 정보 결과 맵.
+        """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         results = {}
         

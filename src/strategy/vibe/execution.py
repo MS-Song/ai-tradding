@@ -8,7 +8,33 @@ from src.utils import is_ai_enabled_time, safe_cast_float
 from src.strategy.constants import PRESET_STRATEGIES
 
 class ExecutionMixin:
+    """트레이딩 엔진의 핵심 매매 실행 로직을 담당하는 믹스인 클래스입니다.
+
+    매매 사이클(run_cycle)을 주도하며 시장 페이즈별(P1~P4) 대응, 실시간 익절/손절 집행, 
+    물타기/불타기 전략 추천, 그리고 AI 기반의 자율 매매 및 포트폴리오 통합 진단(Batch Review) 
+    기능을 총괄합니다. 모든 주문 실행과 거래 로그 기록의 중앙 허브 역할을 수행합니다.
+    """
     def run_cycle(self, market_trend="neutral", skip_trade=False, holdings=None, asset_info=None):
+        """메인 트레이딩 사이클을 1회 수행하여 매매 기회를 탐색하고 포지션을 관리합니다.
+
+        프로세스 흐름:
+            1. 리스크 체크: 자산 상태 확인 및 서킷 브레이커(일일 손실 한도 등) 점검.
+            2. Phase 4 (장 마감): 종가 베팅 보호 갱신 및 신규 종가 베팅 집행.
+            3. Phase 4 (배치 리뷰): 전체 보유 종목에 대해 AI 통합 진단 수행 및 조기 청산 결정.
+            4. Phase 3 (수익 확정): 수익권(+0.5%↑) 종목의 50% 분할 매도 및 본전 스탑 상향.
+            5. 실시간 감시: 개별 종목의 동적 익절/손절(TP/SL) 도달 여부 확인 및 체결.
+            6. 비중 조절: 물타기(Recovery) 및 불타기(Pyramiding) 추천 로직 실행.
+            7. 자율 매수: AI 추천 종목 신규 진입 및 보유 종목과의 교체(Replacement) 매매.
+
+        Args:
+            market_trend (str): 현재 시장 추세 ('BULL', 'BEAR', 'NEUTRAL', 'DEFENSIVE').
+            skip_trade (bool): True일 경우 실제 주문을 내지 않고 시뮬레이션만 수행.
+            holdings (list, optional): 외부에서 주입된 현재 잔고 정보. 미지정 시 API로 직접 조회.
+            asset_info (dict, optional): 자산 요약 정보 (총자산, 가용현금 등).
+
+        Returns:
+            list: 해당 사이클에서 발생한 주요 이벤트 메시지(매매 체결, 보호 알림 등) 리스트.
+        """
         self._cleanup_rejected_stocks()
         if holdings is None: holdings = self.api.get_balance()
         if asset_info is None: asset_info = self.api.get_full_balance()[1] if not skip_trade else {}
@@ -516,6 +542,18 @@ class ExecutionMixin:
         return results
 
     def get_buy_recommendations(self, market_trend="neutral", holdings=None):
+        """현재 보유 종목 중 물타기(Recovery) 또는 불타기(Pyramiding) 조건에 부합하는 종목을 탐색합니다.
+
+        내부적으로 기술적 지표(MA) 분석을 60초 주기로 캐싱하여 API 호출 부하를 
+        최적화하며, 각 추천 엔진의 로직에 현재 시장 장세를 전달합니다.
+
+        Args:
+            market_trend (str): 현재 시장 장세.
+            holdings (list, optional): 현재 잔고 정보.
+
+        Returns:
+            list: 매수 추천 정보(종목코드, 금액, 사유 등)가 포함된 딕셔너리 리스트.
+        """
         recs = []
         if holdings is None: holdings = self.api.get_balance()
         for item in holdings:
@@ -558,6 +596,22 @@ class ExecutionMixin:
         return recs
 
     def confirm_buy_decision(self, code: str, name: str, score: float = 0.0) -> Tuple[bool, str]:
+        """신규 종목 매수 전, 알고리즘 필터링 및 AI 최종 승인 절차를 수행합니다.
+
+        검증 프로세스 (GEMINI.md 2.D):
+            1. 기본 필터: 당일 거절(Rejected) 여부 및 최근 매수 이력 확인.
+            2. 가격 필터: 당일 등락률이 -8.0% ~ +8.0% 범위를 벗어날 경우 차단.
+            3. 기술 필터: 분봉 20MA 대비 이격도(OVERBOUGHT) 점검 및 매수 구역(BUY_ZONE) 가점.
+            4. AI 컨펌: 실시간 뉴스, 시황, 지표를 종합하여 Gemini에게 최종 'Yes/No' 판단 요청.
+
+        Args:
+            code (str): 종목 코드.
+            name (str): 종목명.
+            score (float): AlphaEngine에서 산출된 정량적 스코어.
+
+        Returns:
+            Tuple[bool, str]: (매수 승인 여부, 승인/거절 상세 사유).
+        """
         self._cleanup_rejected_stocks()
         if code in self.rejected_stocks: return False, f"당일 매수 거절됨"
         
@@ -671,6 +725,17 @@ class ExecutionMixin:
         return True, reason
 
     def get_replacement_target(self, candidate_code: str, candidate_name: str, score: float, holdings: List[dict]) -> Tuple[bool, Optional[str], str]:
+        """포트폴리오 한도 도달 시, 신규 후보 종목과 기존 보유 종목을 비교하여 교체 대상을 선정합니다.
+
+        Args:
+            candidate_code (str): 신규 진입 후보 종목 코드.
+            candidate_name (str): 후보 종목명.
+            score (float): 후보 종목의 퀀트 스코어.
+            holdings (List[dict]): 현재 보유 중인 종목 리스트.
+
+        Returns:
+            Tuple[bool, Optional[str], str]: (교체 수행 여부, 매도할 종목 코드, 교체 결정 사유).
+        """
         if not holdings: return False, None, "보유 종목 없음"
         c_detail = self.api.get_naver_stock_detail(candidate_code)
         c_news = self.api.get_naver_stock_news(candidate_code)
@@ -682,7 +747,22 @@ class ExecutionMixin:
         return self.ai_advisor.compare_stock_superiority(candidate_info, holdings_info, self.current_market_vibe)
 
     def perform_portfolio_batch_review(self, skip_trade=False, include_manual=False) -> List[str]:
-        """보유 종목 전체에 대해 AI 통합 진단을 수행하고 매도 또는 전략 갱신을 실행합니다."""
+        """보유 중인 모든 종목에 대해 AI 통합 진단(Batch Review)을 수행하고 조치합니다.
+
+        개별 종목별 AI 호출 방식을 탈피하여 전 종목 데이터를 한 번에 AI에게 전달함으로써 
+        토큰 비용을 절감하고 포트폴리오 차원의 전략적 의사결정(매도/유지/갱신)을 내립니다.
+
+        조치 내용:
+            - SELL: 수익권/손실권 관계없이 AI가 매도를 권고한 경우 즉시 청산.
+            - HOLD: 전략 프리셋(ID, TP, SL, 유효시간)을 최신 시황에 맞게 자동 업데이트.
+
+        Args:
+            skip_trade (bool, optional): 실제 주문 집행 여부. 기본값 False.
+            include_manual (bool, optional): 사용자가 수동 설정한 전략도 AI 관리 대상으로 포함할지 여부.
+
+        Returns:
+            List[str]: 배치 리뷰 결과 요약 메시지 리스트.
+        """
         holdings = self.api.get_balance()
         if not holdings: return []
         
@@ -836,7 +916,14 @@ class ExecutionMixin:
         return results
 
     def _async_update_ma_cache(self, code: str):
-        """매매 직후 또는 분석 과정에서 이평선 데이터를 백그라운드에서 동기화 (병목 방지)"""
+        """매매 직후 또는 분석 과정에서 필요한 이동평균선(MA) 데이터를 백그라운드에서 동기화합니다.
+
+        메인 스레드의 병목을 방지하기 위해 비동기 스레드에서 수행하며, API 지연을 
+        고려하여 약간의 대기 시간(2초) 후 데이터를 갱신합니다.
+
+        Args:
+            code (str): 업데이트할 종목 코드.
+        """
         import threading
         def _task():
             try:

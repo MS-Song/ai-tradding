@@ -6,7 +6,17 @@ class IndicatorEngine:
 
     @staticmethod
     def calculate_rsi(prices: List[float], period: int = 14) -> float:
-        """상대강도지수(RSI)를 계산합니다."""
+        """상대강도지수(Relative Strength Index)를 계산합니다.
+        
+        웰더스 이동평균(Wilder's Smoothing) 방식을 사용하여 가격의 상승/하락 강도를 측정합니다.
+
+        Args:
+            prices (List[float]): 최신순 종가 리스트.
+            period (int, optional): RSI 계산 기간. 기본값 14.
+
+        Returns:
+            float: 0~100 사이의 RSI 값. 데이터 부족 시 50.0 반환.
+        """
         if len(prices) < period + 1: return 50.0
         
         # KIS 데이터는 최신순(Index 0이 현재)이므로 계산을 위해 뒤집음 (과거 -> 현재)
@@ -31,7 +41,16 @@ class IndicatorEngine:
 
     @staticmethod
     def calculate_bollinger_bands(prices: List[float], period: int = 20, multiplier: float = 2.0) -> Dict[str, float]:
-        """볼린저 밴드(중심선, 상단선, 하단선)를 계산합니다."""
+        """볼린저 밴드(Bollinger Bands)를 계산합니다.
+
+        Args:
+            prices (List[float]): 최신순 종가 리스트.
+            period (int, optional): 이동평균 및 표준편차 계산 기간. 기본값 20.
+            multiplier (int, optional): 상/하단 밴드 너비 계수. 기본값 2.0.
+
+        Returns:
+            Dict[str, float]: 밴드 정보 (mid, upper, lower, percent_b).
+        """
         if len(prices) < period: 
             return {"mid": 0, "upper": 0, "lower": 0, "percent_b": 0.5}
         
@@ -56,7 +75,17 @@ class IndicatorEngine:
 
     @staticmethod
     def calculate_macd(prices: List[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, float]:
-        """MACD 지표(MACD선, 시그널선, 히스토그램)를 계산합니다."""
+        """MACD 지표(Moving Average Convergence Divergence)를 계산합니다.
+
+        Args:
+            prices (List[float]): 최신순 종가 리스트.
+            fast (int, optional): 단기 EMA 기간. 기본값 12.
+            slow (int, optional): 장기 EMA 기간. 기본값 26.
+            signal (int, optional): 시그널선 기간. 기본값 9.
+
+        Returns:
+            Dict[str, float]: MACD 정보 (macd, signal, hist).
+        """
         if len(prices) < slow + signal: 
             return {"macd": 0, "signal": 0, "hist": 0}
         
@@ -89,8 +118,16 @@ class IndicatorEngine:
 
     @staticmethod
     def calculate_dema(prices: List[float], period: int = 20) -> float:
-        """이중 지수 이동 평균(DEMA)을 계산합니다.
-        DEMA = 2 * EMA(n) - EMA(EMA(n))
+        """이중 지수 이동 평균(Double Exponential Moving Average)을 계산합니다.
+        
+        DEMA = 2 * EMA(n) - EMA(EMA(n)) 식을 사용하여 지연(Lag)을 최소화합니다.
+
+        Args:
+            prices (List[float]): 최신순 종가 리스트.
+            period (int, optional): 계산 기간. 기본값 20.
+
+        Returns:
+            float: 최신 DEMA 값.
         """
         if len(prices) < period * 2: 
             return prices[0] if prices else 0.0
@@ -117,7 +154,15 @@ class IndicatorEngine:
 
     @staticmethod
     def calculate_sma(prices: List[float], periods: List[int] = [5, 10, 20, 60]) -> Dict[str, float]:
-        """단순이동평균선(SMA)을 계산합니다."""
+        """지정된 기간들에 대한 단순이동평균선(SMA)을 계산합니다.
+
+        Args:
+            prices (List[float]): 최신순 종가 리스트.
+            periods (List[int], optional): 계산할 이동평균 기간 리스트. 기본값 [5, 10, 20, 60].
+
+        Returns:
+            Dict[str, float]: 각 기간별 SMA 값을 포함하는 딕셔너리 (예: {"sma_20": 120000.0}).
+        """
         result = {}
         for p in periods:
             if len(prices) >= p:
@@ -129,7 +174,15 @@ class IndicatorEngine:
 
     @staticmethod
     def calculate_ema(prices: List[float], period: int = 20) -> List[float]:
-        """지수이동평균(EMA)을 계산하여 리스트로 반환합니다. (과거 -> 현재 순서)"""
+        """지수이동평균(EMA)의 전체 히스토리를 계산하여 반환합니다.
+
+        Args:
+            prices (List[float]): 최신순 종가 리스트.
+            period (int, optional): 계산 기간. 기본값 20.
+
+        Returns:
+            List[float]: 과거부터 현재 순서로 나열된 EMA 값 리스트. 데이터 부족 시 빈 리스트 반환.
+        """
         if len(prices) < period: return []
         
         # KIS 데이터는 최신순이므로 계산을 위해 뒤집음 (과거 -> 현재)
@@ -147,7 +200,16 @@ class IndicatorEngine:
     @staticmethod
     def calculate_dema(prices: List[float], period: int = 20) -> float:
         """이중 지수이동평균(DEMA)의 현재값을 계산합니다.
-        DEMA = 2 * EMA(n) - EMA(EMA(n))
+        
+        계산식: DEMA = 2 * EMA(n) - EMA(EMA(n))
+        DEMA는 일반 EMA보다 시세 추종 속도가 빠르고 지연(Lag)이 적은 특징이 있습니다.
+
+        Args:
+            prices (List[float]): 최신순 종가 리스트.
+            period (int, optional): 계산 기간. 기본값 20.
+
+        Returns:
+            float: 최신 DEMA 값. 계산 불가 시 0.0 또는 EMA1 값 반환.
         """
         ema1 = IndicatorEngine.calculate_ema(prices, period)
         if not ema1: return 0.0
@@ -162,10 +224,18 @@ class IndicatorEngine:
         return dema_val
 
     def get_dual_timeframe_analysis(self, api, code: str, name: str = "") -> Dict[str, any]:
-        """일봉(중기) + 분봉(단기) 이중 타임프레임 분석을 수행합니다.
-        데이터 소스 우선순위:
-          분봉: 1) KIS API → 2) 네이버 F-Chart XML
-          일봉: 1) KIS API → 2) 네이버 모바일 JSON (get_naver_stocks_realtime 가격 + 과거 이력 없이 오늘 기준)
+        """일봉(중기 추세)과 분봉(단기 타점)을 결합한 이중 타임프레임 분석을 수행합니다.
+
+        일봉 20MA 추세와 분봉 20MA 지지 여부를 교차 검증하여 BUY_ZONE, OVERBOUGHT 
+        등의 시그널을 생성합니다. KIS API 장애 시 네이버 F-Chart 데이터로 자동 폴백합니다.
+
+        Args:
+            api: KIS API 클라이언트 객체.
+            code (str): 분석할 종목 코드.
+            name (str, optional): 종목명.
+
+        Returns:
+            Dict[str, any]: 분석 결과 (daily trend, minute ma, signal, reason).
         """
         analysis = {
             "daily": {"trend": "UNKNOWN", "ma": {}},
@@ -268,7 +338,16 @@ class IndicatorEngine:
 
 
     def get_all_indicators(self, candles: List[dict]) -> Dict[str, any]:
-        """캔들 데이터를 받아 종합 지표 세트를 반환합니다."""
+        """캔들 데이터를 받아 종합 기술적 지표 세트를 한 번에 계산하여 반환합니다.
+
+        RSI, 볼린저 밴드, MACD, SMA(5, 10, 20, 60)를 일괄 처리합니다.
+
+        Args:
+            candles (List[dict]): API로부터 수집된 캔들 데이터 리스트.
+
+        Returns:
+            Dict[str, any]: 모든 기술적 지표를 포함하는 딕셔너리. 데이터가 없거나 유효하지 않으면 빈 딕셔너리 반환.
+        """
         if not candles: return {}
         
         # 종가(Close) 리스트 추출

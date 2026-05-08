@@ -3,6 +3,20 @@ from typing import Tuple
 from src.logger import logger, log_error
 
 class RiskManager:
+    """계좌 리스크 관리 및 포지션 사이징을 담당하는 엔진.
+    
+    일일 손실 한도에 따른 서킷 브레이커 작동, 장세별 최소 현금 비중 유지, 
+    그리고 ATR(Average True Range) 기반의 지능형 포지션 사이징을 통해 
+    포트폴리오의 리스크를 균등화하고 자산을 보호합니다.
+
+    Attributes:
+        api: 시세 및 지표 수집용 API 인스턴스.
+        config (dict): 리스크 설정 정보 (손실 한도, 리스크 비율 등).
+        max_daily_loss_rate (float): 일일 최대 허용 손실률 (%).
+        risk_per_trade_rate (float): 1회 매매 시 감수할 계좌 리스크 비율 (%).
+        atr_multiplier (float): 포지션 사이징 시 사용할 ATR 배수.
+        is_halted (bool): 현재 서킷 브레이커에 의한 매매 중단 여부.
+    """
     def __init__(self, api, config: dict = None):
         self.api = api
         self.config = config or {}
@@ -15,13 +29,25 @@ class RiskManager:
         self.halt_reason = ""
 
     def update_config(self, config: dict):
+        """리스크 관리 설정을 최신화합니다."""
         self.config.update(config)
         self.max_daily_loss_rate = self.config.get("max_daily_loss_rate", 3.0)
         self.risk_per_trade_rate = self.config.get("risk_per_trade_rate", 0.5)
         self.atr_multiplier = self.config.get("atr_multiplier", 2.0)
 
     def check_circuit_breaker(self, asset_info: dict) -> bool:
-        """일일 수익률을 체크하여 서킷 브레이커 작동 여부를 판단합니다."""
+        """일일 수익률을 체크하여 서킷 브레이커 작동 여부를 판단합니다.
+
+        [Logic]
+        - 일일 손실률이 `max_daily_loss_rate`에 도달하면 모든 신규 매매를 차단합니다.
+        - 손실이 일정 수준 이상 복구되면 자동으로 차단을 해제합니다.
+
+        Args:
+            asset_info (dict): 현재 자산 및 수익률 정보.
+
+        Returns:
+            bool: 매매 중단(Halt) 상태 여부.
+        """
         # API 조회 실패 등으로 데이터가 없을 경우 이전 상태 유지
         if "daily_pnl_rate" not in asset_info:
             return self.is_halted
@@ -45,7 +71,19 @@ class RiskManager:
         return self.is_halted
 
     def check_cash_safety(self, asset_info: dict, vibe: str) -> Tuple[bool, str]:
-        """장세에 따른 최소 현금 보유 비율을 체크합니다."""
+        """현재 시장 장세에 따른 최소 현금 보유 비율을 체크합니다.
+
+        [Rules] (GEMINI.md 2.A)
+        - DEFENSIVE: 현금 비중 80% 이상 유지 필요.
+        - BEAR: 현금 비중 30% 이상 유지 필요.
+
+        Args:
+            asset_info (dict): 현재 자산 정보.
+            vibe (str): 현재 시장 VIBE.
+
+        Returns:
+            Tuple[bool, str]: (현금 부족 여부, 부족 사유 메시지).
+        """
         total = float(asset_info.get("total_asset", 0))
         cash = float(asset_info.get("cash", 0))
         if total <= 0: return False, ""
@@ -62,8 +100,19 @@ class RiskManager:
         return False, ""
 
     def calculate_position_size(self, code: str, total_asset: float, current_price: float, default_amt: int = 500000) -> int:
-        """ ATR 기반의 지능형 포지션 사이징 (수량 산출)
-        변동성이 큰 종목은 적게, 작은 종목은 많이 매수하여 리스크를 균등화함.
+        """ATR 기반의 지능형 포지션 사이징을 통해 매수 수량을 산출합니다.
+
+        변동성이 큰 종목은 적게, 작은 종목은 많이 매수하여 종목별 리스크를 균등화합니다.
+        수량 = (총자산 * 리스크비율) / (ATR * ATR배수)
+
+        Args:
+            code (str): 종목 코드.
+            total_asset (float): 현재 총 자산.
+            current_price (float): 현재가.
+            default_amt (int): ATR 수집 실패 시 사용할 기본 매수 금액 (원).
+
+        Returns:
+            int: 최종 산출된 매수 수량 (주).
         """
         if total_asset <= 0 or current_price <= 0: return 0
         

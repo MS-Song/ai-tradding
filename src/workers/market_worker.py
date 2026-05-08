@@ -1,11 +1,30 @@
 import time
 from datetime import datetime
+from typing import List, Dict, Optional
 from src.workers.base import BaseWorker
 from src.utils import is_ai_enabled_time, is_market_open
 from src.theme_engine import analyze_popular_themes
 
 class MarketWorker(BaseWorker):
+    """시장 데이터 수집 및 분석을 총괄하는 핵심 워커.
+    
+    지수 데이터(KOSPI, KOSDAQ 등) 수집, 시장 장세(Vibe) 분석, 인기 테마 및 랭킹 분석, 
+    AI 추천 종목 업데이트, 그리고 장 개시/마감 알림 등 시장 전반의 상태를 동기화합니다.
+
+    Attributes:
+        api: 시장 데이터 및 지수를 가져오기 위한 API 클라이언트.
+        strategy: 시장 분석 및 전략 수립을 담당하는 VibeStrategy 인스턴스.
+        notifier: 텔레그램 알림 전송을 위한 TelegramNotifier 인스턴스.
+    """
     def __init__(self, state, api, strategy, notifier=None):
+        """MarketWorker를 초기화합니다.
+
+        Args:
+            state (DataManager): 시스템 전역 상태 인스턴스.
+            api: 시장 데이터를 가져올 API 클라이언트.
+            strategy (VibeStrategy): 시장 분석 로직을 포함하는 전략 엔진.
+            notifier (TelegramNotifier, optional): 텔레그램 알림 인스턴스.
+        """
         super().__init__("INDEX", state, interval=5.0)
         self.api = api
         self.strategy = strategy
@@ -13,6 +32,14 @@ class MarketWorker(BaseWorker):
         self.themes = []
 
     def run(self):
+        """시장 데이터 수집 및 분석 루틴을 주기적으로 실행합니다.
+        
+        1. 지수 데이터 수집 및 한국 시장 개장 상태 동기화 (5초).
+        2. 지수 변동성 또는 정기 주기에 따른 시장 Vibe 분석 (120초).
+        3. 인기 검색 및 거래량 상위 종목 기반 테마 분석 (120초).
+        4. AI 추천 종목 리스트 및 API 사용 비용 업데이트 (5분).
+        5. 장 개시/마감 등 주요 시점 알림 처리.
+        """
         curr_t = time.time()
         
         # 1. 지수 데이터 수집 (5초 주기)
@@ -170,6 +197,13 @@ class MarketWorker(BaseWorker):
         self.state.update_worker_status("RETRO", status="대기 중 (IDLE)", result="성공", last_task="복기 엔진 대기 중")
 
     def _handle_notifications(self):
+        """시장 분위기 변화 및 장 개시/마감 알림을 주기적으로 체크하고 처리합니다.
+
+        Logic:
+            1. VIBE 변화: 시장 장세(Bull/Bear 등) 변경 시 텔레그램 알림 및 로그 기록.
+            2. 장 개시: 오전 09:00 시점에 당일 최초 1회 개장 알림 전송.
+            3. 장 마감: 오후 15:30 시점에 당일 최초 1회 자산 현황 리포트 전송.
+        """
         with self.state.lock:
             curr_vibe = self.state.vibe
             curr_time_str = datetime.now().strftime('%H:%M')
@@ -189,13 +223,21 @@ class MarketWorker(BaseWorker):
                         self.notifier.notify_market_start(curr_vibe)
                     self.state.notified_dates["market_start"] = today_str
 
-            # 4. 장 마감 리포트 (15:30)
+            # 3. 장 마감 리포트 (15:30)
             if "15:30" <= curr_time_str <= "15:35" and self.state.notified_dates.get("market_end") != today_str:
                 if self.notifier:
                     self.notifier.notify_market_end(self.state.asset)
                 self.state.notified_dates["market_end"] = today_str
 
-    def _extract_price_info(self, items):
+    def _extract_price_info(self, items: List[Dict]) -> Dict[str, Dict]:
+        """네이버 인기/거래량 상위 종목의 원시 데이터에서 핵심 가격 정보를 추출합니다.
+
+        Args:
+            items (List[dict]): 네이버 금융 API에서 수집된 종목 리스트.
+
+        Returns:
+            Dict[str, dict]: 종목 코드를 키로 하고, 가격/등락률/전일대비/종목명을 포함하는 맵.
+        """
         info_map = {}
         for item in items:
             code = item.get('code')
@@ -211,11 +253,21 @@ class MarketWorker(BaseWorker):
                 except: pass
         return info_map
 
-    def _update_ai_data(self, curr_t):
+    def _update_ai_data(self, curr_t: float):
+        """AI 추천 종목 리스트와 모델별 API 사용 비용 정보를 업데이트합니다.
+
+        Args:
+            curr_t (float): 현재 시각 (timestamp).
+
+        Logic:
+            1. AI 추천 (5분 주기): 장중이거나 디버그/강제 요청 시 AlphaEngine을 통해 추천 리스트 갱신.
+            2. 비용 집계 (5초 주기): GCP Billing 또는 로컬 로그 기반 모델별 누적 비용 동기화.
+            3. 강제 진단 완료 후 처리: 사용자 요청에 의한 분석 완료 시 텔레그램 요약 전송.
+        """
         from src.logger import log_error
         # 1. AI 추천 업데이트 (5분 주기)
         try:
-            # [수정] 수동 진단 요청(force_ai_diagnosis) 시에는 장외 시간이라도 AI 분석 허용
+            # 수동 진단 요청(force_ai_diagnosis) 시에는 장외 시간이라도 AI 분석 허용
             if is_ai_enabled_time() or getattr(self.strategy, "debug_mode", False) or self.state.force_ai_diagnosis:
                 if (curr_t - self.state.last_times.get("recommendation", 0) > 300) or self.state.force_ai_diagnosis:
                     def rec_prog_cb(c, t, msg=""):
@@ -250,7 +302,7 @@ class MarketWorker(BaseWorker):
 
         # 3. 플래그 초기화
         if self.state.force_ai_diagnosis:
-            # [추가] 즉시 진단 완료 후 텔레그램으로 요약 결과 전송
+            # 즉시 진단 완료 후 텔레그램으로 요약 결과 전송
             if self.notifier:
                 recs = self.state.recommendations[:5]
                 rec_str = ""

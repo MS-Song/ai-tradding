@@ -1,13 +1,24 @@
 from typing import List, Optional
 
 class ChartRenderer:
-    """터미널 환경에서 캔들 차트를 렌더링하는 클래스"""
+    """터미널 환경에서 아스키/ANSI 코드를 사용하여 캔들 차트를 시각화하는 클래스.
+    
+    데이터 정규화를 통해 정해진 높이 내에 가격 범위를 매핑하고, 
+    상승/하락 여부에 따른 색상(ANSI Escape Code)과 캔들 구성 요소(Wick, Body)를 표현합니다.
+    """
 
     @staticmethod
     def render_candle_chart(candles: List[dict], width: int = 30, height: int = 12, title: str = "") -> str:
-        """
-        캔들 데이터를 받아 텍스트 기반의 차트를 반환합니다.
-        candles: KIS API output2 형식 (0번 인덱스가 최신)
+        """캔들 데이터를 받아 터미널용 텍스트 기반 차트 문자열을 생성합니다.
+
+        Args:
+            candles (List[dict]): KIS API `output2` 형식의 캔들 리스트 (0번 인덱스가 최신).
+            width (int, optional): 차트의 가로 너비(캔들 개수). 기본값 30.
+            height (int, optional): 차트의 세로 높이(줄 수). 기본값 12.
+            title (str, optional): 차트 상단에 표시할 제목.
+
+        Returns:
+            str: 렌더링된 텍스트 차트 전체 문자열. 데이터 부족 시 안내 메시지 반환.
         """
         if not candles:
             return " [차트 데이터가 없습니다. 주말/휴장일 또는 데이터 지연 여부를 확인하세요.]"
@@ -35,7 +46,7 @@ class ChartRenderer:
         canvas = [[' ' for _ in range(len(data))] for _ in range(height)]
 
         def get_y(p):
-            """전체 가격 범위 내에서 현재 가격의 Y축 위치(0 ~ height-1) 계산"""
+            """전체 가격 범위 내에서 현재 가격의 Y축 위치(0 ~ height-1)를 정수로 계산합니다."""
             raw_y = (p - min_p) / price_range * (height - 1)
             return int(round(raw_y))
 

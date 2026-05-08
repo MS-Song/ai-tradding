@@ -7,7 +7,24 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from src.logger import log_error
 
 class TelegramCommandListener:
+    """텔레그램을 통한 원격 제어 및 상태 조회 명령어 수신기.
+    
+    사용자로부터 텔레그램 메시지(명령어)를 수신하여 계좌 상태 조회, 수동 매매 집행, 
+    긴급 청산(Panic), 시스템 설정 변경 등의 기능을 수행합니다.
+    별도의 백그라운드 스레드에서 폴링(Polling) 방식으로 동작합니다.
+
+    Attributes:
+        dm: 명령어 실행 및 상태 업데이트를 위한 DataManager 인스턴스.
+        token (str): 텔레그램 봇 API 토큰.
+        chat_id (str): 허용된 사용자 채팅 ID (보안 검증용).
+        is_active (bool): 토큰과 채팅 ID 설정 여부에 따른 활성화 상태.
+    """
     def __init__(self, dm=None):
+        """TelegramCommandListener를 초기화합니다.
+
+        Args:
+            dm (DataManager, optional): 명령어 실행 및 상태 업데이트를 위한 데이터 관리자.
+        """
         self.dm = dm
         self.token = os.getenv("TELEGRAM_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -16,6 +33,7 @@ class TelegramCommandListener:
         self.worker_thread = None
 
     def start(self):
+        """명령어 수신기를 시작합니다. 백그라운드 스레드에서 폴링 루프를 생성합니다."""
         if not self.is_active:
             return
         
@@ -23,6 +41,7 @@ class TelegramCommandListener:
         self.worker_thread.start()
 
     def stop(self):
+        """수신기를 중지하고 관련 비동기 리소스를 안전하게 해제합니다."""
         self.is_active = False
         try:
             if hasattr(self, 'loop') and self.loop and self.loop.is_running() and self.app:
@@ -33,18 +52,24 @@ class TelegramCommandListener:
             log_error(f"TelegramListener Stop Error: {e}")
 
     def _run_polling(self):
+        """텔레그램 폴링을 실행하는 메인 루프. 
+        
+        비동기 이벤트 루프를 생성하고 명령어 핸들러를 등록한 뒤 전용 스레드에서 대기합니다.
+        """
         try:
             # 새로운 이벤트 루프 생성 및 설정
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
             
             async def update_status_loop():
+                """수신기가 정상 작동 중임을 DataManager에 주기적으로 알립니다."""
                 while self.is_active:
                     if self.dm:
                         self.dm.update_worker_status("TG_RECEIVE", result="정상", last_task="명령 대기중")
                     await asyncio.sleep(10)
             
             async def post_init(application):
+                """봇 시작 직후 메뉴에 표시될 명령어 목록을 설정합니다."""
                 commands = [
                     BotCommand("status", "계좌 요약 및 상태 확인"),
                     BotCommand("diagnosis", "AI 즉시 진단 실행 (스케줄 무시)"),
@@ -80,11 +105,20 @@ class TelegramCommandListener:
             log_error(f"TelegramCommandListener Polling Error: {e}")
 
     async def _verify_auth(self, update: Update) -> bool:
+        """메시지를 보낸 사용자가 허가된 사용자(`chat_id`)인지 보안 검증을 수행합니다.
+
+        Args:
+            update (Update): 수신된 텔레그램 업데이트 객체.
+
+        Returns:
+            bool: 허가된 사용자인 경우 True, 아니면 False.
+        """
         if not update.effective_chat or str(update.effective_chat.id) != str(self.chat_id):
             return False
         return True
 
     async def _cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/status: 계좌 현황, 보유 종목 상세, AI 추천 목록을 조회하여 전송합니다."""
         if not await self._verify_auth(update): return
         if not self.dm: return
         self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/status 처리")
@@ -169,6 +203,7 @@ class TelegramCommandListener:
             log_error(f"Telegram Inbound /status Error: {e}")
 
     async def _cmd_diagnosis(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/diagnosis: 스케줄링된 시간과 관계없이 즉시 AI 시장 분석 및 전략 수립을 실행합니다."""
         if not await self._verify_auth(update): return
         if self.dm:
             self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/diagnosis 처리")
@@ -179,6 +214,7 @@ class TelegramCommandListener:
                 log_error(f"Telegram Inbound /diagnosis Error: {e}")
 
     async def _cmd_log(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/log: 최근 10개의 트레이딩 로그를 조회합니다."""
         if not await self._verify_auth(update): return
         if self.dm:
             self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/log 처리")
@@ -189,6 +225,7 @@ class TelegramCommandListener:
                 log_error(f"Telegram Inbound /log Error: {e}")
 
     async def _cmd_error(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/error: 최근 10개의 시스템 에러 로그를 조회합니다."""
         if not await self._verify_auth(update): return
         if self.dm:
             self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/error 처리")
@@ -199,6 +236,7 @@ class TelegramCommandListener:
                 log_error(f"Telegram Inbound /error Error: {e}")
 
     async def _cmd_panic(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/panic: 전 종목 긴급 시장가 청산 및 신규 매수 차단 명령을 수행합니다."""
         if not await self._verify_auth(update): return
         if self.dm:
             self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/panic 처리")
@@ -209,6 +247,7 @@ class TelegramCommandListener:
                 log_error(f"Telegram Inbound /panic Error: {e}")
 
     async def _cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/pause: AI의 신규 종목 매수 진입을 일시적으로 정지시킵니다."""
         if not await self._verify_auth(update): return
         if self.dm:
             self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/pause 처리")
@@ -219,6 +258,7 @@ class TelegramCommandListener:
                 log_error(f"Telegram Inbound /pause Error: {e}")
 
     async def _cmd_defensive(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/defensive: 시스템 장세를 강제로 방어모드(Defensive)로 전환합니다."""
         if not await self._verify_auth(update): return
         if self.dm:
             self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/defensive 처리")
@@ -229,6 +269,7 @@ class TelegramCommandListener:
                 log_error(f"Telegram Inbound /defensive Error: {e}")
                 
     async def _cmd_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/reset: 패닉, 일시정지, 강제 방어모드 등의 모든 특수 상태를 해제하고 AI 자율 판단 모드로 복귀합니다."""
         if not await self._verify_auth(update): return
         if self.dm:
             self.dm.update_worker_status("TG_RECEIVE", result="성공", last_task="/reset 처리")
@@ -239,6 +280,14 @@ class TelegramCommandListener:
                 log_error(f"Telegram Inbound /reset Error: {e}")
 
     async def _parse_trade_args(self, context: ContextTypes.DEFAULT_TYPE):
+        """수동 매매 명령어(/buy, /sell)의 인자(코드, 수량, 가격)를 파싱합니다.
+
+        Args:
+            context (ContextTypes.DEFAULT_TYPE): 텔레그램 컨텍스트 객체.
+
+        Returns:
+            tuple: (종목코드, 수량, 가격, 에러메시지) 형태의 튜플. 에러 없을 시 에러메시지는 None.
+        """
         args = context.args
         if len(args) < 2:
             return None, None, None, "⚠️ <b>사용법 오류</b>\n형식: /명령어 [종목코드] [수량] [가격(선택)]\n예시: /buy 005930 10\n예시: /sell 005930 10 80000"
@@ -261,6 +310,7 @@ class TelegramCommandListener:
         return code, qty, price, None
 
     async def _cmd_buy(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/buy: 지정된 종목에 대한 수동 매수 주문을 집행합니다."""
         if not await self._verify_auth(update): return
         code, qty, price, err = await self._parse_trade_args(context)
         if err:
@@ -277,6 +327,7 @@ class TelegramCommandListener:
                 log_error(f"Telegram Inbound /buy Error: {e}")
 
     async def _cmd_sell(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/sell: 지정된 종목에 대한 수동 매도 주문을 집행합니다."""
         if not await self._verify_auth(update): return
         code, qty, price, err = await self._parse_trade_args(context)
         if err:

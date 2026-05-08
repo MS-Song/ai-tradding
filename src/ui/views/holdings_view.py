@@ -11,6 +11,24 @@ from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
 
 def draw_holdings_detail(strategy, dm):
+    """현재 보유 포트폴리오의 상세 현황과 AI 진단 의견을 보여주는 TUI 리포트 화면을 렌더링합니다.
+
+    이 뷰는 보유 종목의 정량적 지표(수익률, PER, PBR)뿐만 아니라, AI가 포트폴리오 전체를 
+    입체적으로 분석한 정성적 조언을 함께 제공합니다.
+
+    Args:
+        strategy: 트레이딩 전략 객체 (AI 진단 로직 포함).
+        dm: 데이터 매니저 객체 (계좌 및 보유 종목 데이터 참조용).
+
+    Logic:
+        - `run_bg_analysis`: UI 프리징을 방지하기 위해 별도 스레드에서 AI 진단을 수행합니다.
+        - `자산 요약`: 총자산 대비 현재 평가 손익과 현금 비중을 한눈에 파악합니다.
+        - `AI 진단 의견`: 개별 종목의 수익성과 시황을 고려한 매니저의 대응 전략(Hold/Sell 등)을 출력합니다.
+
+    Controls:
+        - [R]: AI 포트폴리오 진단 즉시 시작/갱신.
+        - [Q, ESC, SPACE]: 화면을 닫고 메인 대시보드로 복귀.
+    """
     import io
     import os
     import threading

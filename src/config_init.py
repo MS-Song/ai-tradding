@@ -4,7 +4,14 @@ import yaml
 from dotenv import load_dotenv, set_key, dotenv_values
 
 def get_config():
-    """환경 변수(.env)에서 트레이딩 설정을 읽어와 딕셔너리로 반환"""
+    """환경 변수(.env)로부터 시스템 전역 트레이딩 설정을 읽어와 구조화된 딕셔너리로 반환합니다.
+
+    Vibe 전략, 상승/하락장 대응 설정, AI 자율 매매 옵션, 스타터 키트 종목 등 
+    시스템 운영에 필요한 모든 파라미터를 통합 관리합니다.
+
+    Returns:
+        dict: 섹션별로 구분된 설정 데이터 딕셔너리.
+    """
     # 매번 최신 .env를 반영하기 위해 dotenv_values() 활용
     env_data = dotenv_values(".env")
     return {
@@ -49,7 +56,17 @@ def get_config():
     }
 
 def ensure_env(force=False):
-    """.env 파일 설정을 관리하고, 멀티 LLM 환경 구성을 포함"""
+    """프로그램 실행에 필요한 .env 파일의 존재 여부를 확인하고, 미비할 경우 사용자로부터 직접 입력을 받습니다.
+
+    KIS API 키, 계좌 정보, 트레이딩 임계치 등 필수 설정뿐만 아니라 
+    Google Gemini, Groq 등의 멀티 LLM 환경과 Fail-over 우선순위를 대화형으로 설정합니다.
+
+    Args:
+        force (bool): True일 경우 기존 .env 파일이 있더라도 백업 후 강제로 재설정 과정을 거칩니다.
+
+    Returns:
+        bool: 설정이 완료되어 실행 가능한 상태이면 True를 반환합니다.
+    """
     env_path = ".env"
     bak_path = ".env.bak"
     
@@ -102,6 +119,18 @@ def ensure_env(force=False):
         ]
 
         def handle_input(key, label, default, input_type, current_env):
+            """개별 설정 항목에 대한 사용자 입력을 처리하고 검증합니다.
+
+            Args:
+                key (str): .env 파일에 저장될 키 이름.
+                label (str): 사용자에게 보여줄 항목 명칭.
+                default (str): 입력값이 없을 때 사용할 기본값.
+                input_type (str): 입력 데이터의 유형 ('text', 'mode', 'bool').
+                current_env (dict): 현재 로드된 기존 설정값.
+
+            Returns:
+                str: 최종 결정된 설정값.
+            """
             old_val = current_env.get(key, "")
             if input_type == "mode":
                 current_disp = "모의투자" if old_val != "FALSE" else "실전투자"
@@ -129,6 +158,14 @@ def ensure_env(force=False):
                 return final
 
         def fetch_gemini_models(api_key):
+            """Google Gemini API를 호출하여 사용 가능한 모델 목록을 동적으로 조회합니다.
+
+            Args:
+                api_key (str): 조회를 위한 API 키.
+
+            Returns:
+                List[str]: 가용한 모델 이름 리스트. 실패 시 기본 리스트 반환.
+            """
             import requests
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
@@ -140,6 +177,14 @@ def ensure_env(force=False):
             return ["gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
         def fetch_groq_models(api_key):
+            """Groq API를 호출하여 사용 가능한 모델 목록을 동적으로 조회합니다.
+
+            Args:
+                api_key (str): 조회를 위한 API 키.
+
+            Returns:
+                List[str]: 가용한 모델 ID 리스트. 실패 시 기본 리스트 반환.
+            """
             import requests
             try:
                 url = "https://api.groq.com/openai/v1/models"

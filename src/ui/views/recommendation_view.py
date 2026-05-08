@@ -11,6 +11,25 @@ from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
 
 def draw_recommendation_report(strategy, dm, tw, th):
+    """AI가 엄선한 TOP 10 추천 종목의 상세 분석 리포트 화면을 렌더링합니다.
+
+    이 뷰는 종목별 정량적 데이터(등락률, PER, PBR, AI 스코어)와 함께, AI 수석 전략가가 
+    도출한 해당 종목들의 입체적 대응 전략을 상세히 제공합니다.
+
+    Args:
+        strategy: 트레이딩 전략 객체 (AI 추천 엔진 및 리포트 캐시 포함).
+        dm: 데이터 매니저 객체 (실시간 지표 참조용).
+        tw (int): 터미널 너비.
+        th (int): 터미널 높이.
+
+    Logic:
+        - `run_bg_analysis`: UI 프리징 없이 추천 종목들에 대한 상세 분석 리포트를 생성합니다.
+        - `특수 마커`: 유망 종목(💎)과 ETF(📊)를 시각적으로 구분하여 표시합니다.
+        - `데이터 캐싱`: 추천 리포트는 10분간 캐싱되어 불필요한 AI 호출을 방지합니다.
+
+    Controls:
+        - [아무 키]: 리포트 화면을 닫고 메인 대시보드로 복귀.
+    """
     import io
     import threading
     

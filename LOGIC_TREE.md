@@ -1,6 +1,6 @@
-# 🌲 KIS-Vibe-Trader Logic Tree & Checklist (Advanced for Testing)
+# 🌲 KIS-Vibe-Trader Logic Tree & Checklist
 
-이 문서는 시스템의 모든 기능 단위(자동/수동)를 정의하고, 테스트 코드가 커버해야 할 특정 조건과 트리거를 상세히 기술합니다.
+이 문서는 시스템의 모든 기능 단위(자동/수동)를 정의하고, Docstring 기반의 표준 명세와 테스트 코드가 커버해야 할 특정 조건을 기술합니다.
 
 ## 1. System Architecture & Flow Tree
 
@@ -13,80 +13,75 @@ graph TD
     Init --> RiskCheck[RiskManager: 서킷 브레이커 및 현금 비중 체크]
 
     %% [Command & UI Units - Manual Control]
-    Main --> UI_Command[2. 사용자 커맨드 처리 - TUI Key Input]
+    Main --> UI_Command[2. 사용자 커맨드 처리 - Interaction]
     UI_Command --> Reports[조회 리포트: B/D/H/P/A/L]
     UI_Command --> Manual_Trade[직접 매매: 1-매도 / 2-매수]
     UI_Command --> Manual_Config[임계치 수정: 3-TP/SL 수정]
     UI_Command --> Engine_Config[엔진 설정: 4-AI / 5-물타기 / 6-불타기]
     UI_Command --> AI_Manual[AI 수동 제어: 8-즉시 분석 / 9-전략 할당 / 7-종목 분석]
-    UI_Command --> Sys_Config[시스템 설정: S-환경설정 / U-업데이트 / Q-종료]
 
     %% [Holding Management]
     Main --> HoldingProc[3. 보유 종목 프로세싱 - ExitManager]
-    HoldingProc --> PhaseCorrection[Phase별 TP/SL 보정 - P1/P2]
+    HoldingProc --> PhaseCorrection[Phase별 TP/SL 보정 - P1~P4]
     HoldingProc --> DynamicExit[실시간 익절/손절 감시]
     DynamicExit --> EmergencyExit[긴급 탈출: 패닉/Defensive 전환/급락]
     DynamicExit --> PartialExit[수익 확정: 분할 매도 및 쿨다운]
     HoldingProc --> Phase4_Exit[Phase 4: 장 마감 전 AI 통합 배치 리뷰/정리]
 
     %% [Entry Engine]
-    Main --> EntryEngine[4. 매수 엔진 - EntryManager]
-    EntryEngine --> AI_Buy[AI 자율 매수: 신규 진입]
-    AI_Buy --> AI_Confirm[Gemini 최종 컨펌: 상투 방어/과열 체크]
+    Main --> EntryEngine[4. 매수 엔진 - Entry/Recovery/Pyramiding]
+    EntryEngine --> AI_Buy[AI 자율 매수: 신규 진입/종목 교체]
+    AI_Buy --> AI_Confirm[VibeAlphaEngine: 상투 방어/BUY_ZONE 체크]
     EntryEngine --> Recovery[Recovery Engine: 물타기 - 하락 대응]
     EntryEngine --> Pyramiding[Pyramiding Engine: 불타기 - 상승 추종]
 
     %% [Infrastructure]
-    Main --> Infra[5. 인프라 및 상태 저장]
-    Infra --> StateSync[영속성: trading_state.json 실시간 동기화]
-    Infra --> DataReliability[데이터 신뢰: MA 3중 백업 및 소스 트래킹]
+    Main --> Infra[5. 인프라 및 로깅]
+    Infra --> StateSync[DataManager: trading_state.json 실시간 동기화]
+    Infra --> Logger[TradingLogManager: JSON/텍스트 로그 및 텔레그램 알림]
 ```
 
 ---
 
-## 2. Functional Unit & Test Case Checklist
+## 2. Functional Unit Specification (Docstring Based)
 
-### ✅ [A] 수동 설정 및 제어 (Manual Commands)
-- [ ] **1/2 (매도/매수)**: 번호/코드 입력 시 지정된 수량과 가격(또는 시장가)으로 즉시 주문이 나가는가?
-- [ ] **3 (TP/SL 수정)**: 개별 종목 또는 기본 전략의 익절/손절선 변경이 즉시 반영되는가?
-- [ ] **4/5/6 (엔진 설정)**: AI매수, 물타기, 불타기 엔진의 금액/한도/자동모드 변경이 즉시 영속 저장되는가?
-- [ ] **8 (즉시 분석)**: 타이머와 무관하게 AI 시황 및 종목 분석이 즉시 실행되는가?
-- [ ] **9 (전략 할당)**: 특정 종목에 전략 프리셋(예: 05-추세추종)을 수동 할당 시 TP/SL이 갱신되는가?
-- [ ] **7 (심층 분석)**: 입력한 종목 코드에 대한 3D 분석 리포트가 생성되는가?
+### 🛰️ Market Analyzer & Risk Manager
+- **장세 판단**: KOSPI/KOSDAQ 지수와 DEMA(20)의 이격도를 분석하여 Bull/Bear/Defensive 판정.
+- **패닉 차단**: 글로벌 지수(NASDAQ 등) 급락 시 `is_panic=True`로 모든 신규 매수 원천 차단.
+- **현금 보호**: Vibe별 최소 현금 비중(Bear 30%, Defensive 80%) 미달 시 매수 엔진 비활성화.
 
-### ✅ [B] 시장 진단 및 리스크 (Market & Risk)
-- [ ] **VIBE 판정**: 지수 DEMA(20) 위치 및 당일 등락률에 따른 Bull/Bear/Defensive 정확도.
-- [ ] **글로벌 패닉**: 미지수 -1.5% 시 `is_panic` 활성화 및 모든 매수 차단.
-- [ ] **현금 비중**: Bear(30%) / Defensive(80%) 상황에서 매수 집행 거절 확인.
+### 🛡️ Exit Manager (Exit Strategy)
+- **가변 임계치**: Vibe와 Phase(P1~P4)를 결합하여 실시간 TP/SL 보정.
+- **쿨다운 관리**: 익절 후 1시간 동안 재익절 제한 (불타기 시 리셋).
+- **긴급 청산**: 수익률이 보정된 TP보다 3% 이상 높거나 거래량 폭발 시 즉시 탈출.
 
-### ✅ [C] 매도 로직 및 긴급 대응 (Exit Strategy)
-- [ ] **VIBE 보정**: Bull(+3%/-1%), Bear(-2%/-2%), Defensive(-3%/-3%) 보정치 적용.
-- [ ] **익절 쿨다운**: 분할 익절 후 1시간 제한 (불타기/수동 매수 시 리셋 확인).
-- [ ] **긴급 바이패스**: 수익률 ≥ TP + 3.0% 또는 거래량 폭발 시 즉시 전량 익절.
-
-### ✅ [D] 매수 엔진 및 교체 (Entry Strategy)
-- [ ] **상투 방어**: 상승장 등락률 가점 제한(+4% Cap) 및 `OVERBOUGHT`(20MA +3%) 차단.
-- [ ] **종목 교체**: 15점 이상 우위 및 기존 종목 30분 보유 조건 충족 시에만 집행.
-- [ ] **물타기/불타기**: 트리거 조건(수익률, 평단 대비 위치) 및 현금 비중 체크.
-
-### ✅ [E] 상태 관리 및 영속성 (State Management)
-- [ ] **State Sync**: 모든 수동 설정(1~9번 커맨드 결과)이 `trading_state.json`에 즉시 기록되는가?
-- [ ] **데이터 Fallback**: KIS 실패 시 Naver XML/JSON 백업 소스 작동 확인.
+### 🚀 Entry Engines (AI/Recovery/Pyramiding)
+- **VibeAlphaEngine**: 뉴스, 펀더멘털, 기술적 지표를 결합한 100점 만점 퀀트 스코어링.
+- **Recovery Engine**: 손절선 직전에서 평단가를 낮추는 물타기 로직. (직전 물타기 대비 -2% 조건)
+- **Pyramiding Engine**: 상승 추세에서 비중을 확대하는 불타기 로직. (수익률 3% 이상 & 상승장)
 
 ---
 
-## 3. Test Condition Matrix (Edge Cases)
+## 3. Test Coverage (Ver 1.6.5)
 
-| 대상 로직 | 발동 조건 (Input) | 기대 결과 (Output) |
-| :--- | :--- | :--- |
-| **수동 전략 할당(9)** | 프리셋 03 적용, 수익률 +2.5% | **익절 실행** (03 프리셋 TP 도달 시) |
-| **설정 변경(4, 5, 6)** | 자동모드 OFF 설정 후 조건 충족 | **매매 스킵** (Manual Mode 유지) |
-| **수동 매수(2)** | 비보유 종목 수동 매수 집행 | **매수 후 AI 전략 자동 할당** 확인 |
-| **기본 전략 수정(3)** | 기본 TP를 +5%에서 +10%로 수정 | **미지정 종목 전체 TP 상향** 반영 |
-| **즉시 분석(8)** | 분석 실행 중 재실행 시도 | **중복 실행 차단** (is_analyzing 체크) |
+### ✅ [T-01] 인프라 및 연결성 테스트
+- [x] **`tests/test_kis_price.py`**: KIS 시세 조회 API 응답성 및 도메인 정합성 확인.
+- [x] **`tests/test_naver_api.py`**: 네이버 환율 및 지수 데이터 수집 확인.
+- [x] **`tests/verify_gemini_api.py`**: 멀티 LLM(Gemini/Groq) 통신 및 모델 리스트 확인.
+
+### ✅ [T-02] 데이터 수집 및 가공
+- [x] **`tests/test_naver_ranking.py`**: 인기/거래량 종목 데이터 무결성 및 필터링 확인.
+
+### ✅ [T-03] 핵심 로직 통합 테스트
+- [x] **`tests/test_advanced_integration.py`**:
+    - [x] 수동 매매 및 임계치 수정 시나리오.
+    - [x] 물타기/불타기 트리거 및 현금 보호 로직.
+    - [x] 장 마감(P3/P4) 수익 확정 및 AI 종목 교체 매매.
+    - [x] 상투 매수 방어 및 0원 데이터 보호.
 
 ---
 
-## 4. Current Branch Status (2026-05-06)
-- **업데이트**: 숫자 커맨드(1~6, 8, 9) 전체 로직 트리 통합 완료.
-- **다음 단계**: 수동 설정 변경에 따른 자동 매매 엔진의 반응성 검증 테스트 구현.
+## 4. Maintenance Notes (2026-05-08)
+- **문서화**: 전 모듈 Google 스타일 Docstring 적용 및 타입 힌트 표준화 완료.
+- **테스트**: KIS 랭킹 테스트를 시세 조회(`test_kis_price.py`)로 명확히 분리 및 통합 완료.
+- **다음 단계**: 백테스팅 엔진과 실시간 시뮬레이션 데이터 동기화 정밀도 향상.

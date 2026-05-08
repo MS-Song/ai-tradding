@@ -31,12 +31,12 @@ def test_naver_ranking():
         for i, item in enumerate(vol[:10], 1):
             print(f"    {i}. [{item['mkt']}] {item['name']} ({item['code']}) -> Vol: {item['vol']:,}, {item['rate']:+.2f}%")
 
-    # 3. Filtering Check
-    print("\n[*] Checking Filtering Logic...")
-    risky_samples = ["삼성전자", "삼성전자우", "관리종목A", "거래정지주"]
-    for s in risky_samples:
-        is_risky = api._filter_risky_stocks(s)
-        print(f"    '{s}': {'Filtered (Risky/Pref)' if is_risky else 'Passed'}")
+    # 3. Filtering Check (Legacy logic removed, checking name existence)
+    print("\n[*] Checking Data Integrity...")
+    for item in hot + vol:
+        assert 'name' in item and 'code' in item
+        assert isinstance(item['price'], (int, float))
+    print("    [+] Data integrity check passed.")
 
 if __name__ == "__main__":
     test_naver_ranking()

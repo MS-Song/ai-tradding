@@ -5,13 +5,27 @@ from src.logger import log_error
 from src.utils import is_ai_enabled_time
 
 class MarketAnalyzer:
+    """시장 전체의 흐름(VIBE)과 위기 상황(Panic)을 분석하는 엔진.
+    
+    국내외 주요 지수 및 가상자산 데이터를 통합하여 시장의 장세(VIBE)를 판정합니다.
+    DEMA(20) 추세 분석과 AI(LLM) 검증을 결합하여 고도화된 시황 분석 결과를 제공하며,
+    글로벌 지수 급락 시 매매를 차단하는 리스크 관리 기능을 수행합니다.
+
+    Attributes:
+        api: KIS API 인스턴스.
+        indicator_eng: 기술적 지표 계산 엔진.
+        current_data (dict): 수집된 최신 시장 데이터.
+        is_panic (bool): 글로벌 패닉 상태 여부.
+        kr_vibe (str): 최종 확정된 한국 시장 VIBE.
+        dema_info (dict): 지수별 DEMA 분석 정보.
+    """
     def __init__(self, api, indicator_eng=None):
         self.api = api
         self.indicator_eng = indicator_eng
         self.current_data = {}
         self.is_panic = False
         self.kr_vibe = "Neutral"
-        self.dema_info = {} # [추가] 지수별 DEMA 정보 저장
+        self.dema_info = {} # [추가] 지수별 DEMA 정보 저장 (KOSPI/KOSDAQ)
         
         # AI 검증 연동용
         self.ai_advisor = None
@@ -26,13 +40,24 @@ class MarketAnalyzer:
         self.last_vibe_update = 0     # [추가] 마지막 Vibe 분석 시간
 
     def update(self, force_ai: bool = False, external_data: dict = None) -> Tuple[str, bool]:
-        """지수 데이터를 업데이트하고 시장 장세를 분석합니다."""
+        """지수 데이터를 최신화하고 시장 장세를 종합 분석합니다.
+
+        국내외 지수 데이터를 수집하여 알고리즘 기반의 1차 판정을 내리고, 
+        필요 시 AI(LLM) 검증을 거쳐 최종적인 시장 분위기(VIBE)와 패닉 여부를 확정합니다.
+
+        Args:
+            force_ai (bool, optional): 시간 제한을 무시하고 강제로 AI 검증을 수행할지 여부. 기본값 False.
+            external_data (dict, optional): 외부 워커에서 이미 수집된 지수 데이터. 기본값 None.
+
+        Returns:
+            Tuple[str, bool]: (최종 확정된 kr_vibe, 글로벌 패닉 여부).
+        """
         if external_data:
             # 외부에서 주입된 데이터가 있으면 바로 사용
             for s, data in external_data.items():
                 if data: self.current_data[s] = data
         else:
-            # 주입된 데이터가 없으면 기존처럼 직접 수집
+            # 주입된 데이터가 없으면 직접 수집
             symbol_map = {
                 "KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ", "KPI200": "KPI200", "VOSPI": "VOSPI",
                 "FX_USDKRW": "FX_USDKRW", "DOW": "DOW", "NASDAQ": "NASDAQ", "S&P500": "S&P500",
@@ -45,12 +70,13 @@ class MarketAnalyzer:
                     if data: self.current_data[s] = data
             except RuntimeError:
                 return self.kr_vibe, self.is_panic 
+
         # 1차 평가 (알고리즘 기반 휴리스틱)
         heuristic_vibe = self._check_circuit_breaker()
         if heuristic_vibe == "Neutral":
             heuristic_vibe = self._check_kr_vibe()
         
-        # [Fix] 글로벌 패닉 상태 실시간 갱신 로직 누락 수정
+        # 글로벌 패닉 상태 실시간 갱신
         self.is_panic = self._check_global_panic()
         
         # BTC 기반 VIBE 추가 보정: 비트코인 급락 시 Bull -> Neutral 강제 하향
@@ -64,7 +90,18 @@ class MarketAnalyzer:
         return self.kr_vibe, self.is_panic
         
     def _verify_with_ai(self, heuristic_vibe: str, force_ai: bool = False) -> str:
-        """AI를 통해 시장 장세를 검증받고 오버라이드. (장애 허용 지원)"""
+        """AI(LLM)를 통해 휴리스틱으로 판정된 시장 Vibe를 재검증 및 교정합니다.
+
+        15분 주기 또는 지수 급변동(1.0% 이상) 시 AI를 호출하여 정성적 시황 분석을 
+        수행합니다. AI 호출이 실패하거나 유효 시간이 아닐 경우 기존 알고리즘 결과를 유지합니다.
+
+        Args:
+            heuristic_vibe (str): 알고리즘에 의해 1차 판정된 Vibe.
+            force_ai (bool): 강제 호출 여부.
+
+        Returns:
+            str: AI가 검증 및 보정한 최종 Vibe.
+        """
         # 기본적으로 알고리즘 결과를 디폴트로 세팅
         if not self.ai_advisor:
             self.ai_override_msg = ""
@@ -130,6 +167,11 @@ class MarketAnalyzer:
         return heuristic_vibe
 
     def _check_circuit_breaker(self) -> str:
+        """변동성 지수 및 환율 등을 통해 방어모드(Defensive) 여부를 판단합니다.
+
+        Returns:
+            str: "DEFENSIVE" 또는 "Neutral".
+        """
         vix = self.current_data.get("VOSPI")
         if vix and (vix['price'] >= 25.0 or vix['rate'] >= 5.0): return "DEFENSIVE"
         usd_krw = self.current_data.get("FX_USDKRW")
@@ -143,6 +185,14 @@ class MarketAnalyzer:
         return "Neutral"
 
     def _check_global_panic(self) -> bool:
+        """글로벌 지수 급락 상황을 체크하여 매매 차단 패닉 여부를 반환합니다.
+
+        나스닥, S&P500 또는 비트코인이 임계치 이하로 급락할 경우 리스크 
+        회피를 위해 매수를 차단합니다.
+
+        Returns:
+            bool: 패닉 상태면 True.
+        """
         us_targets = ["NASDAQ", "S&P500", "NAS_FUT", "SPX_FUT"]
         for target in us_targets:
             data = self.current_data.get(target)
@@ -155,6 +205,14 @@ class MarketAnalyzer:
         return False
 
     def _check_kr_vibe(self) -> str:
+        """국내 지수 등락률과 DEMA(20) 추세를 결합하여 한국 시장 VIBE를 판정합니다.
+
+        코스피/코스닥 지수의 평균 등락률과 장기 추세 지표인 DEMA(20)의 이격도를 
+        분석하여 상승(Bull), 하락(Bear), 또는 보합(Neutral) 여부를 결정합니다.
+
+        Returns:
+            str: 판정된 Vibe 문자열.
+        """
         dema_signals = []
         kr_targets = {"KOSPI": "0001", "KOSDAQ": "1001"}
         active_kr = [self.current_data.get(k) for k in kr_targets if self.current_data.get(k)]
@@ -192,11 +250,11 @@ class MarketAnalyzer:
         if avg_rate <= -0.5 and "BEAR" in dema_signals:
             return "Bear"
         
-        # 3. 추세는 상승인데 오늘만 조종이거나, 추세는 하락인데 오늘만 반등인 경우 -> 중립 또는 기존 유지
-        # 여기서는 좀 더 보수적으로 접근
+        # 3. 추세는 상승인데 오늘만 조정이거나, 추세는 하락인데 오늘만 반등인 경우
         if avg_rate > 0 and dema_signals.count("BULL") == len(kr_targets):
             return "Bull"
         if avg_rate < 0 and dema_signals.count("BEAR") == len(kr_targets):
             return "Bear"
             
         return "Neutral"
+

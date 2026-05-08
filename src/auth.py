@@ -6,6 +6,21 @@ import threading
 from src.logger import logger
 
 class KISAuth:
+    """한국투자증권(KIS) API 인증 및 토큰 관리를 담당하는 클래스.
+
+    OAuth 2.0 기반의 접근 토큰(Access Token) 발급 및 갱신을 처리하며,
+    파일 캐싱(.token_cache.json)을 통해 여러 프로세스 간 토큰을 공유합니다.
+    쓰레드 세이프(Thread-safe)한 토큰 발급 로직을 포함합니다.
+
+    Attributes:
+        appkey (str): KIS 앱 키.
+        secret (str): KIS 앱 시크릿.
+        cano (str): 계좌 번호 (체계번호 8자리).
+        acnt_prdt_cd (str): 계좌 상품 코드 (보통 '01').
+        is_virtual (bool): 모의투자 계좌 여부.
+        domain (str): API 접속 도메인 (모의/실전 구분).
+        access_token (str): 현재 유효한 접근 토큰.
+    """
     def __init__(self, is_virtual=None):
         self.appkey = os.getenv("KIS_APPKEY")
         self.secret = os.getenv("KIS_SECRET")
@@ -33,7 +48,11 @@ class KISAuth:
         self._is_handling_error = False
 
     def _load_token_cache(self):
-        """파일에서 저장된 토큰 정보 로드"""
+        """로컬 파일 캐시에서 토큰 정보를 로드합니다.
+
+        Returns:
+            bool: 로드 성공 여부.
+        """
         if not os.path.exists(self.cache_file):
             return False
         
@@ -50,7 +69,7 @@ class KISAuth:
         return False
 
     def _save_token_cache(self):
-        """새로 발급받은 토큰 정보를 파일에 저장"""
+        """새로 발급받은 토큰 정보를 로컬 파일 캐시에 저장합니다."""
         try:
             cache = {
                 "access_token": self.access_token,
@@ -63,7 +82,11 @@ class KISAuth:
             logger.error(f"토큰 캐시 저장 실패: {e}")
 
     def is_token_valid(self):
-        """현재 토큰이 유효한지(10분 이내) 확인"""
+        """현재 보유한 토큰이 시간상 유효한지 확인합니다.
+
+        Returns:
+            bool: 유효하면 True, 만료되었거나 없으면 False.
+        """
         # 메모리에 없으면 파일에서 먼저 읽어옴
         if not self.access_token:
             self._load_token_cache()
@@ -75,7 +98,14 @@ class KISAuth:
         return elapsed < self.token_expiry_sec
 
     def generate_token(self):
-        """OAuth 2.0 토큰 발급 (쓰레드 세이프, 파일 기반 공유)"""
+        """OAuth 2.0 토큰을 발급받거나 갱신합니다.
+
+        Double-checked locking 패턴을 사용하여 멀티쓰레드 환경에서
+        중복 발급 요청을 방지하고 성능을 최적화합니다.
+
+        Returns:
+            bool: 토큰 확보 성공 여부.
+        """
         # 1. 먼저 락 없이 현재 메모리/캐시가 유효한지 확인 (Fast path)
         if self.is_token_valid():
             return True
@@ -132,6 +162,11 @@ class KISAuth:
                 return False
 
     def get_auth_headers(self):
+        """API 호출에 필요한 인증 헤더를 생성하여 반환합니다.
+
+        Returns:
+            dict: Authorization Bearer 토큰 및 앱 키 정보가 포함된 헤더.
+        """
         # 헤더 요청 시 토큰이 유효하지 않으면 자동 갱신 시도
         if not self.is_token_valid():
             self.generate_token()

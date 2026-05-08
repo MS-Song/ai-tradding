@@ -10,78 +10,112 @@ from src.logger import log_error
 from src.strategy.constants import PRESET_STRATEGIES
 
 class BaseAdvisor(ABC):
+    """트레이딩 엔진의 두뇌 역할을 하는 AI 어드바이저의 추상 인터페이스.
+    
+    시장 상황 분석, 개별 종목 진단, 포트폴리오 전략 수립, 매매 최종 컨펌 등 
+    의사결정에 필요한 핵심 메서드들을 정의합니다.
+    """
     @abstractmethod
     def get_advice(self, market_data: dict, vibe: str, holdings: List[dict], current_config: dict, recs: List[dict] = None, indicators: dict = None) -> Optional[str]:
+        """시황 및 추천 종목을 바탕으로 전반적인 투자 전략 제언을 생성합니다."""
         pass
 
     @abstractmethod
     def get_detailed_report_advice(self, recs: List[dict], vibe: str, progress_cb: Optional[Callable] = None) -> Optional[str]:
+        """추천 종목들에 대한 심층 분석 리포트를 생성합니다."""
         pass
 
     @abstractmethod
     def get_stock_report_advice(self, code: str, name: str, detail: dict, news: List[str]) -> Optional[str]:
+        """특정 개별 종목에 대한 정밀 진단 및 대응 전략을 생성합니다."""
         pass
 
     @abstractmethod
     def get_holdings_report_advice(self, holdings: List[dict], vibe: str, market_data: dict, progress_cb: Optional[Callable] = None) -> Optional[str]:
+        """현재 보유 중인 포트폴리오 전체에 대한 건강도 진단 및 종목별 의견을 생성합니다."""
         pass
 
     @abstractmethod
     def get_hot_stocks_report_advice(self, hot_stocks: List[dict], themes: List[dict], vibe: str, progress_cb: Optional[Callable] = None) -> Optional[str]:
+        """당일 실시간 인기 검색 종목 및 테마에 대한 트렌드 분석을 수행합니다."""
         pass
 
     @abstractmethod
     def simulate_preset_strategy(self, code: str, name: str, vibe: str, detail: dict = None, news: List[str] = None) -> Optional[dict]:
+        """종목의 특성과 시황을 고려하여 최적의 프리셋 전략(TP/SL/유효시간)을 도출합니다."""
         pass
 
     @abstractmethod
     def final_buy_confirm(self, code: str, name: str, vibe: str, detail: dict, news: List[str], indicators: dict = None, score: float = 0.0) -> Tuple[bool, str]:
+        """매수 집행 직전, 기술적 지표와 뉴스를 2차 검증하여 최종 승인 여부를 결정합니다."""
         pass
 
     @abstractmethod
     def verify_market_vibe(self, current_data: dict, heuristic_vibe: str) -> Optional[str]:
+        """알고리즘이 판정한 시장 장세를 AI 관점에서 재검증하여 확정합니다."""
         pass
 
     @abstractmethod
     def closing_sell_confirm(self, code: str, name: str, vibe: str, rt: float, detail: dict, news: List[str]) -> Tuple[bool, str]:
+        """장 마감 직전, 오버나이트 리스크를 고려하여 보유 종목의 청산 여부를 결정합니다."""
         pass
 
     @abstractmethod
     def get_rebalance_advice(self, portfolio_summary: List[dict]) -> Optional[str]:
+        """자산 비중 및 수익률을 고려하여 포트폴리오 리밸런싱 전략을 제안합니다."""
         pass
 
     @abstractmethod
     def compare_stock_superiority(self, candidate: dict, holdings_info: List[dict], vibe: str) -> Tuple[bool, Optional[str], str]:
+        """신규 후보 종목과 기존 보유 종목을 비교하여 종목 교체(Replacement) 여부를 결정합니다."""
         pass
 
     @abstractmethod
     def get_portfolio_strategic_review(self, holdings_data: List[dict], vibe: str, market_data: dict) -> Optional[dict]:
-        """
-        보유 종목 전체를 한 번에 진단하여 매도 여부 및 전략 업데이트를 결정합니다.
-        """
+        """보유 종목 전체를 일괄 진단(Batch Review)하여 매도 또는 전략 갱신을 수행합니다."""
         pass
 
     @abstractmethod
     def analyze_trade_retrospective(self, date_str: str, vibe: str, profits: List[dict], losses: List[dict], is_update: bool = False) -> Optional[str]:
-        """
-        당일 매매 복기 분석: 수익/손실 TOP 종목의 사유를 분석하여
-        적중 여부를 판정하고 개선점을 도출합니다.
-        """
+        """당일 매매 결과를 복기하여 적중 여부를 판정하고 실전 교훈을 도출합니다."""
         pass
 
 class BaseLLMAdvisor(BaseAdvisor):
+    """LLM 기반 어드바이저의 공통 로직을 구현하는 베이스 클래스.
+    
+    API 호출 시의 Rate Limiting(CPS 제어), 프롬프트 템플릿 관리, 
+    응답 데이터 파싱(Regex/JSON) 등의 유틸리티 기능을 제공합니다.
+
+    Attributes:
+        api: LLM API 호출을 위한 클라이언트.
+        model_id (str): 사용할 LLM 모델의 명칭.
+        max_cps (float): 초당 최대 API 호출 횟수 (Rate Limit 준수용).
+    """
     # API 키별 마지막 호출 시간을 추적하기 위한 클래스 변수 (모든 인스턴스가 공유)
     _last_call_times = {}
     _lock = threading.Lock()
 
     def __init__(self, api, model_id, max_cps: float = 1.0):
+        """BaseLLMAdvisor를 초기화합니다.
+
+        Args:
+            api: LLM 서비스 공급자(Gemini, Groq 등)의 클라이언트 인스턴스.
+            model_id (str): 사용할 LLM 모델의 명칭 (예: 'gemini-3.1-flash').
+            max_cps (float): 초당 최대 API 호출 횟수. 0 이하일 경우 제한 없음.
+        """
         self.api = api
         self.model_id = model_id
         self.max_cps = max_cps # 초당 최대 호출 횟수 (0일 경우 무제한)
         self._short_id = self._generate_short_id(model_id)
 
     def _wait_for_rate_limit(self, api_key: str):
-        """API 키별로 설정된 CPS(Calls Per Second)를 준수하도록 대기"""
+        """설정된 CPS(Calls Per Second)에 따라 다음 API 호출 전까지 대기(Sleep)합니다.
+        
+        API 공급자의 Rate Limit 정책을 준수하여 계정 차단을 방지합니다.
+
+        Args:
+            api_key (str): 호출에 사용되는 API 키.
+        """
         if not api_key or self.max_cps <= 0:
             return
 
@@ -96,6 +130,14 @@ class BaseLLMAdvisor(BaseAdvisor):
             self._last_call_times[api_key] = now
 
     def _generate_short_id(self, m_id: str) -> str:
+        """모델 이름을 TUI 로그에 표시하기 적합한 짧은 약어(예: G3.1P)로 변환합니다.
+
+        Args:
+            m_id (str): 원본 모델 ID 문자열.
+
+        Returns:
+            str: 변환된 약어 식별자.
+        """
         parts = m_id.split('-')
         res = ""
         for p in parts:
@@ -108,14 +150,29 @@ class BaseLLMAdvisor(BaseAdvisor):
 
     @property
     def short_id(self):
+        """모델의 짧은 식별자 문자열."""
         return self._short_id
 
     @abstractmethod
     def _call_api(self, prompt: str, timeout: int = 60) -> Optional[str]:
+        """하위 클래스에서 각 공급자(Gemini, Groq 등)에 맞게 구현하는 실제 API 호출부입니다.
+
+        Args:
+            prompt (str): 모델에 전달할 프롬프트 문자열.
+            timeout (int): API 응답 대기 시간 (초).
+
+        Returns:
+            Optional[str]: 모델의 응답 텍스트. 실패 시 None.
+        """
         pass
 
     # 공통 프롬프트 로직 구현
     def get_advice(self, market_data, vibe, holdings, current_config, recs=None, indicators=None):
+        """종합 시황 분석 프롬프트를 구성하여 AI 전략을 수립합니다.
+        
+        기술적 지표(MA, RSI, %b)와 시장 DEMA 추세, 계좌 잔고 상태를 결합하여 
+        익절/손절선 및 신규 매수 종목을 도출합니다.
+        """
         holdings_txt = "\n".join([f"- {h['prdt_name']}({h['pdno']}): {h['evlu_pfls_rt']}%" for h in holdings[:5]])
         recs_txt = ""
         if recs:
@@ -182,6 +239,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return self._call_api(prompt)
 
     def get_detailed_report_advice(self, recs, vibe, progress_cb=None):
+        """추천 종목들에 대한 정량/정성 데이터를 수집하여 한 줄 리포트를 생성합니다."""
         if not recs: return "분석할 종목이 없습니다."
         current, total = 0, len(recs)
         lock = threading.Lock()
@@ -208,6 +266,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return self._call_api(prompt)
 
     def get_stock_report_advice(self, code, name, detail, news):
+        """개별 종목의 가격 변동 원인과 뉴스 모멘텀을 분석하여 심층 리포트를 생성합니다."""
         rate = detail.get('rate', 0)
         curr_p = int(float(detail.get('price', 0)))
         prompt = f"""
@@ -224,6 +283,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return self._call_api(prompt)
 
     def get_holdings_report_advice(self, holdings, vibe, market_data, progress_cb=None):
+        """보유 종목 전체의 수익 현황과 최신 뉴스를 결합하여 TUI용 진단 리포트를 생성합니다."""
         if not holdings: return "보유 중인 종목이 없습니다."
         current, total = 0, len(holdings)
         lock = threading.Lock()
@@ -260,6 +320,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return self._call_api(prompt)
 
     def get_rebalance_advice(self, portfolio_summary):
+        """특정 종목 편중 리스크나 모멘텀 둔화를 감지하여 리밸런싱 전략을 도출합니다."""
         prompt = f"""
         당신은 수석 포트폴리오 전략가입니다. 아래 포트폴리오의 비중과 수익률을 분석하여 최적의 리밸런싱 제안을 하세요.
         
@@ -279,6 +340,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return self._call_api(prompt)
 
     def get_hot_stocks_report_advice(self, hot_stocks, themes, vibe, progress_cb=None):
+        """당일 이슈가 되는 인기 종목들의 테마 지속성과 매수 가치를 분석합니다."""
         if not hot_stocks: return "인기 종목 데이터가 없습니다."
         current, total = 0, min(10, len(hot_stocks))
         lock = threading.Lock()
@@ -304,6 +366,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return self._call_api(prompt)
 
     def simulate_preset_strategy(self, code, name, vibe, detail=None, news=None):
+        """종목 고유의 변동성과 뉴스를 반영하여 가장 적합한 트레이딩 프리셋을 선정합니다."""
         preset_list = "\n".join([f"  {sid}: {s['name']}" for sid, s in PRESET_STRATEGIES.items() if sid != "00"])
         prompt = f"""
         적합한 프리셋 전략 1개와 동적 TP/SL 제안.
@@ -335,6 +398,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return None
 
     def final_buy_confirm(self, code, name, vibe, detail, news, indicators=None, score=0.0, phase=None):
+        """매수 집행 전 최종 승인 단계를 수행하며, 이평선 지지/이탈 여부를 최우선으로 고려합니다."""
         phase_txt = f"[{phase.get('name', 'UNKNOWN')}]" if phase else ""
         # [추가] MA 분석 텍스트 생성
         ma_txt = ""
@@ -380,6 +444,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return False, "API 호출 실패"
 
     def verify_market_vibe(self, current_data, heuristic_vibe):
+        """알고리즘 기반의 장세 판정을 AI가 시황 데이터를 바탕으로 2차 검증합니다."""
         prompt = f"""
         시장 지표: {json.dumps(current_data, ensure_ascii=False)}
         현재 알고리즘 판정: {heuristic_vibe}
@@ -396,6 +461,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return None
 
     def closing_sell_confirm(self, code, name, vibe, rt, detail, news, tp=None, sl=None):
+        """장 마감 전 오버나이트 여부를 결정합니다. 추세 지속성 유무가 핵심 판단 기준입니다."""
         target_info = f" (목표 {tp:+.1f}%, 손절 {sl:.1f}%)" if tp is not None else ""
         prompt = f"""
         [장 마감 10분 전 최종 판단]
@@ -420,6 +486,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return True, "API 호출 실패"
 
     def compare_stock_superiority(self, candidate, holdings_info, vibe):
+        """포트폴리오 한도 도달 시, 신규 종목과 기존 종목의 기회비용을 비교하여 교체 매매를 제안합니다."""
         holdings_str = "\n".join([f"- {h['name']}({h['code']}): 수익률 {h['rt']:+.2f}%, 상세정보: {h.get('detail', '없음')}" for h in holdings_info])
         prompt = f"""
         계좌 내 보유 종목 한도(8개)가 꽉 찼습니다. 신규 매수 후보 종목이 기존 보유 종목 중 하나보다 "압도적으로" 우수한지 판단하여 교체(스위칭) 여부를 결정하세요.
@@ -458,6 +525,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return False, None, "API 호출 실패"
 
     def get_portfolio_strategic_review(self, holdings_data, vibe, market_data):
+        """전체 포트폴리오를 한 번에 리뷰(Batch Review)하여 각 종목별 즉시 매도 또는 전략 갱신을 수행합니다."""
         if not holdings_data: return None
         
         preset_list = "\n".join([f"  {sid}: {s['name']}" for sid, s in PRESET_STRATEGIES.items() if sid != "00"])
@@ -503,12 +571,7 @@ class BaseLLMAdvisor(BaseAdvisor):
         return None
 
     def analyze_trade_retrospective(self, date_str, vibe, profits, losses, is_update=False):
-        """
-        매매 복기 분석: 당일 수익/손실 TOP 종목에 대해 AI가 사후 분석을 수행합니다.
-        - 매매 결정의 적절성 평가
-        - 타이밍 분석 (너무 일찍/늦게 팔았는지)
-        - 개선점 및 교훈 도출
-        """
+        """장 마감 후 당일의 주요 매매 건을 분석하여 타이밍의 적절성을 평가하고 교훈을 기록합니다."""
         profit_txt = ""
         for i, s in enumerate(profits, 1):
             trades_detail = ""

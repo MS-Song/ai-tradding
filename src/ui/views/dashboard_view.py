@@ -4,6 +4,7 @@ import time
 import threading
 import io
 import re
+from typing import List, Dict, Optional
 from datetime import datetime
 from src.utils import *
 from src.theme_engine import get_cached_themes, get_theme_for_stock
@@ -12,6 +13,32 @@ from src.logger import trading_log
 from src.ui.renderer import VERSION_CACHE, truncate_log_line
 
 def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
+    """시스템의 메인 제어 센터이자 실시간 모니터링 대시보드를 렌더링합니다.
+
+    이 함수는 시황, 자산 현황, 보유 종목, 추천 종목, 실시간 차트 등 모든 핵심 정보를 
+    터미널 UI(TUI) 형태로 레이아웃하며, `StringIO` 버퍼를 사용하여 화면 깜박임을 최소화합니다.
+
+    Args:
+        strategy: 트레이딩 전략 객체 (시황 분석 및 AI 브리핑 데이터 포함).
+        dm: 데이터 매니저 객체 (실시간 지수, 자산, 보유 종목 등 캐시 데이터 참조).
+        cycle_info (dict): 현재 루프 주기 정보 (사용되지 않으나 인터페이스 유지용).
+        prompt_mode (str, optional): 현재 입력 모드 (STRATEGY 등). 기본값 None.
+
+    Layout:
+        1. 헤더 (Header): 시스템 버전, 시장 개장 상태, 현재 VIBE/PHASE, 활성 워커 정보 및 실시간 클락.
+        2. 지수 영역 (Indices): 국장/미장 주요 지수, 환율, 비트코인 시세 및 김치 프리미엄.
+        3. 전략 브리핑 (AI Briefing): AI가 도출한 현재 시장 진단, 매매 전략, 액션 가이드라인.
+        4. 자산/설정 (Asset & Setup): 총자산(수익률), 일일 손익, AI 매수 금액, 종목별 투자 한도, 리스크 한도(Halt 상태).
+        5. 보유 종목 (Holdings): 종목명, 수익률, 기술적 지표(전일대비/거래량), 개별 TP/SL 및 전략 라벨.
+        6. 실시간 랭킹 (Rankings): 실시간 인기, 거래량 폭발, 테마별 대장주, AI 자동/수동 추천 종목 리스트.
+        7. 라이브 차트 (Live Chart): 현재 선택된 종목의 분봉 캔들 차트 (ANSI 그래픽).
+        8. 로그 영역 (Logs): 시스템 하단에 고정된 최근 거래 및 작업 로그 (최대 10개).
+
+    Logic:
+        - `align_kr`: 한글 폭(2)과 영문 폭(1)을 계산하여 터미널 정렬이 깨지지 않도록 보정합니다.
+        - `ANSI 색상`: 수익(빨강), 손실(파랑), 경고(노랑), 특수(보라) 등 상태를 직관적으로 전달합니다.
+        - `실시간 갱신`: 데이터 변경 시 버퍼를 다시 쓰고 표준 출력으로 플러시하여 부드러운 UI를 제공합니다.
+    """
     if dm.is_full_screen_active: return
     with dm.ui_lock:
         try:
@@ -67,9 +94,19 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     
     # 시간 정보: 년-월-일(요일-한글1자) 시:분:초
     def get_korean_weekday(dt):
+        """날짜 객체로부터 한글 요일(월~일) 한 글자를 반환합니다."""
         return ["월", "화", "수", "목", "금", "토", "일"][dt.weekday()]
 
     def get_time_text(dt, level):
+        """너비 제약에 따라 다양한 형식의 시간 문자열을 생성합니다.
+
+        Args:
+            dt (datetime): 표시할 시간 객체.
+            level (int): 상세도 수준 (0: 전체, 3: 시간만).
+
+        Returns:
+            str: 포맷팅된 시간 문자열.
+        """
         wd = get_korean_weekday(dt)
         if level == 0: return dt.strftime(f'%Y-%m-%d({wd}) %H:%M:%S')
         if level == 1: return dt.strftime(f'%m-%d({wd}) %H:%M:%S')
@@ -139,6 +176,16 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     
     with dm.data_lock:
         def fmt_idx(label, k, price_fmt="{:,.0f}"):
+            """지수 정보를 색상과 함께 포맷팅합니다.
+
+            Args:
+                label (str): 지수 이름 (KSP 등).
+                k (str): 데이터 맵의 키.
+                price_fmt (str): 가격 표시 형식.
+
+            Returns:
+                str: ANSI 색상이 적용된 지수 정보 문자열.
+            """
             d = dm.cached_market_data.get(k)
             if not d: return ""
             color = "\033[91m" if d['rate'] >= 0 else "\033[94m"
@@ -463,6 +510,14 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
 
         # [v1.6.4] 동적 정렬을 위한 최대 너비 계산 유틸리티
         def get_col_metrics(items):
+            """리스트 내 종목들의 이름과 가격 정보의 최대 시각 너비를 계산합니다.
+
+            Args:
+                items (list): 종목 딕셔너리 리스트.
+
+            Returns:
+                tuple: (최대 이름 너비, 최대 가격/등락률 너비).
+            """
             max_n, max_p = 0, 0
             for it in items:
                 if not it: continue
@@ -478,7 +533,18 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         m_n_thm, m_p_thm = get_col_metrics(theme_products)
         m_n_ai, m_p_ai = get_col_metrics(ai_recs)
 
-        def fmt_r(item, width, t_n=0, t_p=0):
+        def fmt_r(item: Dict, width: int, t_n=0, t_p=0):
+            """실시간 랭킹(인기, 거래량, 테마) 종목 한 줄을 포맷팅합니다.
+
+            Args:
+                item (dict): 종목 정보.
+                width (int): 할당된 너비.
+                t_n (int): 이름 최대 너비 (참조용).
+                t_p (int): 가격 최대 너비 (참조용).
+
+            Returns:
+                str: 포맷팅된 종목 정보 문자열.
+            """
             if not item: return " " * width
             r = float(item['rate']); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
             name = item.get('name', 'Unknown'); orig_name = name
@@ -507,6 +573,17 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             return f"{prefix}{d_name}{' ' * spaces}{price_txt}"
 
         def fmt_ai(item, width, t_n=0, t_p=0):
+            """AI 추천 종목 한 줄을 [자동]/[수동] 태그와 함께 포맷팅합니다.
+
+            Args:
+                item (dict): 종목 정보.
+                width (int): 할당된 너비.
+                t_n (int): 이름 최대 너비 (참조용).
+                t_p (int): 가격 최대 너비 (참조용).
+
+            Returns:
+                str: 포맷팅된 AI 추천 종목 문자열.
+            """
             if not item: return " " * width
             r = float(item.get('rate', 0)); p = int(float(item.get('price', 0))); c = "\033[91m" if r >= 0 else "\033[94m"
             name = item.get('name', 'Unknown'); orig_name = name

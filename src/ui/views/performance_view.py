@@ -12,6 +12,32 @@ from src.ui.renderer import truncate_log_line
 from src.logger import trading_log
 
 def draw_performance_report(strategy, dm):
+    """시스템의 투자 성과를 다각도로 분석하여 보여주는 TUI 대시보드를 렌더링합니다.
+
+    이 뷰는 종목별/모델별 누적 손익, 금일 매매 성과 복기, 그리고 장 마감 후 생성되는 
+    투자 적중 분석 리포트를 통합하여 사용자가 투자 전략의 유효성을 검증하도록 돕습니다.
+
+    Args:
+        strategy: 트레이딩 전략 객체 (복기 엔진 및 AI 성과 트래킹 포함).
+        dm: 데이터 매니저 객체 (실시간 지수 및 자산 데이터 참조용).
+
+    Tabs:
+        1. 수익 상위: 누적 수익금이 가장 높은 상위 10개 종목과 기여 모델(LLM/TP/SL) 상세.
+        2. 손실 상위: 누적 손실이 가장 큰 상위 10개 종목 분석 (리스크 관리 대상).
+        3. 금일 투자 성과: 오늘 집행된 매수/매도 내역을 좌우 테이블로 비교하며, 
+           진입/청산 타이밍의 적절성을 'Alpha' 지표와 함께 진단합니다.
+        4. 투자 적중: `RetrospectiveEngine`이 생성한 일자별 복기 리포트와 
+           장기 승률/순이익 등 누적 통계를 보여줍니다.
+
+    Logic:
+        - `smart_align`: 종목명과 데이터를 터미널 너비에 맞춰 유동적으로 축약/정렬합니다.
+        - `타이밍 진단`: 매도 후 가격 변동을 추적하여 '완벽/일찍/방어/손절' 등 4단계 피드백을 제공합니다.
+        - `Alpha 분석`: 시장 수익률(KOSPI) 대비 내 수익률의 초과 달성 여부를 실시간 계산합니다.
+
+    Controls:
+        - [1~4]: 각 성과 분석 탭으로 전환.
+        - [Q, ESC, SPACE]: 화면을 닫고 메인 대시보드로 복귀.
+    """
     import io
     import os
     from src.logger import trading_log

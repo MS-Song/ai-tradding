@@ -22,7 +22,11 @@ _code_to_theme_map = {} # {code: theme_name} (Reverse map for O(1) lookup)
 _cached_themes = []
 
 def load_theme_data():
-    """파일에서 동적 테마 데이터를 로드"""
+    """파일(`theme_data.json`)로부터 동적 테마 데이터를 로드하고 역방향 매핑 테이블을 구축합니다.
+    
+    데이터 로드 후 `_rebuild_reverse_map`을 호출하여 O(1) 조회를 위한 
+    코드별 테마 맵을 생성합니다.
+    """
     global _dynamic_theme_map
     if os.path.exists(THEME_DATA_FILE):
         try:
@@ -43,7 +47,11 @@ BROAD_THEMES = [
 ]
 
 def _rebuild_reverse_map():
-    """역방향 매핑 테이블 재구축 (O(1) 조회를 위함)"""
+    """종목 코드별 테마 조회를 위해 역방향 매핑 테이블을 O(1) 성능으로 재구축합니다.
+    
+    일반 테마를 우선적으로 할당하며, 광범위한 테마(BROAD_THEMES)는 해당 종목에 
+    다른 테마가 없을 경우에만 후순위로 할당합니다.
+    """
     global _code_to_theme_map
     new_map = {}
     
@@ -69,6 +77,21 @@ def _rebuild_reverse_map():
     _code_to_theme_map = new_map
 
 def get_theme_for_stock(code: str, name: str) -> str:
+    """주어진 종목 코드와 명칭을 바탕으로 가장 적절한 테마명을 결정합니다.
+
+    우선순위:
+    1. 정적 키워드 직접 매칭 (삼성전자 등 대형주)
+    2. 동적 데이터베이스(역매핑 테이블) 검색
+    3. 하드코딩된 테마 키워드 검색
+    4. ETF 여부 판별
+
+    Args:
+        code (str): 종목 코드.
+        name (str): 종목 명칭.
+
+    Returns:
+        str: 결정된 테마명 (해당 사항 없을 시 "기타").
+    """
     # 0. 대표 종목명 직접 매칭 (가장 높은 우선순위: 삼성전자 등 대형주 테마 오염 방지)
     for theme, keywords in THEME_KEYWORDS.items():
         if name in keywords:
@@ -91,7 +114,11 @@ def get_theme_for_stock(code: str, name: str) -> str:
     return "기타"
 
 def save_theme_data(theme_map: dict):
-    """테마 데이터를 파일에 안전하게 저장 (Atomic Write)"""
+    """테마 데이터를 파일에 안전하게 저장(Atomic Write)하고 메모리 맵을 갱신합니다.
+
+    Args:
+        theme_map (dict): 저장할 {테마명: [종목리스트]} 구조의 데이터.
+    """
     global _dynamic_theme_map
     _dynamic_theme_map = theme_map
     _rebuild_reverse_map()
@@ -104,7 +131,16 @@ def save_theme_data(theme_map: dict):
     except Exception as e:
         if os.path.exists(temp_file): os.remove(temp_file)
 
-def analyze_popular_themes(hot_list, vol_list):
+def analyze_popular_themes(hot_list: list, vol_list: list) -> list:
+    """인기 검색 및 거래량 상위 종목 리스트를 분석하여 현재 시장의 주력 테마 순위를 도출합니다.
+
+    Args:
+        hot_list (list): 인기 검색 종목 리스트.
+        vol_list (list): 거래량 급증 종목 리스트.
+
+    Returns:
+        list: 테마명과 카운트가 포함된 정렬된 리스트.
+    """
     global _cached_themes
     load_theme_data() # 분석 시마다 최신 데이터 로드
     
@@ -126,5 +162,10 @@ def analyze_popular_themes(hot_list, vol_list):
     _cached_themes = sorted_themes
     return _cached_themes
 
-def get_cached_themes():
+def get_cached_themes() -> List[Dict]:
+    """가장 최근에 분석되어 메모리에 캐시된 인기 테마 리스트를 반환합니다.
+
+    Returns:
+        List[Dict]: 테마명과 출현 빈도(count)가 포함된 딕셔너리 리스트.
+    """
     return _cached_themes
