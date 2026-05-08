@@ -4,6 +4,8 @@ import random
 from typing import List, Dict, Optional, Any
 from src.api.base import BaseAPI
 from src.utils import safe_cast_float
+from src.utils import retry_api
+from src.logger import log_error
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -339,6 +341,68 @@ class NaverAPIClient(BaseAPI):
             return list(reversed(candles))
         except:
             return []
+
+    @retry_api(max_retries=2, delay=1.0)
+    def get_investor_trading_trend(self, code: str) -> Optional[dict]:
+        """네이버 금융에서 특정 종목의 투자자별 매매동향(외인, 기관)을 수집합니다.
+
+        기존 KIS API 대비 과거 이력을 포함하여 상세히 분석할 수 있습니다.
+
+        Args:
+            code (str): 종목 코드.
+
+        Returns:
+            Optional[dict]: 최신 수급 정보 및 과거 5거래일 이력.
+        """
+        try:
+            url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+            self._wait_for_domain_delta(url)
+            
+            # [수정] 웹페이지 크롤링 시에는 JSON 헤더가 오해를 살 수 있으므로 User-Agent만 포함된 클린 헤더 사용
+            clean_headers = {"User-Agent": self.headers.get("User-Agent")}
+            res = requests.get(url, headers=clean_headers, timeout=5)
+            if not BeautifulSoup: return None
+            
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+            table = soup.find('table', {'class': 'type2'})
+            if not table: return None
+            
+            rows = table.find_all('tr')
+            history = []
+            for row in rows:
+                cols = row.find_all('td')
+                if len(cols) > 8:
+                    date = cols[0].text.strip()
+                    if not date or '.' not in date: continue
+                    
+                    # 기관, 외인 순매수 (주 단위)
+                    inst = safe_cast_float(cols[5].text.strip().replace(',', ''))
+                    frgn = safe_cast_float(cols[6].text.strip().replace(',', ''))
+                    hold_rt = safe_cast_float(cols[8].text.strip().replace(',', '').replace('%', ''))
+                    
+                    history.append({
+                        "date": date,
+                        "inst_net_buy": inst,
+                        "frgn_net_buy": frgn,
+                        "frgn_hold_rt": hold_rt
+                    })
+                    if len(history) >= 10: break # 최근 10거래일 수집
+            
+            if not history: return None
+            
+            # 최신 데이터 (오늘)
+            latest = history[0]
+            return {
+                "frgn_net_buy": latest["frgn_net_buy"],
+                "inst_net_buy": latest["inst_net_buy"],
+                "frgn_hold_rt": latest["frgn_hold_rt"],
+                "pnsn_net_buy": 0, # 네이버 상세 페이지에선 연기금 분리 불가 (KIS Fallback 필요)
+                "history": history, # 과거 이력 전달 (사이클 분석용)
+                "source": "naver"
+            }
+        except Exception as e:
+            log_error(f"Naver Investor Fetch Error (Code: {code}): {e}")
+            return None
 
     def get_market_open_status(self) -> Optional[bool]:
         """네이버 모바일 API를 통해 국내 증시의 실시간 개장 상태를 확인합니다.

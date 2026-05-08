@@ -86,8 +86,19 @@ class VibeAlphaEngine:
             # 상세 데이터 수집 (캐시 활용)
             detail = self.api.get_naver_stock_detail(code)
             
-            # 입체 점수 산정 (장세 기반 보정 포함)
+            # 1차 입체 점수 산정 (장세 기반 보정 포함, 수급 데이터 제외)
             item_score = self._calculate_ai_score(item, my_theme, False, kr_vibe, market_data, detail, is_hot)
+
+            # [신규] 수급 데이터 추가 분석 (점수가 유망한 종목에 한해 KIS API 호출)
+            # 1차 점수가 dynamic_min_score - 10점 이상인 경우에만 정밀 수급 분석 수행 (API 부하 방지)
+            investor_data = None
+            if item_score >= (dynamic_min_score - 10.0):
+                investor_data = self.api.get_investor_trading_trend(code)
+                if investor_data:
+                    # 수급 기반 점수 보정 (2차)
+                    supply_bonus = self._calculate_supply_demand_bonus(investor_data, kr_vibe)
+                    item_score += supply_bonus
+                    item['investor'] = investor_data # AI Advisor 전달용
 
             is_etf = any(ex in item['name'].upper() for x in ["KODEX", "TIGER", "KBSTAR", "ACE", "RISE", "SOL", "HANARO"] if (ex:=x) in item['name'].upper())
             is_inverse = "인버스" in item['name']
@@ -107,7 +118,14 @@ class VibeAlphaEngine:
             auto_eligible = -8.0 <= raw_rate <= 8.0
 
             if item_score >= dynamic_min_score:
-                res = {**item, "score": item_score, "theme": my_theme['name'], "is_gem": False, "reason": f"{my_theme['name']} 테마 수급 및 지표 우수", "auto_eligible": auto_eligible}
+                supply_msg = ""
+                if investor_data:
+                    f, p = investor_data.get('frgn_net_buy', 0), investor_data.get('pnsn_net_buy', 0)
+                    if f > 0 and p > 0: supply_msg = " | 외인/연기금 쌍끌이"
+                    elif f > 0: supply_msg = " | 외인 매수 우위"
+                    elif p > 0: supply_msg = " | 연기금 매집"
+
+                res = {**item, "score": item_score, "theme": my_theme['name'], "is_gem": False, "reason": f"{my_theme['name']} 테마 수급 및 지표 우수{supply_msg}", "auto_eligible": auto_eligible}
                 if not is_etf:
                     with lock: stocks_pool.append(res)
                     if on_item_found: on_item_found(res)
@@ -266,3 +284,65 @@ class VibeAlphaEngine:
         if is_gem: score += 10.0
         
         return round(score, 1)
+
+    def _calculate_supply_demand_bonus(self, investor: dict, kr_vibe: str) -> float:
+        """외인, 기관, 연기금 등의 수급 데이터를 분석하고, 과거 이력을 통한 '매집 사이클' 가점을 산출합니다."""
+        bonus = 0.0
+        f_net = investor.get('frgn_net_buy', 0)
+        i_net = investor.get('inst_net_buy', 0)
+        p_net = investor.get('pnsn_net_buy', 0)
+        t_net = investor.get('thst_net_buy', 0)
+        history = investor.get('history', [])
+        
+        v = str(kr_vibe).upper()
+        
+        # [A] 실시간(당일) 수급 분석
+        # 1. 외인/기관 쌍끌이 매수 (강력한 상승 시그널)
+        if f_net > 0 and i_net > 0:
+            bonus += 12.0
+            if v == "BULL": bonus += 3.0
+        
+        # 2. 연기금 매집 (하방 지지 및 중장기 우상향)
+        if p_net > 0:
+            bonus += 8.0
+            if v in ["BEAR", "DEFENSIVE"]: bonus += 5.0
+            
+        # 3. 투신 매수 (단기 모멘텀)
+        if t_net > 0:
+            bonus += 5.0
+            
+        # 4. 수급 이탈 페널티 (외인/기관 동시 대량 매도)
+        if f_net < 0 and i_net < 0:
+            bonus -= 15.0
+
+        # [B] 수급 사이클 분석 (과거 10거래일 기반) - 상승 시점 예측
+        investor['cycle'] = "" # 초기화
+        if history and len(history) >= 5:
+            # 1. 매집(Accumulation) 연속성 체크: 최근 5일 중 순매수 일수
+            frgn_buy_days = sum(1 for h in history[:5] if h['frgn_net_buy'] > 0)
+            inst_buy_days = sum(1 for h in history[:5] if h['inst_net_buy'] > 0)
+            
+            if frgn_buy_days >= 4 or inst_buy_days >= 4:
+                bonus += 10.0 # '매집 사이클' 확인
+                investor['cycle'] = "매집"
+                
+            # 2. 수급 가속도(Acceleration) 분석: 최근 2일 평균 vs 그 전 3일 평균
+            f_recent = sum(h['frgn_net_buy'] for h in history[:2]) / 2
+            f_prev = sum(h['frgn_net_buy'] for h in history[2:5]) / 3
+            if f_recent > f_prev and f_recent > 0:
+                bonus += 5.0
+                if not investor['cycle']: investor['cycle'] = "가속"
+                
+            i_recent = sum(h['inst_net_buy'] for h in history[:2]) / 2
+            i_prev = sum(h['inst_net_buy'] for h in history[2:5]) / 3
+            if i_recent > i_prev and i_recent > 0:
+                bonus += 5.0
+                if not investor['cycle']: investor['cycle'] = "가속"
+                
+            # 3. '쌍끌이 전환' 초입 (최근 5일간 매도 우위였다가 오늘 동시 매수 전환)
+            was_selling = any(h['frgn_net_buy'] < 0 for h in history[1:4])
+            if was_selling and f_net > 0 and i_net > 0:
+                bonus += 7.0
+                investor['cycle'] = "전환"
+                
+        return bonus

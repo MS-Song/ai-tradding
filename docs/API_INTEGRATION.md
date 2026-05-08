@@ -18,6 +18,7 @@
 | **현재가 조회** | `/uapi/domestic-stock/v1/quotations/inquire-price` | `FHKST01010100` |
 | **매수 주문** | `/uapi/domestic-stock/v1/trading/order-cash` | `VTTC0802U` (모의), `TTTC0802U` (실전) |
 | **매도 주문** | `/uapi/domestic-stock/v1/trading/order-cash` | `VTTC0801U` (모의), `TTTC0801U` (실전) |
+| **투자자 매매동향** | `/uapi/domestic-stock/v1/quotations/inquire-investor` | `FHKST01010900` |
 
 ## 2. 네이버 금융 (Naver Finance)
 
@@ -27,10 +28,12 @@
 *   **인기 검색 종목**: `sise/lastsearch2.naver` (상위 20종목).
 *   **거래량 상위 종목**: `sise/sise_quant.naver` (상위 40종목).
 *   **종목 상세 정보**: PER, PBR, 배당수익률 및 업종 분석 데이터.
+*   **투자자 매매동향**: `item/frgn.naver` (외인/기관 순매수 및 10일 이력 데이터). [v1.6.8]
 *   **뉴스 헤드라인**: 개별 종목의 실시간 뉴스 감성 분석을 위한 데이터.
 
 ### 구현 방식
 *   **도구**: `requests` 및 `BeautifulSoup4`를 활용한 데이터 추출.
+*   **2중화 로직**: `KISAPI` 래퍼에서 네이버를 우선 호출하여 상세 이력을 확보하고, KIS API로 연기금 및 실시간 데이터를 보완합니다. [v1.6.8]
 *   **캐싱**: `KISAPI` 클래스에서 순위 데이터(60초) 및 종목 상세(3600초) 캐시를 적용합니다.
 
 ## 3. 야후 파이낸스 (Yahoo Finance)

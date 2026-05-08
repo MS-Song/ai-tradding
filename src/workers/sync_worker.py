@@ -203,10 +203,14 @@ class DataSyncWorker(BaseWorker):
             s_name = next((s.get('prdt_name') for s in holdings if s.get('pdno')==code), None)
             
             p_data = None
-            # [최적화] 보유 종목일 때만 KIS 상세 시세(Hoga 등) 조회
+            investor_data = None
+            # [최적화] 보유 종목일 때만 KIS 상세 시세(Hoga 등) 및 수급 데이터 조회
             if is_holding and (is_heavy_cycle or code not in self.state.stock_info):
                 time.sleep(0.1) # [추가] API 속도 제한 방지용 미세 지연
                 p_data = self.api.get_inquire_price(code)
+                
+                # [신규] 수급 데이터(외인/기관/연기금) 동기화
+                investor_data = self.api.get_investor_trading_trend(code)
             
             if n_data:
                 curr_p, day_rate, day_val = n_data['price'], n_data['rate'], n_data['cv']
@@ -280,7 +284,8 @@ class DataSyncWorker(BaseWorker):
             return code, {
                 "tp": tp if is_holding else 0, "sl": sl if is_holding else 0, "spike": spike if is_holding else False,
                 "day_val": day_val, "day_rate": day_rate,
-                "ma_20": ma_20, "price": curr_p, "prev_vol": p_vol, "name": s_name, "ma_source": ma_source
+                "ma_20": ma_20, "price": curr_p, "prev_vol": p_vol, "name": s_name, "ma_source": ma_source,
+                "investor": investor_data if is_holding else old_info.get("investor")
             }, task_id, ma_20, is_holding, ma_source
 
         # [최적화] 모의투자는 Rate Limit(1.5s)이 엄격하므로 병렬도를 1로 제한하여 순차 처리 보장

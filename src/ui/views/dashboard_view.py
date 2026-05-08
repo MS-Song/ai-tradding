@@ -409,7 +409,18 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 tp_txt = f"\033[91m{info['tp']:+.1f}\033[0m"
                 sl_txt = f"\033[94m{info['sl']:+.1f}\033[0m"
                 
-                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(f"[{code}] {name[:(w[2]-10)//2*2]}" + (" *" if info['spike'] else ""), w[2]) + align_kr(f"{int(p_cu):,}", w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw-1) + "\n")
+                # [신규] 수급 시그널 생성 (외인/연기금)
+                supply_tag = ""
+                inv = info.get('investor')
+                if inv:
+                    f_net, p_net = inv.get('frgn_net_buy', 0), inv.get('pnsn_net_buy', 0)
+                    f_tag = "\033[91mF↑\033[0m" if f_net > 0 else ("\033[94mF↓\033[0m" if f_net < 0 else "")
+                    p_tag = "\033[91mP↑\033[0m" if p_net > 0 else ("\033[94mP↓\033[0m" if p_net < 0 else "")
+                    if f_tag or p_tag:
+                        supply_tag = f" [{f_tag}{'/' if f_tag and p_tag else ''}{p_tag}]"
+
+                name_area = f"[{code}] {name[:(w[2]-15)//2*2]}" + ("*" if info['spike'] else "") + supply_tag
+                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(name_area, w[2]) + align_kr(f"{int(p_cu):,}", w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw-1) + "\n")
             if len(f_h) > max_h_display: buf.write(align_kr(f"... 외 {len(f_h) - max_h_display}종목 생략됨 ...", tw, 'center') + "\n")
         
         buf.write("-" * tw + "\n"); themes = get_cached_themes()
@@ -418,7 +429,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             theme_line = f" 테마: {theme_str}"
             while get_visual_width(theme_line) > tw - 2 and " | " in theme_str:
                 theme_str = theme_str.rsplit(" | ", 1)[0]
-                theme_line = f" 테마: {theme_str}.."
+                theme_line = f" 테마: {theme_str}..."
             buf.write("\033[93m" + align_kr(theme_line, tw-1) + "\033[0m\n")
         else:
             buf.write("\n")
@@ -435,9 +446,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             y_parts = []
             for r in sorted_recs:
                 name = r['name']
-                # 이름이 너무 길면 축약하여 더 많은 종목이 한 줄에 들어가도록 함
-                if get_visual_width(name) > 8:
-                    name = align_kr(name, 6).strip() + ".."
+                # [개선] 자리 여유가 있는 경우를 고려하여 이름 축약 임계치를 8->14로 상향 (사용자 피드백 반영)
+                if get_visual_width(name) > 14:
+                    name = align_kr(name, 12).strip() + "..."
                 color = "\033[91m" if r['change'] >= 0 else "\033[94m"
                 y_parts.append(f"{name}({color}{r['change']:>+4.1f}%\033[0m)")
             
@@ -447,7 +458,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             while get_visual_width(re.sub(r'\x1b\[[0-9;]*m', '', y_line)) > tw - 2 and " | " in y_str:
                 y_parts.pop()
                 y_str = " | ".join(y_parts)
-                y_line = f" 전일: {y_str}.."
+                y_line = f" 전일: {y_str}..."
             
             buf.write(align_kr(y_line, tw-1) + "\n")
         else:
@@ -608,9 +619,28 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 while get_visual_width(d_name + "..") > max_name_vw and len(d_name) > 1: d_name = d_name[:-1]
                 d_name += ".."
             
+            # [신규] 수급 시그널
+            inv = item.get('investor', {})
+            s_tag = ""
+            if inv:
+                f_n, p_n = inv.get('frgn_net_buy', 0), inv.get('pnsn_net_buy', 0)
+                if f_n > 0 and p_n > 0: s_tag = "\033[91m[FP↑]\033[0m"
+                elif f_n > 0: s_tag = "\033[91m[F↑]\033[0m"
+                elif p_n > 0: s_tag = "\033[91m[P↑]\033[0m"
+            
+            base_w = 22 + get_visual_width(re.sub(r'\x1b\[[0-9;]*m', '', s_tag))
+            price_vw = get_visual_width(f"({p:,}/{rate_str})")
+            # 가용 이름 너비 계산 (공백 없이 최대한 이름에 할당)
+            max_name_vw = width - base_w - price_vw
+            
+            d_name = name
+            if get_visual_width(d_name) > max_name_vw:
+                while get_visual_width(d_name + "..") > max_name_vw and len(d_name) > 1: d_name = d_name[:-1]
+                d_name += ".."
+            
             # 조립 (가운데 여백 채우기)
             # [Fix] 우측 끝 1칸 여백 고정 확보
-            prefix = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m"
+            prefix = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m{s_tag}"
             spaces = max(0, width - base_w - get_visual_width(d_name) - price_vw)
             price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
             

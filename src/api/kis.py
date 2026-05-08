@@ -266,3 +266,33 @@ class KISAPIClient(BaseAPI):
                 "low": self._safe_float(d.get("stck_lwpr"))
             }
         except: return None
+
+    @retry_api(max_retries=2, delay=1.0)
+    def get_investor_trading_trend(self, code: str) -> Optional[dict]:
+        """종목별 투자자 매매동향(외인, 기관, 연기금, 투신 등)을 조회합니다.
+        
+        Args:
+            code (str): 종목 코드.
+            
+        Returns:
+            Optional[dict]: 외인/기관/연기금/투신 등의 순매수 정보.
+        """
+        url = f"{self.domain}/uapi/domestic-stock/v1/quotations/inquire-investor"
+        headers = self.auth.get_auth_headers(); headers.update({"tr_id": "FHKST01010900"})
+        params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
+        try:
+            res = self._request("GET", url, headers=headers, params=params, timeout=5)
+            data = res.json()
+            if data.get("rt_cd") != "0": return None
+            
+            # output은 현재 시점의 누적/요약 데이터
+            d = data.get("output", {})
+            # 순매수 수량 (단위: 주)
+            return {
+                "frgn_net_buy": self._safe_float(d.get("prdy_frgn_ntby_qty")), # 외인
+                "inst_net_buy": self._safe_float(d.get("prdy_inst_ntby_qty")), # 기관 합계
+                "pnsn_net_buy": self._safe_float(d.get("pnsn_net_buy_qty")),   # 연기금
+                "thst_net_buy": self._safe_float(d.get("thst_net_buy_qty")),   # 투신
+                "frgn_hold_rt": self._safe_float(d.get("frgn_lhld_rate"))      # 외인 보유율
+            }
+        except: return None

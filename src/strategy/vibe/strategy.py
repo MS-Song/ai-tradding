@@ -173,11 +173,13 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         self._load_all_states()
         self.state_mgr.update_yesterday_recs()
 
-    def record_buy(self, code, price):
+    def record_buy(self, code, price, model_id=None):
         self.recovery_eng.last_avg_down_prices[code] = price
         self.pyramid_eng.last_buy_prices[code] = price
         self.last_buy_times[code] = time.time()
-        if hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor:
+        if model_id:
+            self.last_buy_models[code] = model_id
+        elif hasattr(self.ai_advisor, 'last_used_advisor') and self.ai_advisor.last_used_advisor:
             self.last_buy_models[code] = self.ai_advisor.last_used_advisor.model_id
         self._save_all_states()
 
@@ -247,11 +249,13 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
 
     def get_market_phase(self) -> dict:
         now = self.mock_tester.get_now().time()
-        if dtime(9, 0) <= now < dtime(10, 0): return {"id": "P1", "name": "OFFENSIVE", "tp_delta": 2.0, "sl_delta": -1.0}
-        elif dtime(14, 30) <= now < dtime(15, 10): return {"id": "P3", "name": "CONCLUSION", "tp_delta": 0.0, "sl_delta": 0.0}
-        elif dtime(15, 10) <= now < dtime(15, 30): return {"id": "P4", "name": "PREPARATION", "tp_delta": 0.0, "sl_delta": 0.0}
-        elif dtime(10, 0) <= now < dtime(14, 30): return {"id": "P2", "name": "CONVERGENCE", "tp_delta": -1.0, "sl_delta": 1.0}
-        return {"id": "IDLE", "name": "IDLE", "tp_delta": 0.0, "sl_delta": 0.0}
+        is_stabilizing = dtime(9, 0) <= now < dtime(9, 20)
+        if dtime(9, 0) <= now < dtime(10, 0): 
+            return {"id": "P1", "name": "OFFENSIVE", "tp_delta": 2.0, "sl_delta": -1.0, "is_stabilizing": is_stabilizing}
+        elif dtime(14, 30) <= now < dtime(15, 10): return {"id": "P3", "name": "CONCLUSION", "tp_delta": 0.0, "sl_delta": 0.0, "is_stabilizing": False}
+        elif dtime(15, 10) <= now < dtime(15, 30): return {"id": "P4", "name": "PREPARATION", "tp_delta": 0.0, "sl_delta": 0.0, "is_stabilizing": False}
+        elif dtime(10, 0) <= now < dtime(14, 30): return {"id": "P2", "name": "CONVERGENCE", "tp_delta": -1.0, "sl_delta": 1.0, "is_stabilizing": False}
+        return {"id": "IDLE", "name": "IDLE", "tp_delta": 0.0, "sl_delta": 0.0, "is_stabilizing": False}
 
     def get_dynamic_thresholds(self, code, vibe, p_data=None):
         if code in self.exit_mgr.manual_thresholds:

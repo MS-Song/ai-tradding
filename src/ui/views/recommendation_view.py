@@ -65,17 +65,63 @@ def draw_recommendation_report(strategy, dm, tw, th):
         recs = strategy.ai_recommendations
         if not recs: buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. '8'을 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
         else:
-            buf.write("\033[1m" + f"{align_kr('테마', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 9)} | {align_kr('등락', 7)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('AI점수', 6)} | 발굴 근거" + "\033[0m\n")
+            buf.write("\033[1m" + f"{align_kr('테마', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 9)} | {align_kr('등락', 7)} | {align_kr('수급상태', 8)} | {align_kr('사이클', 6)} | {align_kr('AI점수', 6)} | 발굴 근거" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             for r in recs[:max(1, th-15)]:
                 code = r['code']; rate = float(r['rate']); color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
                 gem_mark = "💎" if r.get('is_gem') else ("📊" if r.get('is_etf') else "  ")
-                detail = strategy.api.get_naver_stock_detail(code, force=False)
                 theme_raw = r.get('theme', '?')
                 theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
                 theme_fmt = align_kr(theme_clean, 8)
-                buf.write(f"[{theme_fmt}] | {align_kr(code, 8)} | {align_kr(gem_mark + r['name'], 14)} | {align_kr(f'{int(float(r.get('price',0))):,}', 9, 'right')} | {align_kr(f'{color}{rate:+.1f}%\033[0m', 7, 'right')} | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(f'{r['score']:.1f}', 6, 'right')} | {r['reason']}\n")
+
+                # 수급 데이터 추출
+                inv = r.get('investor', {})
+                f_net = inv.get('frgn_net_buy', 0)
+                i_net = inv.get('inst_net_buy', 0)
+                p_net = inv.get('pnsn_net_buy', 0)
+                
+                # 수급 시그널 생성 (F:외인, I:기관, P:연기금)
+                signals = []
+                if f_net > 0: signals.append("F↑")
+                if i_net > 0: signals.append("I↑")
+                if p_net > 0: signals.append("P↑")
+                supply_str = " ".join(signals) if signals else "-"
+                
+                # 사이클 태그 (매집, 가속, 전환)
+                cycle_tag = inv.get('cycle', '-')
+                if cycle_tag: cycle_tag = f"[{cycle_tag}]"
+                else: cycle_tag = "-"
+
+                reason = r.get('reason', '').replace('\n', ' ')
+                avail_w = tw - 94
+                if get_visual_width(reason) > avail_w:
+                    while get_visual_width(reason) > avail_w - 3: reason = reason[:-1]
+                    reason += "..."
+                
+                buf.write(f"[{theme_fmt}] | {align_kr(code, 8)} | {align_kr(gem_mark + r['name'], 14)} | {align_kr(f'{int(float(r.get('price',0))):,}', 9, 'right')} | {align_kr(f'{color}{rate:+.1f}%\033[0m', 7, 'right')} | {align_kr(supply_str, 8, 'center')} | {align_kr(cycle_tag, 6, 'center')} | {align_kr(f'{r['score']:.1f}', 6, 'right')} | {reason}\n")
         
+        buf.write("\n" + "-" * tw + "\n\033[1;96m" + " [AI 수급 사이클 심층 진단 (최근 10일 흐름)]" + "\033[0m\n")
+        if recs:
+            for r in recs[:5]: # 상위 5개 종목 집중 진단
+                inv = r.get('investor', {})
+                history = inv.get('history', [])
+                if not history: continue
+                
+                # 사이클 사유 추출
+                cycle = inv.get('cycle', '')
+                if cycle == "매집":
+                    diag = "5일 중 4일 이상 매수 확인 (Accumulation Level: High)"
+                elif cycle == "가속":
+                    diag = "최근 2일 매입 강도가 이전 3일 대비 강화됨 (Acceleration)"
+                elif cycle == "전환":
+                    diag = "매도 우위에서 오늘 '쌍끌이 전환' 초입 진입 (Turnaround)"
+                else:
+                    diag = "안정적인 수급 흐름 유지 중"
+                
+                buf.write(f"  🔹 \033[1m{r['name']}\033[0m: {diag}\n")
+        else:
+            buf.write("  진단할 데이터가 없습니다.\n")
+
         buf.write("\n" + "-" * tw + "\n\033[1;92m" + " [AI 수석 전략가 입체 분석 및 대응 전략 (초압축)]" + "\033[0m\n")
         
         curr_t = time.time()

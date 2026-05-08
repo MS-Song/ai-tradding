@@ -176,7 +176,14 @@ class BaseLLMAdvisor(BaseAdvisor):
         holdings_txt = "\n".join([f"- {h['prdt_name']}({h['pdno']}): {h['evlu_pfls_rt']}%" for h in holdings[:5]])
         recs_txt = ""
         if recs:
-            recs_txt = "\n".join([f"- {r['name']}({r['code']}): {int(float(r.get('price',0)))}원, {r.get('rate',0):+.1f}%" for r in recs[:3]])
+            for r in recs[:3]:
+                inv = r.get('investor', {})
+                supply_txt = ""
+                if inv:
+                    f, p = inv.get('frgn_net_buy', 0), inv.get('pnsn_net_buy', 0)
+                    supply_txt = f" | 수급: {'외인' if f > 0 else ''}{'/' if f > 0 and p > 0 else ''}{'연기금' if p > 0 else ''} 매수" if f > 0 or p > 0 else ""
+                recs_txt += f"- {r['name']}({r['code']}): {int(float(r.get('price',0)))}원, {r.get('rate',0):+.1f}%{supply_txt}\n"
+        
         indicators_txt = ""
         if indicators:
             indicators_txt = "\n        [Quant Summary]"
@@ -247,10 +254,12 @@ class BaseLLMAdvisor(BaseAdvisor):
             nonlocal current
             detail = self.api.get_naver_stock_detail(r['code'])
             news = self.api.get_naver_stock_news(r['code'])
+            inv = r.get('investor', {})
+            supply_info = f" | 수급: 외인({inv.get('frgn_net_buy', 0):+,}), 연기금({inv.get('pnsn_net_buy', 0):+,})" if inv else ""
             with lock:
                 current += 1
                 if progress_cb: progress_cb(current, total)
-            return f"- {r['name']}({r['code']}) | 현재가: {int(float(r.get('price',0))):,}원 | PER {detail.get('per')}, PBR {detail.get('pbr')} | 뉴스: {', '.join(news[:2])}"
+            return f"- {r['name']}({r['code']}) | 현재가: {int(float(r.get('price',0))):,}원 | PER {detail.get('per')}, PBR {detail.get('pbr')}{supply_info} | 뉴스: {', '.join(news[:2])}"
         with ThreadPoolExecutor(max_workers=5) as executor:
             enriched_recs = list(executor.map(fetch_enriched_data, recs))
         prompt = f"""
@@ -414,6 +423,9 @@ class BaseLLMAdvisor(BaseAdvisor):
         종목: {name}({code}) | 현재가: {int(float(detail.get('price', 0))):,}원 | 장세: {vibe} {ma_txt}
         뉴스: {news[:2] if news else "None"}
         
+        [수급 분석]
+        {json.dumps(detail.get('investor', {}), ensure_ascii=False) if isinstance(detail.get('investor'), dict) else "수급 정보 없음"}
+        
         [필독: 데이터 오류 판단 금지]
         제공된 실시간 가격({int(float(detail.get('price', 0))):,}원)을 절대적으로 신뢰하십시오. 과거의 지식과 다르다고 해서 매수를 거절하는 것은 큰 기회비용을 초래합니다. 수급과 에너지가 보인다면 과감하게 결정하세요.
 
@@ -423,8 +435,9 @@ class BaseLLMAdvisor(BaseAdvisor):
            - 'OVERBOUGHT'(이평선 상단 이탈)인 경우 단기 조정을 경계하여 보수적으로 보되, 거래량이 폭발적이면 승인 가능합니다.
            - 일봉이 'DOWN' 추세라면 기술적 반등 목적으로만 짧게 보십시오.
         2. 현재 페이즈가 'OFFENSIVE'라면 적극적으로 수익 기회를 포착하여 'Yes'를 결정하세요.
-        3. 'CONVERGENCE'나 'BEAR' 장세라고 해서 무조건 깐깐하게 굴기보다, '낙폭과대 반등'이나 '강한 지지선'이 확인되는 종목은 기회비용을 고려하여 전향적으로 검토하세요.
-        답변형식: 결정: Yes 또는 No, 사유: [기술적 근거(MA/추세) 포함] 한 줄 요약
+        3. '스마트 머니' 유입(외인/기관 쌍끌이 또는 연기금 매집)이 확인되면 상승 사이클의 초입일 확률이 매우 높으므로 강력한 매수 근거로 활용하십시오. 반대로 수급 이탈이 심각하면 기술적 지표가 좋아도 보수적으로 접근하세요.
+        4. 'CONVERGENCE'나 'BEAR' 장세라고 해서 무조건 깐깐하게 굴기보다, '낙폭과대 반등'이나 '강한 지지선'이 확인되는 종목은 기회비용을 고려하여 전향적으로 검토하세요.
+        답변형식: 결정: Yes 또는 No, 사유: [수급/차트/추세 근거 포함] 한 줄 요약
         """
         answer = self._call_api(prompt)
         if answer:

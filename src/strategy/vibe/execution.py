@@ -248,7 +248,8 @@ class ExecutionMixin:
                 if not skip_trade and not self._p4_ai_done_this_cycle and p4_ai_key not in self._p3_global_processed:
                     # 이미 위에서 손절 처리되었거나 배치 리뷰에서 처리된 종목은 스킵
                     is_processed = (p4_key in self._p3_global_processed) or (p4_ai_key in self._p3_global_processed)
-                    if not is_processed and (time.time() - self.last_buy_times.get(code, 0)) >= 3600:
+                    # [추가] 구매 후 최소 관망 시간(20분) 체크 - 수수료 낭비 방지
+                    if not is_processed and (time.time() - self.last_buy_times.get(code, 0)) >= 1200:
                         sell_qty = int(float(item.get('hldg_qty', 0)))
                         if sell_qty > 0:
                             # [Fix] 플래그를 try 블록 내부로 이동: 예외 발생 시 다음 종목이 AI 판단 기회를 얻도록
@@ -618,6 +619,16 @@ class ExecutionMixin:
         # [Safety] 최근 매수 이력이 있는 경우 중복 진입 방지 (잔고 동기화 전 중복 호출 차단)
         if (time.time() - self.last_buy_times.get(code, 0)) < 600:
             return False, "최근 매수 이력 있음 (중복 방지)"
+
+        # [신규] 장 초반 안정화 필터 (09:00~09:20)
+        # 지수가 BULL이 아닌 경우 AI 점수 커트라인을 대폭 상향하여 리스크 관리
+        phase = self.get_market_phase()
+        if phase.get('is_stabilizing') and self.current_market_vibe.upper() != "BULL":
+            strict_min = self.ai_config.get('min_score', 60.0) + 15.0
+            if score < strict_min:
+                msg = f"장 초반 안정화 대기 (지수 BULL 미달, 현재 점수 {score:.1f} < 기준 {strict_min:.1f})"
+                logger.info(f"⏳ [{name}] {msg}")
+                return False, msg
         
         # [Safety] indicators 초기화 위치를 함수 최상단으로 이동 (UnboundLocalError 방지)
         indicators = {}
@@ -824,15 +835,17 @@ class ExecutionMixin:
                 reason = opinion.get("reason", "AI 분석 결과")
                 
                 if action == "SELL":
-                    # [추가] 구매 후 최소 관망 시간(1시간) 체크 - 수수료 낭비 방지
-                    # 단, 글로벌 패닉(is_panic) 또는 방어모드(Defensive)인 경우 리스크 관리 차원에서 즉시 매도 허용
+                    # [추가] 구매 후 최소 관망 시간(20분) 체크 - 수수료 낭비 방지
                     last_buy_t = self.last_buy_times.get(code, 0)
                     holding_sec = time.time() - last_buy_t
                     is_emergency = self.analyzer.is_panic or self.current_market_vibe.upper() == "DEFENSIVE"
+                    is_manual = self.last_buy_models.get(code) == "수동"
                     
-                    if last_buy_t > 0 and holding_sec < 3600 and not is_emergency:
-                        results.append(f"🛡️ 매도 보호: {name} (구매 후 {int(holding_sec/60)}분 경과 - 1시간 미만)")
-                        continue
+                    # 수동 매수는 20분 무조건 보호, AI 매수는 긴급 상황이 아닐 때만 20분 보호
+                    if last_buy_t > 0 and holding_sec < 1200:
+                        if is_manual or not is_emergency:
+                            results.append(f"🛡️ 수동 매수 보호(AI자율): {name} ({int(holding_sec/60)}분 경과 - 20분 미만)")
+                            continue
 
                     # [매매 시도 기록] 실제 주문 전 AI의 결정을 먼저 로그에 남김
                     msg = f"🤖 AI 자율 매도 결정: {name}"

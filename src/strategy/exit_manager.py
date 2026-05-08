@@ -101,5 +101,11 @@ class ExitManager:
         if target_tp < 1.0:
             target_tp = 1.0
             
+        # 6. 손절선 상한 방어 (SL Guard)
+        # 방어모드(Defensive)나 특정 페이즈(P2) 보정치가 가산되어 손절선이 양수(수익권)로 올라가는 것을 방지
+        # 아무리 타이트한 장세라도 수수료와 호가 스프레드를 고려하여 최소 -1.0%의 공간은 확보함
+        if target_sl > -1.0:
+            target_sl = -1.0
+
         return round(target_tp, 1), round(target_sl, 1), is_vol_spike
 
