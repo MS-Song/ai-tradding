@@ -91,10 +91,10 @@ class MultiLLMAdvisor(BaseAdvisor):
         """모든 어드바이저를 순회하며 매수 최종 승인을 시도하고 모델 태그를 사유에 추가합니다."""
         res = self._try_all("final_buy_confirm", *args, **kwargs)
         if res:
-            decision, reason = res
+            decision, reason, wait_mins = res
             tag = self._get_model_tag()
-            return decision, f"{tag} {reason}"
-        return False, "All LLM services failed"
+            return decision, f"{tag} {reason}", wait_mins
+        return False, "All LLM services failed", 60
 
     def closing_sell_confirm(self, *args, **kwargs):
         """모든 어드바이저를 순회하며 장 마감 청산 결정을 시도하고 모델 태그를 추가합니다."""
@@ -109,10 +109,10 @@ class MultiLLMAdvisor(BaseAdvisor):
         """모든 어드바이저를 순회하며 종목 교체 여부 판단을 시도하고 모델 태그를 추가합니다."""
         res = self._try_all("compare_stock_superiority", *args, **kwargs)
         if res:
-            superior, sell_code, reason = res
+            superior, sell_code, reason, wait_mins = res
             tag = self._get_model_tag()
-            return superior, sell_code, f"{tag} {reason}"
-        return False, None, "All LLM services failed"
+            return superior, sell_code, f"{tag} {reason}", wait_mins
+        return False, None, "All LLM services failed", 60
 
     def get_portfolio_strategic_review(self, *args, **kwargs):
         """모든 어드바이저를 순회하며 포트폴리오 일괄 리뷰를 시도합니다."""

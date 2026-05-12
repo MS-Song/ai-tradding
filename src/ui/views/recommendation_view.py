@@ -65,8 +65,9 @@ def draw_recommendation_report(strategy, dm, tw, th):
         recs = strategy.ai_recommendations
         if not recs: buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. '8'을 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
         else:
-            # 헤더와 데이터 컬럼 너비 정의
-            w_theme, w_code, w_name, w_price, w_rate, w_supply, w_cycle, w_score = 12, 8, 16, 10, 8, 10, 8, 8
+            # 헤더와 데이터 컬럼 너비 정의 (충분한 간격 확보)
+            # w_supply는 F↑ I↑ P↑ (최대 11자)를 고려하여 12로 설정
+            w_theme, w_code, w_name, w_price, w_rate, w_supply, w_cycle, w_score = 10, 8, 18, 10, 8, 12, 10, 8
             
             header = (
                 f"{align_kr('테마', w_theme)} | "
@@ -97,6 +98,7 @@ def draw_recommendation_report(strategy, dm, tw, th):
                 f_net, i_net, p_net = inv.get('frgn_net_buy', 0), inv.get('inst_net_buy', 0), inv.get('pnsn_net_buy', 0)
                 
                 signals = []
+                # 시각적 가독성을 위해 각 수급 주체별로 일정한 간격 유지 시도
                 if f_net > 0: signals.append("\033[91mF↑\033[0m")
                 if i_net > 0: signals.append("\033[91mI↑\033[0m")
                 if p_net > 0: signals.append("\033[91mP↑\033[0m")
@@ -108,7 +110,7 @@ def draw_recommendation_report(strategy, dm, tw, th):
                 reason = r.get('reason', '').replace('\n', ' ')
                 
                 # 가용 너비 계산 (기존 컬럼 너비 + 구분자들 너비 합산)
-                # ANSI 코드가 들어간 경우 get_visual_width로 실제 폭 계산 필요
+                # ANSI 코드가 없는 순수 너비 기준으로 계산하여 정렬 흐트러짐 방지
                 fixed_w = w_theme + w_code + w_name + w_price + w_rate + w_supply + w_cycle + w_score + (8 * 3)
                 avail_w = tw - fixed_w - 2
                 

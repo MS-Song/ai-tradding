@@ -143,6 +143,18 @@ class TradingState:
         with self.lock:
             self.worker_statuses.pop(worker, None)
 
+    def _is_idle(self, status: str) -> bool:
+        """주어진 상태 메시지가 '대기' 상태인지 판별합니다.
+        
+        Args:
+            status (str): 확인할 상태 메시지.
+            
+        Returns:
+            bool: 대기 상태면 True.
+        """
+        if not status: return True
+        return status in ["대기중", "대기 중 (IDLE)"]
+
     def is_worker_busy(self, worker: str = None) -> bool:
         """워커가 현재 작업 중(대기중 아님)인지 확인합니다.
 
@@ -154,8 +166,8 @@ class TradingState:
         """
         with self.lock:
             if worker:
-                return self.worker_statuses.get(worker, "대기중") != "대기중"
-            return any(v != "대기중" for v in self.worker_statuses.values())
+                return not self._is_idle(self.worker_statuses.get(worker))
+            return any(not self._is_idle(v) for v in self.worker_statuses.values())
 
     def get_global_busy_msg(self) -> Optional[str]:
         """모든 활성 워커의 상태를 결합한 통합 비지(Busy) 메시지를 생성합니다.
@@ -165,11 +177,13 @@ class TradingState:
         """
         with self.lock:
             statuses = []
-            if "GLOBAL" in self.worker_statuses:
-                statuses.append(self.worker_statuses["GLOBAL"])
+            # GLOBAL 워커가 있고 대기 중이 아닌 경우에만 추가
+            global_status = self.worker_statuses.get("GLOBAL")
+            if global_status and not self._is_idle(global_status):
+                statuses.append(global_status)
             
-            # 기타 워커들
-            other = [v for k, v in self.worker_statuses.items() if k != "GLOBAL" and v != "대기중"]
+            # 기타 워커들 중 대기 중이 아닌 것들만 필터링
+            other = [v for k, v in self.worker_statuses.items() if k != "GLOBAL" and not self._is_idle(v)]
             if other:
                 statuses.extend(sorted(list(set(other))))
             

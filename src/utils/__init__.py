@@ -260,11 +260,22 @@ def get_visual_width(text):
     return w
 
 def align_kr(text, width, align='left'):
+    """한글 및 ANSI 색상 코드가 포함된 문자열을 시각적 너비에 맞춰 정렬합니다."""
     text = str(text)
-    while get_visual_width(text) > width: text = text[:-1]
+    
+    # 1. 시각적 너비가 초과할 경우 안전하게 자르기 (ANSI 코드 파손 방지)
+    if get_visual_width(text) > width:
+        # ANSI 코드를 제외한 순수 텍스트만 추출하여 자름 (가장 안전한 방법)
+        plain = ANSI_ESCAPE.sub('', text)
+        while get_visual_width(plain) > max(0, width - 2):
+            plain = plain[:-1]
+        text = plain + ".."
+        
     cur_w = get_visual_width(text)
     pad = max(0, width - cur_w)
-    if align == 'right': return ' ' * pad + text
+    
+    if align == 'right': 
+        return ' ' * pad + text
     if align == 'center':
         l_p = pad // 2
         return ' ' * l_p + text + ' ' * (pad - l_p)

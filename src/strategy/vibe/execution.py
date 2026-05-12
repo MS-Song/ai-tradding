@@ -645,7 +645,7 @@ class ExecutionMixin:
             Tuple[bool, str, int]: (매수 승인 여부, 승인/거절 상세 사유, 대기시간(분)).
         """
         self._cleanup_rejected_stocks()
-        if code in self.rejected_stocks: return False, f"당일 매수 거절됨"
+        if code in self.rejected_stocks: return False, "당일 매수 거절됨", 60
         
         # [Safety] 최근 매수 이력이 있는 경우 중복 진입 방지 (잔고 동기화 전 중복 호출 차단)
         if (time.time() - self.last_buy_times.get(code, 0)) < 300:

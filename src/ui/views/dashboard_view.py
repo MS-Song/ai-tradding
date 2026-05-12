@@ -79,7 +79,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg
-    busy_str = busy_msg if busy_msg else "-"
+    busy_str = busy_msg if busy_msg else "대기 중 (IDLE)"
 
     if status_active:
         is_err = "[ERROR]" in dm.status_msg
@@ -609,28 +609,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             auto_tag_text = "[자동]" if is_auto else "[수동]"
             auto_tag_color = "\033[92m" if is_auto else "\033[90m"
             
+            # 가용 이름 너비 계산 (공백 없이 최대한 이름에 할당)
             base_w = 22
             price_vw = get_visual_width(f"({p:,}/{rate_str})")
-            # 가용 이름 너비 계산 (공백 없이 최대한 이름에 할당)
-            max_name_vw = width - base_w - price_vw
-            
-            d_name = name
-            if get_visual_width(d_name) > max_name_vw:
-                while get_visual_width(d_name + "..") > max_name_vw and len(d_name) > 1: d_name = d_name[:-1]
-                d_name += ".."
-            
-            # [신규] 수급 시그널
-            inv = item.get('investor', {})
-            s_tag = ""
-            if inv:
-                f_n, p_n = inv.get('frgn_net_buy', 0), inv.get('pnsn_net_buy', 0)
-                if f_n > 0 and p_n > 0: s_tag = "\033[91m[FP↑]\033[0m"
-                elif f_n > 0: s_tag = "\033[91m[F↑]\033[0m"
-                elif p_n > 0: s_tag = "\033[91m[P↑]\033[0m"
-            
-            base_w = 22 + get_visual_width(re.sub(r'\x1b\[[0-9;]*m', '', s_tag))
-            price_vw = get_visual_width(f"({p:,}/{rate_str})")
-            # 가용 이름 너비 계산 (공백 없이 최대한 이름에 할당)
             max_name_vw = width - base_w - price_vw
             
             d_name = name
@@ -640,7 +621,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             
             # 조립 (가운데 여백 채우기)
             # [Fix] 우측 끝 1칸 여백 고정 확보
-            prefix = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m{s_tag}"
+            prefix = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m"
             spaces = max(0, width - base_w - get_visual_width(d_name) - price_vw)
             price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
             

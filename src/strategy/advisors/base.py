@@ -47,7 +47,7 @@ class BaseAdvisor(ABC):
         pass
 
     @abstractmethod
-    def final_buy_confirm(self, code: str, name: str, vibe: str, detail: dict, news: List[str], indicators: dict = None, score: float = 0.0) -> Tuple[bool, str]:
+    def final_buy_confirm(self, code: str, name: str, vibe: str, detail: dict, news: List[str], indicators: dict = None, score: float = 0.0, phase: dict = None) -> Tuple[bool, str, int]:
         """매수 집행 직전, 기술적 지표와 뉴스를 2차 검증하여 최종 승인 여부를 결정합니다."""
         pass
 
@@ -67,7 +67,7 @@ class BaseAdvisor(ABC):
         pass
 
     @abstractmethod
-    def compare_stock_superiority(self, candidate: dict, holdings_info: List[dict], vibe: str) -> Tuple[bool, Optional[str], str]:
+    def compare_stock_superiority(self, candidate: dict, holdings_info: List[dict], vibe: str) -> Tuple[bool, Optional[str], str, int]:
         """신규 후보 종목과 기존 보유 종목을 비교하여 종목 교체(Replacement) 여부를 결정합니다."""
         pass
 
