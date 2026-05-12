@@ -2,12 +2,13 @@ import json
 import re
 import threading
 import time
-from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor
 from src.logger import log_error
 from src.strategy.constants import PRESET_STRATEGIES
+from src.utils import get_now
+
 
 class BaseAdvisor(ABC):
     """트레이딩 엔진의 두뇌 역할을 하는 AI 어드바이저의 추상 인터페이스.
@@ -190,7 +191,7 @@ class BaseLLMAdvisor(BaseAdvisor):
             for code, ind in indicators.items():
                 bb = ind.get('bb', {})
                 indicators_txt += f" {code}: RSI {ind.get('rsi', 0):.0f}, %b {bb.get('percent_b', 0):.1f}"
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
+        now_str = get_now().strftime('%Y-%m-%d %H:%M')
         ma_info = ""
         if indicators:
             # 개별 종목에 대한 MA 분석이 있는 경우 요약 정보 추가

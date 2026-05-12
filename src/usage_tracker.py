@@ -1,6 +1,8 @@
 import json
 import os
 from datetime import datetime
+from src.utils import get_now
+
 
 USAGE_FILE = "ai_usage.json"
 
@@ -19,7 +21,7 @@ class AIUsageTracker:
         """
         try:
             usage = AIUsageTracker._load()
-            month_key = datetime.now().strftime("%Y-%m")
+            month_key = get_now().strftime("%Y-%m")
             
             if month_key not in usage:
                 usage[month_key] = {"total_calls": 0, "models": {}}
@@ -38,7 +40,7 @@ class AIUsageTracker:
             int: 총 호출 횟수.
         """
         usage = AIUsageTracker._load()
-        month_key = datetime.now().strftime("%Y-%m")
+        month_key = get_now().strftime("%Y-%m")
         return usage.get(month_key, {}).get("total_calls", 0)
 
     @staticmethod
@@ -49,7 +51,7 @@ class AIUsageTracker:
             dict: 모델 ID를 키로 하고 호출 횟수를 값으로 하는 딕셔너리.
         """
         usage = AIUsageTracker._load()
-        month_key = datetime.now().strftime("%Y-%m")
+        month_key = get_now().strftime("%Y-%m")
         return usage.get(month_key, {}).get("models", {})
 
     @staticmethod

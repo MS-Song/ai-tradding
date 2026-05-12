@@ -6,6 +6,8 @@ import json
 import threading
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
+from src.utils import get_now
+
 
 # --- 1. 기본 로깅 설정 ---
 def setup_logger(name="VibeTrader"):
@@ -187,7 +189,7 @@ class TradingLogManager:
             ma_20 (float): 매매 시점의 분봉 20MA 값.
         """
         try:
-            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            now = get_now().strftime('%Y-%m-%d %H:%M:%S')
             
             # [Safety] NaN 또는 Inf 수익금 처리
             import math
@@ -281,7 +283,7 @@ class TradingLogManager:
         Args:
             content (str): 변경된 설정의 상세 내용.
         """
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = get_now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {"time": now, "content": content}
         with self.lock:
             self.data["configs"].insert(0, log_entry) # 최신순
@@ -300,7 +302,7 @@ class TradingLogManager:
             reason (str): 거절 사유 (예: '고점 돌파 실패', '데이터 오류').
             model_id (str, optional): 판단을 내린 모델 ID.
         """
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = get_now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {
             "time": now,
             "code": code,
@@ -328,7 +330,7 @@ class TradingLogManager:
             reason (str): 승인 근거 및 전략 설명.
             model_id (str, optional): 판단을 내린 모델 ID.
         """
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = get_now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {
             "time": now,
             "code": code,
@@ -354,7 +356,7 @@ class TradingLogManager:
             result (str): 실행 결과 (SUCCESS, REJECTED 등).
             remarks (str, optional): 결과에 대한 추가 설명 또는 비고.
         """
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = get_now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = {
             "time": now,
             "category": category,
@@ -407,7 +409,7 @@ class TradingLogManager:
         Returns:
             int: 오늘 정산된 총 수익금 (원 단위).
         """
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = get_now().strftime('%Y-%m-%d')
         total_profit = 0.0
         with self.lock:
             for t in self.data.get("trades", []):
@@ -421,7 +423,7 @@ class TradingLogManager:
         Returns:
             Dict[str, float]: {'BEAR': 물타기총액, 'BULL': 불타기총액, 'ALGO': AI자율총액} 형태의 맵.
         """
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = get_now().strftime('%Y-%m-%d')
         amounts = {"BEAR": 0, "BULL": 0, "ALGO": 0}
         with self.lock:
             for t in self.data.get("trades", []):
@@ -438,7 +440,7 @@ class TradingLogManager:
 
     def get_daily_trading_fees(self, fee_rate=0.00015, tax_rate=0.0018):
         """금일 거래 내역을 바탕으로 예상 수수료 및 제세금을 합산합니다."""
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = get_now().strftime('%Y-%m-%d')
         total_fees = 0.0
         with self.lock:
             for t in self.data.get("trades", []):

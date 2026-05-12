@@ -1,7 +1,7 @@
 import time
-from datetime import datetime
 from src.workers.base import BaseWorker
-from src.utils import align_kr
+from src.utils import align_kr, get_now
+
 
 class ReportWorker(BaseWorker):
     """정기적인 포트폴리오 및 시장 현황 리포트를 전송하는 워커.
@@ -38,9 +38,9 @@ class ReportWorker(BaseWorker):
             self.state.update_worker_status("REPORT", result="대기", last_task="텔레그램 비활성")
             return
 
-        curr_time_str = datetime.now().strftime('%H:%M')
-        curr_min = datetime.now().minute
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        curr_time_str = get_now().strftime('%H:%M')
+        curr_min = get_now().minute
+        today_str = get_now().strftime('%Y-%m-%d')
         
         # 설정에서 발송 주기 읽기 (0이면 비활성)
         interval = self.strategy.ai_config.get("report_interval", 30)
@@ -140,7 +140,7 @@ class ReportWorker(BaseWorker):
                 f"📦 <b>보유 종목 상세 ({len(holdings)}개)</b>\n"
                 f"{holdings_detail}"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"⏰ {datetime.now().strftime('%H:%M:%S')} 기준"
+                f"⏰ {get_now().strftime('%H:%M:%S')} 기준"
             )
             self.notifier.send_message(msg)
         except Exception as e:

@@ -1,8 +1,9 @@
 import os
 import json
 import threading
-from datetime import datetime
 from src.logger import log_error
+from src.utils import get_now
+
 
 class StateManager:
     def __init__(self, strategy, state_file="trading_state.json"):
@@ -52,7 +53,7 @@ class StateManager:
         with self._lock:
             try:
                 s = self.strategy
-                today = datetime.now().strftime('%Y-%m-%d')
+                today = get_now().strftime('%Y-%m-%d')
 
                 # [안전 병합] 디스크의 최신 히스토리와 메모리 히스토리를 병합
                 if os.path.exists(self.state_file):
@@ -125,7 +126,7 @@ class StateManager:
 
                     s.preset_eng.preset_strategies = d.get("preset_strategies", {})
 
-                    today = datetime.now().strftime('%Y-%m-%d')
+                    today = get_now().strftime('%Y-%m-%d')
                     if d.get("last_rejected_date") == today:
                         s.rejected_stocks = d.get("rejected_stocks", {})
                     else:
@@ -161,7 +162,7 @@ class StateManager:
         self._pending.set()  # 신호만 설정 후 즉시 반환 (논블로킹)
 
     def update_yesterday_recs(self):
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = get_now().strftime('%Y-%m-%d')
         dates = sorted([d for d in self.strategy.recommendation_history.keys() if d < today])
         if dates:
             self.strategy.yesterday_recs = self.strategy.recommendation_history[dates[-1]]

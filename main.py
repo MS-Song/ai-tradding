@@ -5,7 +5,6 @@ import io
 import select
 import atexit
 import threading
-from datetime import datetime
 from dotenv import load_dotenv
 
 from src.config_init import ensure_env, get_config

@@ -4,7 +4,6 @@ import time
 import threading
 import io
 import re
-from datetime import datetime
 from src.utils import *
 from src.theme_engine import get_cached_themes, get_theme_for_stock
 from src.strategy import PRESET_STRATEGIES
@@ -134,7 +133,8 @@ def draw_performance_report(strategy, dm):
         elif current_tab == 3:
             # 3. 금일 투자 성과 (개편된 좌우 테이블 레이아웃)
             from datetime import datetime as dt_cls
-            today = dt_cls.now().strftime('%Y-%m-%d')
+            today = get_now().strftime('%Y-%m-%d')
+
             
             # --- 데이터 수집 ---
             buy_trades = []; sell_trades = []; sell_types = ["익절", "손절", "청산", "확정", "매도", "종료"]

@@ -6,6 +6,8 @@ import time
 import html
 from datetime import datetime
 from src.logger import log_error, telegram_logger
+from src.utils import get_now
+
 
 class TelegramNotifier:
     """텔레그램 메시지 전송 및 알림 서비스.
@@ -162,7 +164,7 @@ class TelegramNotifier:
             f"🔹 <b>사유</b>: {memo_esc}"
             f"{profit_str}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+            f"⏰ {get_now().strftime('%H:%M:%S')}"
         )
         self.send_message(msg)
 
@@ -182,7 +184,7 @@ class TelegramNotifier:
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{message_esc}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+            f"⏰ {get_now().strftime('%H:%M:%S')}"
         )
         self.send_message(msg)
 

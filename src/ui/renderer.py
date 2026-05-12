@@ -4,7 +4,6 @@ import io
 import time
 import threading
 import re
-from datetime import datetime
 from src.utils import is_market_open, is_us_market_open, get_visual_width, align_kr, ANSI_ESCAPE, get_market_name, get_key_immediate
 from src.theme_engine import get_cached_themes, get_theme_for_stock
 

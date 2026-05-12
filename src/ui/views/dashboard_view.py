@@ -51,7 +51,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             dm.last_size = (tw, th)
         buf.write("\033[H")
     
-    now_dt = datetime.now()
+    now_dt = get_now()
     k_st, u_st = ("OPEN" if is_market_open() else "CLOSED"), ("OPEN" if is_us_market_open() else "CLOSED")
     
     # [수정] 헤더바 레이아웃: 버전/VIBE/작업 정보를 좌측에, 시간은 우측에 배치
@@ -403,7 +403,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 if p_strat and p_strat.get('is_manual') and preset_label:
                     preset_label += "(M)"
                 if p_strat and p_strat.get('deadline'):
-                    try: rem_mins = int((datetime.strptime(p_strat['deadline'], '%Y-%m-%d %H:%M:%S') - datetime.now()).total_seconds() / 60); rem_txt = f"{rem_mins}M" if rem_mins > 0 else "EXP"
+                    try: rem_mins = int((datetime.strptime(p_strat['deadline'], '%Y-%m-%d %H:%M:%S') - get_now()).total_seconds() / 60); rem_txt = f"{rem_mins}M" if rem_mins > 0 else "EXP"
                     except: rem_txt = "ERR"
                 # [Task 9] TP/SL 색상 적용 (단위 % 제거)
                 tp_txt = f"\033[91m{info['tp']:+.1f}\033[0m"

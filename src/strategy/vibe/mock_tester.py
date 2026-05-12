@@ -2,6 +2,8 @@ import time
 import json
 from datetime import datetime, timedelta
 from src.logger import logger
+from src.utils import get_now
+
 
 class MockTradingTester:
     """
@@ -37,14 +39,14 @@ class MockTradingTester:
     def get_now(self):
         """가상 시간이 적용된 현재 시간 반환"""
         if not self.is_active or self.virtual_time_offset == 0:
-            return datetime.now()
-        return datetime.now() + timedelta(seconds=self.virtual_time_offset)
+            return get_now()
+        return get_now() + timedelta(seconds=self.virtual_time_offset)
 
     def warp_to_phase(self, phase_id: str):
         """특정 페이즈 시점(예: P4 장마감)으로 시간을 워프"""
         if not self.is_active: return
         
-        now = datetime.now()
+        now = get_now()
         target_time = now
         if phase_id == "P4":
             target_time = now.replace(hour=15, minute=15, second=0)

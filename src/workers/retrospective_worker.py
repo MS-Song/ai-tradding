@@ -1,7 +1,8 @@
 import time
-from datetime import datetime
 from src.workers.base import BaseWorker
 from src.logger import log_error
+from src.utils import get_now
+
 
 class RetrospectiveWorker(BaseWorker):
     """장 마감 후 당일 매매 내역을 분석하고 복기 리포트를 생성하는 워커.
@@ -34,7 +35,7 @@ class RetrospectiveWorker(BaseWorker):
         2. 30분 단위 정기 시점 또는 16:00 리포트 누락 시 분석을 트리거합니다.
         3. `RetrospectiveEngine`을 통해 AI 복기 분석을 수행하고 텔레그램으로 전송합니다.
         """
-        now = datetime.now()
+        now = get_now()
         curr_time_str = now.strftime('%H:%M')
         today_str = now.strftime('%Y-%m-%d')
         
@@ -94,7 +95,7 @@ class RetrospectiveWorker(BaseWorker):
         if not self.notifier or not self.notifier.is_active:
             return
             
-        date_str = datetime.now().strftime('%Y-%m-%d')
+        date_str = get_now().strftime('%Y-%m-%d')
         vibe = report.get("market_vibe", "N/A")
         
         msg = (
@@ -135,6 +136,6 @@ class RetrospectiveWorker(BaseWorker):
             msg += f"<code>{ai_text}</code>\n"
             
         msg += "━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"⏰ {datetime.now().strftime('%H:%M:%S')} 기준"
+        msg += f"⏰ {get_now().strftime('%H:%M:%S')} 기준"
         
         self.notifier.send_message(msg)

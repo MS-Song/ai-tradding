@@ -65,7 +65,7 @@ def draw_ai_logs_report(strategy, dm):
             buf.write("\033[1;94m" + " [AI 엔진 주기적 활동 로그 (오늘)]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             activities = trading_log.data.get("ai_activities", [])
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = get_now().strftime('%Y-%m-%d')
             today_activities = [a for a in activities if a.get('time', '').startswith(today)]
             
             if not today_activities:
@@ -102,7 +102,7 @@ def draw_ai_logs_report(strategy, dm):
             buf.write("\033[1;91m" + " [AI 매수 거절 히스토리 (오늘)]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             rejections = trading_log.data.get("rejections", [])
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = get_now().strftime('%Y-%m-%d')
             today_rejections = [r for r in rejections if r.get('time', '').startswith(today)]
             
             if not today_rejections:
@@ -136,7 +136,7 @@ def draw_ai_logs_report(strategy, dm):
         elif current_tab == 3:
             buf.write("\033[1;92m" + " [종목 한도(8개) 초과에 따른 당일 교체 히스토리]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = get_now().strftime('%Y-%m-%d')
             today_replacements = [r for r in strategy.replacement_logs if r.get('time', '').startswith(today)][::-1]
             
             if not today_replacements:
@@ -161,7 +161,7 @@ def draw_ai_logs_report(strategy, dm):
             buf.write("\033[1;93m" + " [AI 당일 매수 승인 및 진입 근거]" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             reasons = trading_log.data.get("buy_reasons", [])
-            today = datetime.now().strftime('%Y-%m-%d')
+            today = get_now().strftime('%Y-%m-%d')
             today_reasons = [r for r in reasons if r.get('time', '').startswith(today)]
             
             if not today_reasons:

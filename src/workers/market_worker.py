@@ -1,8 +1,8 @@
 import time
-from datetime import datetime
 from typing import List, Dict, Optional
 from src.workers.base import BaseWorker
-from src.utils import is_ai_enabled_time, is_market_open
+from src.utils import is_ai_enabled_time, is_market_open, get_now
+
 from src.theme_engine import analyze_popular_themes
 
 class MarketWorker(BaseWorker):
@@ -188,7 +188,7 @@ class MarketWorker(BaseWorker):
         self._handle_notifications()
         self._update_ai_data(curr_t)
         
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_str = get_now().strftime('%Y-%m-%d')
         if not hasattr(self, "_last_date") or self._last_date != today_str:
             self.strategy.state_mgr.update_yesterday_recs()
             self._last_date = today_str
@@ -206,8 +206,8 @@ class MarketWorker(BaseWorker):
         """
         with self.state.lock:
             curr_vibe = self.state.vibe
-            curr_time_str = datetime.now().strftime('%H:%M')
-            today_str = datetime.now().strftime('%Y-%m-%d')
+            curr_time_str = get_now().strftime('%H:%M')
+            today_str = get_now().strftime('%Y-%m-%d')
             
             # 1. VIBE 변화 알림
             if curr_vibe != self.state.last_notified_vibe:

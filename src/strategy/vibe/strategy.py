@@ -5,6 +5,8 @@ import json
 from datetime import datetime, time as dtime
 from typing import Dict, List, Tuple, Optional
 from src.logger import logger, log_error
+from src.utils import get_now
+
 from src.strategy.market_analyzer import MarketAnalyzer
 from src.strategy.exit_manager import ExitManager
 from src.strategy.recovery_engine import RecoveryEngine
@@ -240,7 +242,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
     def reset_daily_pnl(self, current_asset: float, current_pnl: float = 0.0):
         self.start_day_asset = current_asset
         self.start_day_pnl = current_pnl
-        self.last_asset_date = datetime.now().strftime('%Y-%m-%d')
+        self.last_asset_date = get_now().strftime('%Y-%m-%d')
         self._save_all_states()
         logger.info(f"📅 일일 수익률 기준점 초기화: {current_asset:,.0f}원 (미실현: {current_pnl:,.0f}원)")
 

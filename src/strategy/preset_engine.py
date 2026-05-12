@@ -1,7 +1,8 @@
-from datetime import datetime, timedelta
 from typing import Dict, Optional
 from src.strategy.constants import PRESET_STRATEGIES
 from src.logger import log_error, trading_log
+from src.utils import get_now
+
 
 class PresetStrategyEngine:
     """종목별 맞춤형 프리셋 전략(Strategy Preset)을 관리하고 할당하는 엔진입니다.
@@ -94,7 +95,7 @@ class PresetStrategyEngine:
                 del self.preset_strategies[code]
                 trading_log.log_config(f"전략 해제: [{code}]{name} -> 표준 복귀")
         else:
-            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            now_str = get_now().strftime('%Y-%m-%d %H:%M:%S')
             use_tp = tp if tp is not None else preset["default_tp"]
             use_sl = sl if sl is not None else preset["default_sl"]
             self.preset_strategies[code] = {

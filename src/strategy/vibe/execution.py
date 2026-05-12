@@ -1,10 +1,10 @@
 import time
 import math
 import re
-from datetime import datetime
 from typing import List, Tuple, Optional
 from src.logger import logger, log_error, trading_log
-from src.utils import is_ai_enabled_time, safe_cast_float
+from src.utils import is_ai_enabled_time, safe_cast_float, get_now
+
 from src.strategy.constants import PRESET_STRATEGIES
 
 class ExecutionMixin:
@@ -41,8 +41,8 @@ class ExecutionMixin:
         
         results, curr_t = [], self.mock_tester.get_now().timestamp()
         phase = self.get_market_phase()
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        today = datetime.now().strftime('%Y-%m-%d')
+        now_str = get_now().strftime('%Y-%m-%d %H:%M:%S')
+        today = get_now().strftime('%Y-%m-%d')
         if not hasattr(self, '_p3_global_processed'): self._p3_global_processed = {}
         self._p4_ai_done_this_cycle = False
         

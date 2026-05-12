@@ -10,6 +10,8 @@ import threading
 import time
 from datetime import datetime, timedelta
 from src.logger import log_error, trading_log
+from src.utils import get_now
+
 
 
 class RetrospectiveEngine:
@@ -86,7 +88,7 @@ class RetrospectiveEngine:
 
     def _cleanup_old_reports(self):
         """보관 기간(90일)을 초과한 오래된 리포트를 식별하여 자동 삭제합니다."""
-        cutoff = (datetime.now() - timedelta(days=self.RETENTION_DAYS)).strftime('%Y-%m-%d')
+        cutoff = (get_now() - timedelta(days=self.RETENTION_DAYS)).strftime('%Y-%m-%d')
         removed = []
         with self.lock:
             keys_to_remove = [k for k in self.data.get("reports", {}) if k < cutoff]
@@ -108,7 +110,7 @@ class RetrospectiveEngine:
             bool: 존재 시 True, 미존재 시 False.
         """
         if not date_str:
-            date_str = datetime.now().strftime('%Y-%m-%d')
+            date_str = get_now().strftime('%Y-%m-%d')
         with self.lock:
             return date_str in self.data.get("reports", {})
 
@@ -124,7 +126,7 @@ class RetrospectiveEngine:
             Tuple[List, List]: (수익 상위 리스트, 손실 상위 리스트).
         """
         if not date_str:
-            date_str = datetime.now().strftime('%Y-%m-%d')
+            date_str = get_now().strftime('%Y-%m-%d')
 
         sell_types = ["익절", "손절", "청산", "확정", "매도", "종료"]
         trades_with_profit = []
@@ -197,7 +199,7 @@ class RetrospectiveEngine:
             dict: 생성된 리포트 상세 데이터. 매매 기록이 없으면 None.
         """
         if not date_str:
-            date_str = datetime.now().strftime('%Y-%m-%d')
+            date_str = get_now().strftime('%Y-%m-%d')
 
         top_profits, top_losses = self.get_daily_top_trades(date_str)
 
@@ -217,8 +219,8 @@ class RetrospectiveEngine:
 
         # 리포트 생성
         report = {
-            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            "updated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "generated_at": get_now().strftime('%Y-%m-%d %H:%M:%S'),
+            "updated_at": get_now().strftime('%Y-%m-%d %H:%M:%S'),
             "market_vibe": vibe,
             "top_profits": analyzed_profits,
             "top_losses": analyzed_losses,
@@ -245,7 +247,7 @@ class RetrospectiveEngine:
             dict: 업데이트가 완료된 리포트 데이터.
         """
         if not date_str:
-            date_str = datetime.now().strftime('%Y-%m-%d')
+            date_str = get_now().strftime('%Y-%m-%d')
 
         with self.lock:
             existing = self.data.get("reports", {}).get(date_str)
@@ -269,7 +271,7 @@ class RetrospectiveEngine:
             )
             existing["ai_analysis"] = ai_analysis
 
-        existing["updated_at"] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        existing["updated_at"] = get_now().strftime('%Y-%m-%d %H:%M:%S')
         existing["update_count"] = existing.get("update_count", 1) + 1
 
         with self.lock:
@@ -326,7 +328,7 @@ class RetrospectiveEngine:
 
     def get_report(self, date_str: str = None) -> dict:
         """특정 날짜의 복기 리포트 상세 데이터를 조회합니다."""
-        if not date_str: date_str = datetime.now().strftime('%Y-%m-%d')
+        if not date_str: date_str = get_now().strftime('%Y-%m-%d')
         with self.lock: return self.data.get("reports", {}).get(date_str)
 
     def get_cumulative_stats(self) -> dict:

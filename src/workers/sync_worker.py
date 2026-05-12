@@ -1,10 +1,10 @@
 import time
 import concurrent.futures
 from typing import List, Dict
-from datetime import datetime
 from src.workers.base import BaseWorker
 from src.logger import trading_log, log_error, logger
-from src.utils import safe_cast_float
+from src.utils import safe_cast_float, get_now
+
 
 class DataSyncWorker(BaseWorker):
     """시스템의 데이터 무결성을 유지하기 위해 계좌와 시장 데이터를 동기화하는 워커.
@@ -95,7 +95,7 @@ class DataSyncWorker(BaseWorker):
             a (dict): KIS API로부터 수집된 자산 정보 딕셔너리.
         """
         if not a or a.get('total_asset', 0) <= 0: return
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_str = get_now().strftime('%Y-%m-%d')
         
         # [핵심] 일일 수익률 기준점(start_day_asset) 강제 동기화
         # 파일에서 로드된 과거의 잘못된 기준점(stale data)을 방지하기 위해 프로그램 시작 후 첫 실행 시 강제 재설정
@@ -153,7 +153,7 @@ class DataSyncWorker(BaseWorker):
             2. ThreadPoolExecutor를 통해 종목별 기술적 지표(MA20) 및 동적 임계치(TP/SL) 병렬 계산.
             3. 분석 완료된 데이터를 전역 상태(`stock_info`, `ma_20_cache`)에 업데이트.
         """
-        today_str = datetime.now().strftime('%Y-%m-%d')
+        today_str = get_now().strftime('%Y-%m-%d')
         all_codes = set([s.get('pdno', '').strip() for s in holdings if s.get('pdno')])
         
         with trading_log.lock:
@@ -356,7 +356,7 @@ class DataSyncWorker(BaseWorker):
                 self._update_asset_metrics(self.state.asset)
 
             self.state.stock_info.update(temp_info)
-            self.state.last_update_time = datetime.now().strftime('%H:%M:%S')
+            self.state.last_update_time = get_now().strftime('%H:%M:%S')
 
             # [Fix] 실시간 시세를 추천 종목 및 인기/거래량 리스트에 반영하여 TUI 가격 최신화
             # ai_recommendations, hot_raw, vol_raw는 최초 수집 시점의 스냅샷 가격을 갖고 있으므로

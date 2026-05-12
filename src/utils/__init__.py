@@ -6,7 +6,15 @@ import signal
 import re
 import atexit
 import functools
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timezone, timedelta
+
+KST = timezone(timedelta(hours=9))
+
+def get_now():
+    """현재 시간을 KST(GMT+9) 기준으로 반환합니다. 
+    서버의 로컬 시간 설정과 무관하게 항상 한국 시간을 보장합니다."""
+    return datetime.now(KST).replace(tzinfo=None)
+
 
 # ────────────────────────────────────────────────────────────
 # 한글 두벌식 키보드 → 영문 QWERTY 역매핑
@@ -214,7 +222,7 @@ def retry_api(max_retries=3, delay=1.2, backoff=2.0, exceptions=(Exception,)):
 def get_business_days_ago(n):
     """오늘 포함 최근 n개 영업일을 제외한 기준 날짜(date객체)를 반환"""
     from datetime import timedelta
-    d = datetime.now()
+    d = get_now()
     count = 0
     while count < n:
         if d.weekday() < 5: # 월-금
@@ -224,18 +232,18 @@ def get_business_days_ago(n):
     return d.date()
 
 def is_market_open():
-    now = datetime.now()
+    now = get_now()
     if now.weekday() >= 5: return False
     return dtime(9, 0) <= now.time() <= dtime(15, 30)
 
 def is_ai_enabled_time():
     """AI 자동 기능 실행 가능 시간 체크 (장 시작 20분 전 ~ 장 마감 20분 후)"""
-    now = datetime.now()
+    now = get_now()
     if now.weekday() >= 5: return False
     return dtime(8, 40) <= now.time() <= dtime(15, 50)
 
 def is_us_market_open():
-    now = datetime.now()
+    now = get_now()
     if now.weekday() >= 5: return False
     t = now.time()
     return t >= dtime(22, 30) or t <= dtime(5, 0)
