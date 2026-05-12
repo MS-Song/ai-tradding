@@ -65,42 +65,71 @@ def draw_recommendation_report(strategy, dm, tw, th):
         recs = strategy.ai_recommendations
         if not recs: buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. '8'을 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
         else:
-            buf.write("\033[1m" + f"{align_kr('테마', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 9)} | {align_kr('등락', 7)} | {align_kr('수급상태', 8)} | {align_kr('사이클', 6)} | {align_kr('AI점수', 6)} | 발굴 근거" + "\033[0m\n")
-            buf.write("-" * tw + "\n")
+            # 헤더와 데이터 컬럼 너비 정의
+            w_theme, w_code, w_name, w_price, w_rate, w_supply, w_cycle, w_score = 12, 8, 16, 10, 8, 10, 8, 8
+            
+            header = (
+                f"{align_kr('테마', w_theme)} | "
+                f"{align_kr('코드', w_code)} | "
+                f"{align_kr('종목명', w_name)} | "
+                f"{align_kr('현재가', w_price, 'right')} | "
+                f"{align_kr('등락', w_rate, 'right')} | "
+                f"{align_kr('수급상태', w_supply, 'center')} | "
+                f"{align_kr('사이클', w_cycle, 'center')} | "
+                f"{align_kr('AI점수', w_score, 'right')} | "
+                "발굴 근거"
+            )
+            buf.write("\033[1;97m" + header + "\033[0m\n")
+            buf.write("\033[90m" + "═" * tw + "\033[0m\n")
+            
             for r in recs[:max(1, th-15)]:
-                code = r['code']; rate = float(r['rate']); color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
+                code = r['code']
+                rate = float(r['rate'])
+                color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
                 gem_mark = "💎" if r.get('is_gem') else ("📊" if r.get('is_etf') else "  ")
+                
                 theme_raw = r.get('theme', '?')
                 theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
-                theme_fmt = align_kr(theme_clean, 8)
-
-                # 수급 데이터 추출
-                inv = r.get('investor', {})
-                f_net = inv.get('frgn_net_buy', 0)
-                i_net = inv.get('inst_net_buy', 0)
-                p_net = inv.get('pnsn_net_buy', 0)
+                theme_fmt = f"[{theme_clean}]"
                 
-                # 수급 시그널 생성 (F:외인, I:기관, P:연기금)
+                # 수급 데이터 및 사이클 추출
+                inv = r.get('investor', {})
+                f_net, i_net, p_net = inv.get('frgn_net_buy', 0), inv.get('inst_net_buy', 0), inv.get('pnsn_net_buy', 0)
+                
                 signals = []
-                if f_net > 0: signals.append("F↑")
-                if i_net > 0: signals.append("I↑")
-                if p_net > 0: signals.append("P↑")
+                if f_net > 0: signals.append("\033[91mF↑\033[0m")
+                if i_net > 0: signals.append("\033[91mI↑\033[0m")
+                if p_net > 0: signals.append("\033[91mP↑\033[0m")
                 supply_str = " ".join(signals) if signals else "-"
                 
-                # 사이클 태그 (매집, 가속, 전환)
                 cycle_tag = inv.get('cycle', '-')
-                if cycle_tag: cycle_tag = f"[{cycle_tag}]"
-                else: cycle_tag = "-"
+                cycle_fmt = f"[{cycle_tag}]" if cycle_tag != "-" else "-"
 
                 reason = r.get('reason', '').replace('\n', ' ')
-                avail_w = tw - 94
+                
+                # 가용 너비 계산 (기존 컬럼 너비 + 구분자들 너비 합산)
+                # ANSI 코드가 들어간 경우 get_visual_width로 실제 폭 계산 필요
+                fixed_w = w_theme + w_code + w_name + w_price + w_rate + w_supply + w_cycle + w_score + (8 * 3)
+                avail_w = tw - fixed_w - 2
+                
                 if get_visual_width(reason) > avail_w:
-                    while get_visual_width(reason) > avail_w - 3: reason = reason[:-1]
+                    while get_visual_width(reason) > max(5, avail_w - 3): reason = reason[:-1]
                     reason += "..."
                 
-                buf.write(f"[{theme_fmt}] | {align_kr(code, 8)} | {align_kr(gem_mark + r['name'], 14)} | {align_kr(f'{int(float(r.get('price',0))):,}', 9, 'right')} | {align_kr(f'{color}{rate:+.1f}%\033[0m', 7, 'right')} | {align_kr(supply_str, 8, 'center')} | {align_kr(cycle_tag, 6, 'center')} | {align_kr(f'{r['score']:.1f}', 6, 'right')} | {reason}\n")
+                row = (
+                    f"{align_kr(theme_fmt, w_theme)} | "
+                    f"{align_kr(code, w_code)} | "
+                    f"{align_kr(gem_mark + r['name'], w_name)} | "
+                    f"{align_kr(f'{int(float(r.get('price',0))):,}', w_price, 'right')} | "
+                    f"{align_kr(f'{color}{rate:+.1f}%\033[0m', w_rate, 'right')} | "
+                    f"{align_kr(supply_str, w_supply, 'center')} | "
+                    f"{align_kr(cycle_fmt, w_cycle, 'center')} | "
+                    f"{align_kr(f'{r['score']:.1f}', w_score, 'right')} | "
+                    f"{reason}"
+                )
+                buf.write(row + "\n")
         
-        buf.write("\n" + "-" * tw + "\n\033[1;96m" + " [AI 수급 사이클 심층 진단 (최근 10일 흐름)]" + "\033[0m\n")
+        buf.write("\n" + "\033[90m" + "─" * tw + "\033[0m\n\033[1;96m" + " [AI 수급 사이클 심층 진단 (최근 10일 흐름)]" + "\033[0m\n")
         if recs:
             for r in recs[:5]: # 상위 5개 종목 집중 진단
                 inv = r.get('investor', {})

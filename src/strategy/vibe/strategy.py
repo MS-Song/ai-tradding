@@ -280,7 +280,21 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
 
     def _cleanup_rejected_stocks(self):
         now = time.time()
-        to_remove = [c for c, d in self.rejected_stocks.items() if isinstance(d, dict) and "time" in d and now - d["time"] >= 3600]
+        # [개선] 고정된 1시간 정리가 아닌, AI가 지정한 개별 만료 시간(expiry)을 기준으로 정리
+        to_remove = []
+        for c, d in self.rejected_stocks.items():
+            if not isinstance(d, dict): continue
+            
+            # 구버전 호환 (time 필드만 있는 경우 1시간 적용)
+            if "expiry" not in d and "time" in d:
+                if now - d["time"] >= 3600: to_remove.append(c)
+                continue
+                
+            # 신버전: expiry 필드 체크
+            expiry = d.get("expiry", 0)
+            if now >= expiry:
+                to_remove.append(c)
+                
         if to_remove:
             for c in to_remove: del self.rejected_stocks[c]
             self._save_all_states()

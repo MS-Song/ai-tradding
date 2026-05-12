@@ -438,24 +438,26 @@ class BaseLLMAdvisor(BaseAdvisor):
         2. 현재 페이즈가 'OFFENSIVE'라면 적극적으로 수익 기회를 포착하여 'Yes'를 결정하세요.
         3. '스마트 머니' 유입(외인/기관 쌍끌이 또는 연기금 매집)이 확인되면 상승 사이클의 초입일 확률이 매우 높으므로 강력한 매수 근거로 활용하십시오. 반대로 수급 이탈이 심각하면 기술적 지표가 좋아도 보수적으로 접근하세요.
         4. 'CONVERGENCE'나 'BEAR' 장세라고 해서 무조건 깐깐하게 굴기보다, '낙폭과대 반등'이나 '강한 지지선'이 확인되는 종목은 기회비용을 고려하여 전향적으로 검토하세요.
-        답변형식: 결정: Yes 또는 No, 사유: [수급/차트/추세 근거 포함] 한 줄 요약
+        답변형식: 결정: Yes 또는 No, 사유: [근거 요약], 대기시간: N분 (No일 경우 재검토까지 필요한 시간, 기본 60)
         """
         answer = self._call_api(prompt)
         if answer:
-            # 결정 파싱 강화: 마크다운 강조, 한글 답변, 다양한 구분자 대응
+            # 결정 파싱 강화
             decision_match = re.search(r"결정[^\w]*\b(Yes|No|예|아니오)\b", answer, re.I)
             reason_match = re.search(r"사유[^\w]*([^\n]*)", answer)
+            wait_match = re.search(r"대기시간[^\d]*(\d+)", answer)
             
             raw_decision = decision_match.group(1).strip().lower() if decision_match else "no"
             decision = (raw_decision in ["yes", "예"])
             reason = reason_match.group(1).strip() if reason_match else "판단 근거 부족"
+            wait_mins = int(wait_match.group(1)) if wait_match else 60
             
             # 만약 결정 라벨이 없는데 답변이 매우 긍정적이고 'Yes'를 포함하고 있다면 구제책 마련
             if not decision_match and ("Yes" in answer or "승인" in answer or "추천" in answer) and "No" not in answer:
                 decision = True
                 
-            return decision, reason
-        return False, "API 호출 실패"
+            return decision, reason, wait_mins
+        return False, "API 호출 실패", 60
 
     def verify_market_vibe(self, current_data, heuristic_vibe):
         """알고리즘 기반의 장세 판정을 AI가 시황 데이터를 바탕으로 2차 검증합니다."""
@@ -525,18 +527,22 @@ class BaseLLMAdvisor(BaseAdvisor):
         결정: Yes/No
         매도종목코드: XXXXXX (Yes일 경우 위 '현재 보유 종목 리스트' 중 매도할 1개의 종목코드. No일 경우 NONE)
         사유: 교체 또는 포기 결정에 대한 한 줄 핵심 근거
+        대기시간: N분 (No일 경우 재검토까지 필요한 시간, 기본 60)
         """
         answer = self._call_api(prompt, timeout=40)
         if answer:
             decision_match = re.search(r"(?:교체여부|결정)[^\w]*\b(Yes|No|예|아니오)\b", answer, re.I)
             code_match = re.search(r"(?:매도종목코드|코드)[^\w]*\b([0-9A-Z]+)\b", answer)
             reason_match = re.search(r"사유[^\w]*([^\n]*)", answer)
+            wait_match = re.search(r"대기시간[^\d]*(\d+)", answer)
             
             raw_decision = decision_match.group(1).strip().lower() if decision_match else "no"
             decision = (raw_decision in ["yes", "예"])
             sell_code = code_match.group(1).strip() if code_match and code_match.group(1).upper() != "NONE" else None
-            return (decision and sell_code is not None), sell_code, reason_match.group(1).strip() if reason_match else "교체 근거 부족"
-        return False, None, "API 호출 실패"
+            wait_mins = int(wait_match.group(1)) if wait_match else 60
+            
+            return (decision and sell_code is not None), sell_code, reason_match.group(1).strip() if reason_match else "교체 근거 부족", wait_mins
+        return False, None, "API 호출 실패", 60
 
     def get_portfolio_strategic_review(self, holdings_data, vibe, market_data):
         """전체 포트폴리오를 한 번에 리뷰(Batch Review)하여 각 종목별 즉시 매도 또는 전략 갱신을 수행합니다."""

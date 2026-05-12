@@ -411,6 +411,9 @@ class ExecutionMixin:
                     code, name, score = rec['code'], rec['name'], rec.get('score', 0.0)
                     if any(h.get('pdno') == code for h in holdings): continue
                     
+                    # [Safety] 이미 거절되거나 대기 중인 종목은 루프 최상단에서 스킵하여 중복 로깅 방지 (유저 요청)
+                    if code in self.rejected_stocks: continue
+                    
                     # [Cooldown] 익절 후 2시간 이내 재진입 금지 (핑퐁 방지)
                     if (time.time() - self.last_sell_times.get(code, 0)) < 7200: continue
                     
@@ -432,16 +435,16 @@ class ExecutionMixin:
                         cand_sig = cand_ma_analysis.get('signal', 'NEUTRAL') if cand_ma_analysis else 'UNKNOWN'
                         
                         if cand_sig == 'OVERBOUGHT':
-                            msg = f"🚫 [교체품질게이트] {name} 후보 OVERBOUGHT - 교체 진입 차단"
+                            msg = f"🚫 [교체품질게이트] {name} 후보 OVERBOUGHT - 교체 진입 차단 (1시간 스킵)"
                             logger.info(msg)
-                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", "과열구간(OVERBOUGHT) 교체 제한")
+                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", "과열구간(OVERBOUGHT) 교체 제한 (1시간 스킵)")
                             self.rejected_stocks[code] = {"reason": "교체 진입 차단 (OVERBOUGHT)", "time": time.time()}
                             continue
                         if cand_sig == 'UNKNOWN':
-                            msg = f"⚠️ [교체품질게이트] {name} MA지표 없음 - 교체 진입 차단"
+                            msg = f"⚠️ [교체품질게이트] {name} MA지표 없음 - 교체 진입 차단 (10분 대기)"
                             logger.info(msg)
-                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", "기술적 지표 로딩 중")
-                            # 데이터 일시 부재는 10분만 차단
+                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", "기술적 지표 로딩 중 (10분 후 재시도)")
+                            # 데이터 일시 부재는 10분만 차단 (3600 - 3000 = 600s)
                             self.rejected_stocks[code] = {"reason": "교체 진입 차단 (데이터 부재)", "time": time.time() - 3000} 
                             continue
 
@@ -454,53 +457,59 @@ class ExecutionMixin:
                         ) if holdings else 0
                         
                         if score < min_holding_score + 15.0:
-                            msg = f"🚫 [교체품질게이트] {name} 점수({score:.1f}) 기존 최저({min_holding_score:.1f}) 대비 15pt 미달 - 교체 차단"
+                            msg = f"🚫 [교체품질게이트] {name} 점수({score:.1f}) 기존 최저({min_holding_score:.1f}) 대비 15pt 미달 - 교체 차단 (1시간 스킵)"
                             logger.info(msg)
-                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", f"점수차 부족({score - min_holding_score:.1f}pt < 15pt)")
+                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", f"점수차 부족({score - min_holding_score:.1f}pt < 15pt) (1시간 스킵)")
                             self.rejected_stocks[code] = {"reason": f"교체 품질 미달 (점수차 {score - min_holding_score:.1f}pt)", "time": time.time()}
                             continue
 
-                        # [교체 품질 게이트 #3] 교체 대상 후보 종목의 보유 시간이 30분 미만이면 교체 금지
-                        too_fresh = any(
-                            h.get('pdno') and (time.time() - self.last_buy_times.get(h['pdno'], 0)) < 1800
-                            for h in holdings
-                        )
-                        if too_fresh:
-                            msg = f"🚫 [교체품질게이트] 30분 미만 보유 종목 존재 - 교체 대기"
-                            logger.info(msg)
-                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", "최근 매수 종목 보호 중 (30분 미만)")
-                            # 시스템 상태에 의한 대기이므로 10분만 차단하여 기회 유지
-                            self.rejected_stocks[code] = {"reason": "교체 대기 (보유 종목 성숙 필요)", "time": time.time() - 3000}
-                            continue
+                        # [교체 품질 게이트 #3] AI 판단에 위임 (기존 하드코딩된 30분 보호 제거)
+                        # AI가 보유 시간과 수익률을 보고 교체 여부를 직접 결정하도록 함
 
                         # [Step 2] AI 교체 판단 (상대적 우위 검증)
-                        is_superior, t_code, t_reason = self.get_replacement_target(code, name, score, holdings)
+                        is_superior, t_code, t_reason, wait_mins = self.get_replacement_target(code, name, score, holdings)
                         if is_superior and t_code:
                             target_code = t_code
                         else:
-                            # 교체 대상이 없거나 부적합하다고 판단된 경우 1시간 차단
-                            trading_log.log_ai_activity("매수취소", f"[{code}] {name}", "SKIP", f"AI 교체 거절: {t_reason}")
-                            self.rejected_stocks[code] = {"reason": f"교체 부적합: {t_reason}", "time": time.time()}
+                            # 교체 대상이 없거나 부적합하다고 판단된 경우 AI가 제안한 시간 동안 차단
+                            trading_log.log_ai_activity("매수취소", f"[{code}] {name}", "SKIP", f"AI 교체 거절: {t_reason} ({wait_mins}분 스킵)")
+                            self.rejected_stocks[code] = {
+                                "reason": f"교체 부적합: {t_reason}", 
+                                "time": time.time(),
+                                "expiry": time.time() + (wait_mins * 60)
+                            }
                             continue
                     
                     # [Step 3] 최종 구매 컨펌 (Gemini) - 모든 품질 게이트 통과 후 마지막에 실행
-                    is_ok, reason = self.confirm_buy_decision(code, name, score)
-                    if not is_ok: continue
+                    is_ok, reason, wait_mins = self.confirm_buy_decision(code, name, score)
+                    if not is_ok:
+                        if code in self.rejected_stocks:
+                            # AI가 거절한 경우, 로그에 대기 시간을 함께 표시
+                            trading_log.log_ai_activity("매수거절", f"[{code}] {name}", "REJECT", f"{reason} ({wait_mins}분 스킵)")
+                        continue
                             
                     # [Step 3] 매수 집행 준비
                     price = safe_cast_float(rec.get('price')) or safe_cast_float(self.api.get_inquire_price(code).get('price'))
                     if price == 0:
                         # 가격 오류 시 10분만 대기
-                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "FAIL", "시세 데이터 오류 (0원)")
-                        self.rejected_stocks[code] = {"reason": "시세 데이터 오류 (0원)", "time": time.time() - 3000}
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "FAIL", "시세 데이터 오류 (0원) (10분 후 재시도)")
+                        self.rejected_stocks[code] = {
+                            "reason": "시세 데이터 오류 (0원)", 
+                            "time": time.time(),
+                            "expiry": time.time() + 600
+                        }
                         continue
                     
                     amt = self.ai_config["amount_per_trade"]
                     # [개선] 1회 한도가 부족하더라도 가용 현금이 주가보다 크다면 최소 1주 매수 시도 허용
                     if cash < amt and cash < price:
                         # 잔고 부족 시 10분 후 재시도
-                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", f"현금부족(보유:{int(cash):,}원)")
-                        self.rejected_stocks[code] = {"reason": "가용 현금 부족", "time": time.time() - 3000}
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", f"현금부족(보유:{int(cash):,}원) (10분 후 재시도)")
+                        self.rejected_stocks[code] = {
+                            "reason": "가용 현금 부족", 
+                            "time": time.time(),
+                            "expiry": time.time() + 600
+                        }
                         continue # 1주도 살 수 없는 경우만 스킵
                     
                     # 교체 대상 전량 매도
@@ -618,7 +627,7 @@ class ExecutionMixin:
                 recs.append(rec_bull)
         return recs
 
-    def confirm_buy_decision(self, code: str, name: str, score: float = 0.0) -> Tuple[bool, str]:
+    def confirm_buy_decision(self, code: str, name: str, score: float = 0.0) -> Tuple[bool, str, int]:
         """신규 종목 매수 전, 알고리즘 필터링 및 AI 최종 승인 절차를 수행합니다.
 
         검증 프로세스 (GEMINI.md 2.D):
@@ -633,14 +642,14 @@ class ExecutionMixin:
             score (float): AlphaEngine에서 산출된 정량적 스코어.
 
         Returns:
-            Tuple[bool, str]: (매수 승인 여부, 승인/거절 상세 사유).
+            Tuple[bool, str, int]: (매수 승인 여부, 승인/거절 상세 사유, 대기시간(분)).
         """
         self._cleanup_rejected_stocks()
         if code in self.rejected_stocks: return False, f"당일 매수 거절됨"
         
         # [Safety] 최근 매수 이력이 있는 경우 중복 진입 방지 (잔고 동기화 전 중복 호출 차단)
-        if (time.time() - self.last_buy_times.get(code, 0)) < 600:
-            return False, "최근 매수 이력 있음 (중복 방지)"
+        if (time.time() - self.last_buy_times.get(code, 0)) < 300:
+            return False, "최근 매수 이력 있음 (중복 방지)", 5
 
         # [신규] 장 초반 안정화 필터 (09:00~09:20)
         # 지수가 BULL이 아닌 경우 AI 점수 커트라인을 대폭 상향하여 리스크 관리
@@ -650,7 +659,7 @@ class ExecutionMixin:
             if score < strict_min:
                 msg = f"장 초반 안정화 대기 (지수 BULL 미달, 현재 점수 {score:.1f} < 기준 {strict_min:.1f})"
                 logger.info(f"⏳ [{name}] {msg}")
-                return False, msg
+                return False, msg, 10
         
         # [Safety] indicators 초기화 위치를 함수 최상단으로 이동 (UnboundLocalError 방지)
         indicators = {}
@@ -659,13 +668,13 @@ class ExecutionMixin:
         price = safe_cast_float(detail.get('price'))
         rate = safe_cast_float(detail.get('rate'))
             
-        if price == 0.0: return False, "실시간 데이터 오류: 시세 0원"
+        if price == 0.0: return False, "실시간 데이터 오류: 시세 0원", 10
         
         # [CRITICAL] 당일 등락률 하드 필터 (-8.0% ~ +8.0% 범위만 진입 허용 - GEMINI.md 준수)
         if rate > 8.0:
-            return False, f"진입 제한: 과열 종목 (+{rate:.1f}%)"
+            return False, f"진입 제한: 과열 종목 (+{rate:.1f}%)", 60
         if rate < -8.0:
-            return False, f"진입 제한: 과매도/급락 ({rate:.1f}%)"
+            return False, f"진입 제한: 과매도/급락 ({rate:.1f}%)", 60
             
         news = self.api.get_naver_stock_news(code)
         
@@ -698,14 +707,14 @@ class ExecutionMixin:
                 if sig == "CAUTION":
                     if vibe_upper in ["BEAR", "DEFENSIVE"]:
                         logger.info(f"🚫 [MA필터] {name} 분봉20MA 이탈(CAUTION) - {vibe_upper} 장세 진입 차단")
-                        return False, f"분봉20MA 이탈 확인 중 진입 차단 ({vibe_upper} 장세)"
+                        return False, f"분봉20MA 이탈 확인 중 진입 차단 ({vibe_upper} 장세)", 30
                     else:
                         score *= 0.8  # Bull/Neutral: 감점만 적용
                 elif sig == "OVERBOUGHT":
                     # [핵심] 모든 장세에서 단기 과열(분봉 20MA 이격도 3% 초과)은 Python 코드에서 직접 차단
                     # → Gemini의 '공격적 페르소나'가 우회하지 못하도록 AI 호출 이전에 하드 리턴
                     logger.info(f"🚫 [MA필터] {name} 단기 과열(OVERBOUGHT) - 상투 추격 매수 차단")
-                    return False, "분봉 이평선 단기 과열 구간 진입 차단 (상투 매수 방지)"
+                    return False, "분봉 이평선 단기 과열 구간 진입 차단 (상투 매수 방지)", 60
                 elif sig == "BUY_ZONE":
                     # 최적의 매수 타점 (분봉 20MA 지지선 근접) 시 AI 승인 확률 상향을 위해 가점
                     score += 15.0
@@ -721,7 +730,7 @@ class ExecutionMixin:
             logger.info(f"⚠️ [{name}] MA지표 취득 실패 → score 패널티 -30pt (현재: {score:.1f}pt)")
             # 패널티 후 최소 기준(60점) 미달이면 AI 호출 없이 즉시 거절
             if score < self.ai_config.get('min_score', 60.0):
-                return False, f"MA지표 없음 + 점수 미달 ({score:.1f}pt < {self.ai_config.get('min_score', 60.0):.1f}pt) - 데이터 충분 후 재시도"
+                return False, f"MA지표 없음 + 점수 미달 ({score:.1f}pt < {self.ai_config.get('min_score', 60.0):.1f}pt) - 데이터 충분 후 재시도", 10
 
         phase = self.get_market_phase()
         # [개선] AI 호출 실패 시 자동 재시도 로직 추가 (최대 3회)
@@ -729,7 +738,7 @@ class ExecutionMixin:
         for i in range(3):
             try:
                 trading_log.log_ai_activity("매수검토", f"[{code}] {name} 컨펌시도", "WAIT", f"Score:{score:.1f}")
-                is_confirmed, reason = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news, indicators=indicators, score=score, phase=phase)
+                is_confirmed, reason, wait_mins = self.ai_advisor.final_buy_confirm(code, name, self.current_market_vibe, detail, news, indicators=indicators, score=score, phase=phase)
                 # 성공적으로 판단을 내렸다면 (승인이든 거절이든) 루프 종료
                 if "failed" not in reason.lower():
                     res_tag = "승인" if is_confirmed else "거절"
@@ -746,18 +755,22 @@ class ExecutionMixin:
         if not is_confirmed:
             # 1. 데이터 오류(0원 등)나 시스템 실패(All failed)인 경우 rejected_stocks에 넣지 않고 다음 사이클에 재시도하도록 함
             if re.search(r"(?<![0-9])0원", reason) or "가격이 0원" in reason or "failed" in reason.lower():
-                return False, f"일시적 판단 보류: {reason}"
+                return False, f"일시적 판단 보류: {reason}", 5
             
-            # 2. AI가 명확하게 '매수 거절' 의견을 낸 경우에만 24시간 차단 리스트에 추가
-            self.rejected_stocks[code] = {"reason": reason, "time": time.time()}
+            # 2. AI가 명확하게 '매수 거절' 의견을 낸 경우에만 지정된 시간 동안 차단 리스트에 추가
+            self.rejected_stocks[code] = {
+                "reason": reason, 
+                "time": time.time(),
+                "expiry": time.time() + (wait_mins * 60)
+            }
             trading_log.log_rejection(code, name, reason, model_id=m_id)
             self._save_all_states()
-            return False, reason
+            return False, reason, wait_mins
         
         if m_id: self.last_buy_models[code] = m_id
-        return True, reason
+        return True, reason, 0
 
-    def get_replacement_target(self, candidate_code: str, candidate_name: str, score: float, holdings: List[dict]) -> Tuple[bool, Optional[str], str]:
+    def get_replacement_target(self, candidate_code: str, candidate_name: str, score: float, holdings: List[dict]) -> Tuple[bool, Optional[str], str, int]:
         """포트폴리오 한도 도달 시, 신규 후보 종목과 기존 보유 종목을 비교하여 교체 대상을 선정합니다.
 
         Args:
@@ -767,16 +780,25 @@ class ExecutionMixin:
             holdings (List[dict]): 현재 보유 중인 종목 리스트.
 
         Returns:
-            Tuple[bool, Optional[str], str]: (교체 수행 여부, 매도할 종목 코드, 교체 결정 사유).
+            Tuple[bool, Optional[str], str, int]: (교체 수행 여부, 매도할 종목 코드, 교체 결정 사유, 대기시간(분)).
         """
         if not holdings: return False, None, "보유 종목 없음"
         c_detail = self.api.get_naver_stock_detail(candidate_code)
         c_news = self.api.get_naver_stock_news(candidate_code)
         candidate_info = {"code": candidate_code, "name": candidate_name, "score": score, "detail": str(c_detail), "news": c_news}
         holdings_info = []
+        now = time.time()
         for h in holdings:
-            detail = self.api.get_naver_stock_detail(h['pdno'])
-            holdings_info.append({"code": h['pdno'], "name": h['prdt_name'], "rt": float(h.get('evlu_pfls_rt', 0)), "detail": str(detail)})
+            code = h['pdno']
+            detail = self.api.get_naver_stock_detail(code)
+            holding_mins = int((now - self.last_buy_times.get(code, 0)) / 60)
+            holdings_info.append({
+                "code": code, 
+                "name": h['prdt_name'], 
+                "rt": float(h.get('evlu_pfls_rt', 0)), 
+                "holding_mins": holding_mins,  # 보유 시간 추가하여 AI가 판단하도록 함
+                "detail": str(detail)
+            })
         return self.ai_advisor.compare_stock_superiority(candidate_info, holdings_info, self.current_market_vibe)
 
     def perform_portfolio_batch_review(self, skip_trade=False, include_manual=False) -> List[str]:
@@ -832,9 +854,11 @@ class ExecutionMixin:
             except Exception as e:
                 logger.warning(f"배치리뷰 MA괴리율 분석 실패 ({h['prdt_name']}): {e}")
 
+            holding_mins = int((time.time() - self.last_buy_times.get(code, 0)) / 60)
             holdings_data.append({
                 "code": code, "name": h['prdt_name'],
                 "rt": float(h.get('evlu_pfls_rt', 0)),
+                "holding_mins": holding_mins, # AI가 보유 시간을 고려하여 매도 여부를 판단하도록 함
                 "tp": tp, "sl": sl,
                 "per": detail.get('per'), "pbr": detail.get('pbr'),
                 "news": ", ".join(news[:2]),
@@ -857,17 +881,11 @@ class ExecutionMixin:
                 reason = opinion.get("reason", "AI 분석 결과")
                 
                 if action == "SELL":
-                    # [추가] 구매 후 최소 관망 시간(20분) 체크 - 수수료 낭비 방지
-                    last_buy_t = self.last_buy_times.get(code, 0)
-                    holding_sec = time.time() - last_buy_t
-                    is_emergency = self.analyzer.is_panic or self.current_market_vibe.upper() == "DEFENSIVE"
-                    is_manual = self.last_buy_models.get(code) == "수동"
-                    
-                    # 수동 매수는 20분 무조건 보호, AI 매수는 긴급 상황이 아닐 때만 20분 보호
-                    if last_buy_t > 0 and holding_sec < 1200:
-                        if is_manual or not is_emergency:
-                            results.append(f"🛡️ 수동 매수 보호(AI자율): {name} ({int(holding_sec/60)}분 경과 - 20분 미만)")
-                            continue
+                    # [교체 보호 로직] AI 판단에 위임 (유저 요청 반영: 보호 시간은 AI 판단에 맡김)
+                    # 수동 매수는 여전히 20분간 자율 매도로부터 보호하여 사용자 통제권 유지
+                    if is_manual and holding_sec < 1200:
+                        results.append(f"🛡️ 수동 매수 보호: {name} ({int(holding_sec/60)}분 경과 - 20분 미만)")
+                        continue
 
                     # [매매 시도 기록] 실제 주문 전 AI의 결정을 먼저 로그에 남김
                     msg = f"🤖 AI 자율 매도 결정: {name}"

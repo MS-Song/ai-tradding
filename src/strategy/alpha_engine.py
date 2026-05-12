@@ -118,14 +118,27 @@ class VibeAlphaEngine:
             auto_eligible = -8.0 <= raw_rate <= 8.0
 
             if item_score >= dynamic_min_score:
-                supply_msg = ""
+                reasons = []
                 if investor_data:
-                    f, p = investor_data.get('frgn_net_buy', 0), investor_data.get('pnsn_net_buy', 0)
-                    if f > 0 and p > 0: supply_msg = " | 외인/연기금 쌍끌이"
-                    elif f > 0: supply_msg = " | 외인 매수 우위"
-                    elif p > 0: supply_msg = " | 연기금 매집"
+                    f, i, p = investor_data.get('frgn_net_buy', 0), investor_data.get('inst_net_buy', 0), investor_data.get('pnsn_net_buy', 0)
+                    
+                    # 1. 수급 주체별 매수 우위 메시지
+                    if f > 0 and i > 0: reasons.append("외인/기관 쌍끌이 매수")
+                    elif f > 0: reasons.append("외인 매수 우위")
+                    elif i > 0: reasons.append("기관 매수 우위")
+                    
+                    if p > 0: reasons.append("연기금 지속 매집")
+                    
+                    # 2. 수급 사이클 정보 추가
+                    cycle = investor_data.get('cycle')
+                    if cycle: reasons.append(f"수급 {cycle} 단계")
 
-                res = {**item, "score": item_score, "theme": my_theme['name'], "is_gem": False, "reason": f"{my_theme['name']} 테마 수급 및 지표 우수{supply_msg}", "auto_eligible": auto_eligible}
+                # 수급 정보가 전혀 없는 경우에만 테마 정보 표시
+                if not reasons:
+                    reasons.append(f"{my_theme['name']} 테마 수급/지표 우수")
+                
+                final_reason = " | ".join(reasons)
+                res = {**item, "score": item_score, "theme": my_theme['name'], "is_gem": False, "reason": final_reason, "auto_eligible": auto_eligible}
                 if not is_etf:
                     with lock: stocks_pool.append(res)
                     if on_item_found: on_item_found(res)

@@ -1,9 +1,8 @@
 import time
 from typing import List, Dict, Optional
 from src.workers.base import BaseWorker
-from src.utils import is_ai_enabled_time, is_market_open, get_now
-
-from src.theme_engine import analyze_popular_themes
+from src.utils import is_ai_enabled_time, is_market_open, get_now, IS_WINDOWS
+from src.theme_engine import analyze_popular_themes, save_theme_data
 
 class MarketWorker(BaseWorker):
     """시장 데이터 수집 및 분석을 총괄하는 핵심 워커.
@@ -30,6 +29,7 @@ class MarketWorker(BaseWorker):
         self.strategy = strategy
         self.notifier = notifier
         self.themes = []
+        self._last_theme_sync_time = 0
 
     def run(self):
         """시장 데이터 수집 및 분석 루틴을 주기적으로 실행합니다.
@@ -158,6 +158,39 @@ class MarketWorker(BaseWorker):
                 from src.logger import log_error
                 log_error(f"MarketWorker Vibe Error: {e}")
                 self.state.update_worker_status("VIBE", status="대기 중 (IDLE)", result="실패", last_task=f"분석 오류: {e}")
+
+        # 2.5 테마 데이터베이스 동기화 (최초 1회 및 매일 새벽 1회)
+        # theme_data.json 이 없거나 마지막 동기화 후 24시간 경과 시 수행
+        theme_data_path = "theme_data.json"
+        needs_sync = not os.path.exists(theme_data_path) or (curr_t - self._last_theme_sync_time > 86400)
+        
+        if needs_sync and not getattr(self, "_is_syncing_themes", False):
+            self._is_syncing_themes = True
+            def _sync_themes():
+                try:
+                    self.state.update_worker_status("THEME_SYNC", status="동기화 중", friendly_name="DB_SYNC")
+                    from src.logger import logger
+                    logger.info("📂 테마 데이터베이스 동기화를 시작합니다... (Naver Finance)")
+                    
+                    # Naver에서 테마별 종목 맵 수집 (10페이지)
+                    theme_map = self.api.get_naver_theme_data()
+                    if theme_map:
+                        save_theme_data(theme_map)
+                        self._last_theme_sync_time = time.time()
+                        logger.info(f"✅ 테마 동기화 완료: {len(theme_map)}개 테마 저장됨.")
+                        self.state.update_worker_status("THEME_SYNC", status="대기 중", result="성공", last_task="테마 DB 갱신 완료")
+                    else:
+                        logger.warning("⚠️ 테마 데이터를 수집하지 못했습니다.")
+                        self.state.update_worker_status("THEME_SYNC", status="대기 중", result="실패", last_task="데이터 없음")
+                except Exception as ex:
+                    from src.logger import log_error
+                    log_error(f"테마 동기화 중 오류: {ex}")
+                    self.state.update_worker_status("THEME_SYNC", status="대기 중", result="실패", last_task=f"오류: {ex}")
+                finally:
+                    self._is_syncing_themes = False
+
+            import threading
+            threading.Thread(target=_sync_themes, daemon=True).start()
 
         # 3. 인기/테마 분석 (120초 고정 주기)
         ranking_interval = 120
