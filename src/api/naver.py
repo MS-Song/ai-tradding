@@ -364,7 +364,14 @@ class NaverAPIClient(BaseAPI):
             if not BeautifulSoup: return None
             
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-            table = soup.find('table', {'class': 'type2'})
+            tables = soup.find_all('table', {'class': 'type2'})
+            table = None
+            for t in tables:
+                th = t.find('th')
+                if th and '날짜' in th.text:
+                    table = t
+                    break
+            
             if not table: return None
             
             rows = table.find_all('tr')

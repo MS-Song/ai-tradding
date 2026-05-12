@@ -71,7 +71,10 @@ def draw_ai_logs_report(strategy, dm):
             if not today_activities:
                 buf.write("  오늘 기록된 AI 활동 내역이 없습니다.\n")
             else:
-                buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('구분', 10)} | {align_kr('내용', 50)} | {align_kr('결과', 10)} | 비고" + "\033[0m\n")
+                # [수정] 비고 컬럼 너비 동적 계산 (tw 기반으로 화면 끝까지 활용)
+                avail_w = max(10, tw - 93)
+                header = f" {align_kr('시간', 10)} | {align_kr('구분', 10)} | {align_kr('내용', 50)} | {align_kr('결과', 10)} | {align_kr('비고', avail_w)}"
+                buf.write("\033[1m" + header + "\033[0m\n")
                 buf.write("-" * tw + "\n")
                 max_items = max(3, th - 13)
                 for item in today_activities[:max_items]:
@@ -86,15 +89,14 @@ def draw_ai_logs_report(strategy, dm):
                     # 내용 컬럼 (50자) 내 넘침 처리 (.. 접미사 사용)
                     content = truncate_log_line(content, 50, suffix='..')
                     
-                    # 비고(Remarks) 가용 너비 계산 및 넘침 처리
-                    avail_w = max(10, tw - 95)
+                    # 비고(Remarks) 가용 너비만큼 넘침 처리
                     remarks = truncate_log_line(remarks, avail_w, suffix='..')
                     
                     # 결과 색상 처리
                     res_color = ""
                     if "SUCCESS" in res or "COMPLETED" in res or "승인" in res: res_color = "\033[92m"
                     elif "REJECTED" in res or "거절" in res or "FAIL" in res: res_color = "\033[91m"
-                    elif "WAIT" in res or "진행" in res: res_color = "\033[93m"
+                    elif "WAIT" in res or "진행" in res or "SKIP" in res: res_color = "\033[93m"
                     
                     buf.write(f" {align_kr(t_str, 10)} | {align_kr(cat, 10)} | {align_kr(content, 50)} | {res_color}{align_kr(res, 10)}\033[0m | {remarks}\n")
 

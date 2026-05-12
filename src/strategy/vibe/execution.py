@@ -424,61 +424,83 @@ class ExecutionMixin:
                     if market_trend == "bear" and cash_ratio < 30: continue
                     if market_trend == "defensive" and cash_ratio < 80: continue
                     
-                    # [Step 1] 최종 구매 컨펌 (Gemini)
-                    is_ok, reason = self.confirm_buy_decision(code, name, score)
-                    if not is_ok: continue
-                    
-                    # [Step 2] 한도 및 교체 판단
+                    # [Step 1] 한도 및 교체 선제 판단 (AI 컨펌 전 비용 절감)
                     target_code = None
                     if curr_cnt >= max_cnt:
                         # [교체 품질 게이트 #1] 후보 종목의 등락률이 OVERBOUGHT 구간이면 교체 금지
-                        # (MA 지표 없이 교체하는 경우도 차단하여 상투 교체 방지)
-                        cand_detail = self.api.get_naver_stock_detail(code)
-                        cand_rate = safe_cast_float(cand_detail.get('rate'))
                         cand_ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code, name=name)
                         cand_sig = cand_ma_analysis.get('signal', 'NEUTRAL') if cand_ma_analysis else 'UNKNOWN'
+                        
                         if cand_sig == 'OVERBOUGHT':
-                            logger.info(f"🚫 [교체품질게이트] {name} 후보 OVERBOUGHT - 교체 진입 차단")
+                            msg = f"🚫 [교체품질게이트] {name} 후보 OVERBOUGHT - 교체 진입 차단"
+                            logger.info(msg)
+                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", "과열구간(OVERBOUGHT) 교체 제한")
+                            self.rejected_stocks[code] = {"reason": "교체 진입 차단 (OVERBOUGHT)", "time": time.time()}
                             continue
                         if cand_sig == 'UNKNOWN':
-                            logger.info(f"⚠️ [교체품질게이트] {name} MA지표 없음 - 교체 진입 차단")
+                            msg = f"⚠️ [교체품질게이트] {name} MA지표 없음 - 교체 진입 차단"
+                            logger.info(msg)
+                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", "기술적 지표 로딩 중")
+                            # 데이터 일시 부재는 10분만 차단
+                            self.rejected_stocks[code] = {"reason": "교체 진입 차단 (데이터 부재)", "time": time.time() - 3000} 
                             continue
 
                         # [교체 품질 게이트 #2] 후보 score가 기존 보유 종목 중 가장 낮은 score보다 15pt 이상 높아야 교체 허용
-                        # Gemini의 주관적 판단에만 의존하지 않고 정량 기준 선제 검증
                         min_holding_score = min(
                             (self.ai_recommendations and next(
                                 (r.get('score', 0) for r in self.ai_recommendations if r['code'] == h.get('pdno')), 0
                             ) or 0)
                             for h in holdings
                         ) if holdings else 0
+                        
                         if score < min_holding_score + 15.0:
-                            logger.info(f"🚫 [교체품질게이트] {name} 점수({score:.1f}) 기존 최저({min_holding_score:.1f}) 대비 15pt 미달 - 교체 차단")
+                            msg = f"🚫 [교체품질게이트] {name} 점수({score:.1f}) 기존 최저({min_holding_score:.1f}) 대비 15pt 미달 - 교체 차단"
+                            logger.info(msg)
+                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", f"점수차 부족({score - min_holding_score:.1f}pt < 15pt)")
+                            self.rejected_stocks[code] = {"reason": f"교체 품질 미달 (점수차 {score - min_holding_score:.1f}pt)", "time": time.time()}
                             continue
 
                         # [교체 품질 게이트 #3] 교체 대상 후보 종목의 보유 시간이 30분 미만이면 교체 금지
-                        # (수수료 낭비 + 수익 실현 기회 박탈 방지)
                         too_fresh = any(
                             h.get('pdno') and (time.time() - self.last_buy_times.get(h['pdno'], 0)) < 1800
                             for h in holdings
                         )
                         if too_fresh:
-                            logger.info(f"🚫 [교체품질게이트] 30분 미만 보유 종목 존재 - 교체 대기")
+                            msg = f"🚫 [교체품질게이트] 30분 미만 보유 종목 존재 - 교체 대기"
+                            logger.info(msg)
+                            trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", "최근 매수 종목 보호 중 (30분 미만)")
+                            # 시스템 상태에 의한 대기이므로 10분만 차단하여 기회 유지
+                            self.rejected_stocks[code] = {"reason": "교체 대기 (보유 종목 성숙 필요)", "time": time.time() - 3000}
                             continue
 
+                        # [Step 2] AI 교체 판단 (상대적 우위 검증)
                         is_superior, t_code, t_reason = self.get_replacement_target(code, name, score, holdings)
                         if is_superior and t_code:
                             target_code = t_code
                         else:
+                            # 교체 대상이 없거나 부적합하다고 판단된 경우 1시간 차단
+                            trading_log.log_ai_activity("매수취소", f"[{code}] {name}", "SKIP", f"AI 교체 거절: {t_reason}")
+                            self.rejected_stocks[code] = {"reason": f"교체 부적합: {t_reason}", "time": time.time()}
                             continue
+                    
+                    # [Step 3] 최종 구매 컨펌 (Gemini) - 모든 품질 게이트 통과 후 마지막에 실행
+                    is_ok, reason = self.confirm_buy_decision(code, name, score)
+                    if not is_ok: continue
                             
                     # [Step 3] 매수 집행 준비
                     price = safe_cast_float(rec.get('price')) or safe_cast_float(self.api.get_inquire_price(code).get('price'))
-                    if price == 0: continue
+                    if price == 0:
+                        # 가격 오류 시 10분만 대기
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "FAIL", "시세 데이터 오류 (0원)")
+                        self.rejected_stocks[code] = {"reason": "시세 데이터 오류 (0원)", "time": time.time() - 3000}
+                        continue
                     
                     amt = self.ai_config["amount_per_trade"]
                     # [개선] 1회 한도가 부족하더라도 가용 현금이 주가보다 크다면 최소 1주 매수 시도 허용
                     if cash < amt and cash < price:
+                        # 잔고 부족 시 10분 후 재시도
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", f"현금부족(보유:{int(cash):,}원)")
+                        self.rejected_stocks[code] = {"reason": "가용 현금 부족", "time": time.time() - 3000}
                         continue # 1주도 살 수 없는 경우만 스킵
                     
                     # 교체 대상 전량 매도
