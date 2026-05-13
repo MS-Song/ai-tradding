@@ -1,3 +1,4 @@
+import os
 import time
 from src.workers.base import BaseWorker
 from src.logger import log_error

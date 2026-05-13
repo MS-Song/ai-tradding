@@ -1,3 +1,4 @@
+import os
 import time
 import concurrent.futures
 from typing import List, Dict
@@ -295,7 +296,6 @@ class DataSyncWorker(BaseWorker):
             }, task_id, ma_20, is_holding, ma_source
 
         # [최적화] 실거래에서는 큐의 동시성을 늘려 병렬 처리 가속
-        import os
         is_v = getattr(self.api.auth, 'is_virtual', True)
         if is_v:
             m_workers = 1 

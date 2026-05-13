@@ -1,3 +1,4 @@
+import os
 from typing import List, Tuple, Optional, Callable
 from src.strategy.advisors.base import BaseAdvisor
 from src.strategy.advisors.gemini import GeminiAdvisor
@@ -21,7 +22,6 @@ class MultiLLMAdvisor(BaseAdvisor):
         self.last_used_advisor: Optional[BaseAdvisor] = None
         
         for provider, model_id in llm_sequence:
-            import os
             if provider.upper() == "GEMINI":
                 cps = float(os.getenv("GEMINI_MAX_CPS", "1.0"))
                 self.advisors.append(GeminiAdvisor(api, model_id, max_cps=cps))

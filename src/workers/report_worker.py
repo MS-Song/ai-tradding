@@ -1,6 +1,8 @@
+import os
 import time
 from src.workers.base import BaseWorker
 from src.utils import align_kr, get_now
+from src.logger import log_error
 
 
 class ReportWorker(BaseWorker):
@@ -148,6 +150,5 @@ class ReportWorker(BaseWorker):
             )
             self.notifier.send_message(msg)
         except Exception as e:
-            from src.logger import log_error
             log_error(f"Periodic Report Error: {e}")
             self.state.update_worker_status("REPORT", result="실패", last_task=f"리포트 생성 오류: {e}")
