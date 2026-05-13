@@ -1,0 +1,106 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 계좌 > 계좌별주문체결현황요청(kt00009),,,,
+API 명,,계좌별주문체결현황요청,,,,
+API ID,,kt00009,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/acnt,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,ord_dt,주문일자,String,N,8,YYYYMMDD
+,stk_bond_tp,주식채권구분,String,Y,1,"0:전체, 1:주식, 2:채권"
+,mrkt_tp,시장구분,String,Y,1,"0:전체, 1:코스피, 2:코스닥, 3:OTCBB, 4:ECN"
+,sell_tp,매도수구분,String,Y,1,"0:전체, 1:매도, 2:매수"
+,qry_tp,조회구분,String,Y,1,"0:전체, 1:체결"
+,stk_cd,종목코드,String,N,12,전문 조회할 종목코드
+,fr_ord_no,시작주문번호,String,N,7,
+,dmst_stex_tp,국내거래소구분,String,Y,6,"%:(전체),KRX:한국거래소,NXT:넥스트트레이드,SOR:최선주문집행"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,sell_grntl_engg_amt,매도약정금액,String,N,12,
+,buy_engg_amt,매수약정금액,String,N,12,
+,engg_amt,약정금액,String,N,12,
+,acnt_ord_cntr_prst_array,계좌별주문체결현황배열,LIST,N,,
+,- stk_bond_tp,주식채권구분,String,N,1,
+,- ord_no,주문번호,String,N,7,
+,- stk_cd,종목번호,String,N,12,
+,- trde_tp,매매구분,String,N,15,
+,- io_tp_nm,주문유형구분,String,N,20,
+,- ord_qty,주문수량,String,N,10,
+,- ord_uv,주문단가,String,N,10,
+,- cnfm_qty,확인수량,String,N,10,
+,- rsrv_oppo,예약/반대,String,N,4,
+,- cntr_no,체결번호,String,N,7,
+,- acpt_tp,접수구분,String,N,8,
+,- orig_ord_no,원주문번호,String,N,7,
+,- stk_nm,종목명,String,N,20,
+,- setl_tp,결제구분,String,N,8,
+,- crd_deal_tp,신용거래구분,String,N,20,
+,- cntr_qty,체결수량,String,N,10,
+,- cntr_uv,체결단가,String,N,10,
+,- comm_ord_tp,통신구분,String,N,8,
+,- mdfy_cncl_tp,정정/취소구분,String,N,12,
+,- cntr_tm,체결시간,String,N,8,
+,- dmst_stex_tp,국내거래소구분,String,N,6,
+,- cond_uv,스톱가,String,N,10,
+Request Example,,,,,,
+"{
+    ""ord_dt"": """",
+    ""stk_bond_tp"": ""0"",
+    ""mrkt_tp"": ""0"",
+    ""sell_tp"": ""0"",
+    ""qry_tp"": ""0"",
+    ""stk_cd"": """",
+    ""fr_ord_no"": """",
+    ""dmst_stex_tp"": ""KRX""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""sell_grntl_engg_amt"": ""000000000000"",
+    ""buy_engg_amt"": ""000000004900"",
+    ""engg_amt"": ""000000004900"",
+    ""acnt_ord_cntr_prst_array"": [
+        {
+            ""stk_bond_tp"": ""1"",
+            ""ord_no"": ""0000050"",
+            ""stk_cd"": ""A069500"",
+            ""trde_tp"": ""시장가"",
+            ""io_tp_nm"": ""현금매수"",
+            ""ord_qty"": ""0000000001"",
+            ""ord_uv"": ""0000000000"",
+            ""cnfm_qty"": ""0000000000"",
+            ""rsrv_oppo"": """",
+            ""cntr_no"": ""0000001"",
+            ""acpt_tp"": ""접수"",
+            ""orig_ord_no"": ""0000000"",
+            ""stk_nm"": ""KODEX 200"",
+            ""setl_tp"": ""삼일결제"",
+            ""crd_deal_tp"": ""보통매매"",
+            ""cntr_qty"": ""0000000001"",
+            ""cntr_uv"": ""0000004900"",
+            ""comm_ord_tp"": ""영웅문4"",
+            ""mdfy_cncl_tp"": """",
+            ""cntr_tm"": ""13:07:47"",
+            ""dmst_stex_tp"": ""KRX"",
+            ""cond_uv"": ""0000000000""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""조회가 완료되었습니다""
+}",,,,,,

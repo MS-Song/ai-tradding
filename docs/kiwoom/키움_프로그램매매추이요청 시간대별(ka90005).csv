@@ -1,0 +1,107 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 시세 > 프로그램매매추이요청 시간대별(ka90005),,,,
+API 명,,프로그램매매추이요청 시간대별,,,,
+API ID,,ka90005,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/mrkcond,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,date,날짜,String,Y,8,YYYYMMDD
+,amt_qty_tp,금액수량구분,String,Y,1,"1:금액(백만원), 2:수량(천주)"
+,mrkt_tp,시장구분,String,Y,10,"코스피- 거래소구분값 1일경우:P00101, 2일경우:P001_NX01, 3일경우:P001_AL01
+코스닥- 거래소구분값 1일경우:P10102, 2일경우:P101_NX02, 3일경우:P101_AL02"
+,min_tic_tp,분틱구분,String,Y,1,"0:틱, 1:분"
+,stex_tp,거래소구분,String,Y,1,"1:KRX, 2:NXT 3.통합"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,prm_trde_trnsn,프로그램매매추이,LIST,N,,
+,- cntr_tm,체결시간,String,N,20,
+,- dfrt_trde_sel,차익거래매도,String,N,20,
+,- dfrt_trde_buy,차익거래매수,String,N,20,
+,- dfrt_trde_netprps,차익거래순매수,String,N,20,
+,- ndiffpro_trde_sel,비차익거래매도,String,N,20,
+,- ndiffpro_trde_buy,비차익거래매수,String,N,20,
+,- ndiffpro_trde_netprps,비차익거래순매수,String,N,20,
+,- dfrt_trde_sell_qty,차익거래매도수량,String,N,20,
+,- dfrt_trde_buy_qty,차익거래매수수량,String,N,20,
+,- dfrt_trde_netprps_qty,차익거래순매수수량,String,N,20,
+,- ndiffpro_trde_sell_qty,비차익거래매도수량,String,N,20,
+,- ndiffpro_trde_buy_qty,비차익거래매수수량,String,N,20,
+,- ndiffpro_trde_netprps_qty,비차익거래순매수수량,String,N,20,
+,- all_sel,전체매도,String,N,20,
+,- all_buy,전체매수,String,N,20,
+,- all_netprps,전체순매수,String,N,20,
+,- kospi200,KOSPI200,String,N,20,
+,- basis,BASIS,String,N,20,
+Request Example,,,,,,
+"{
+    ""date"": ""20241101"",
+    ""amt_qty_tp"": ""1"",
+    ""mrkt_tp"": ""P00101"",
+    ""min_tic_tp"": ""1"",
+    ""stex_tp"": ""1""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""prm_trde_trnsn"": [
+        {
+            ""cntr_tm"": ""170500"",
+            ""dfrt_trde_sel"": ""0"",
+            ""dfrt_trde_buy"": ""0"",
+            ""dfrt_trde_netprps"": ""0"",
+            ""ndiffpro_trde_sel"": ""1"",
+            ""ndiffpro_trde_buy"": ""17"",
+            ""ndiffpro_trde_netprps"": ""+17"",
+            ""dfrt_trde_sell_qty"": ""0"",
+            ""dfrt_trde_buy_qty"": ""0"",
+            ""dfrt_trde_netprps_qty"": ""0"",
+            ""ndiffpro_trde_sell_qty"": ""0"",
+            ""ndiffpro_trde_buy_qty"": ""0"",
+            ""ndiffpro_trde_netprps_qty"": ""+0"",
+            ""all_sel"": ""1"",
+            ""all_buy"": ""17"",
+            ""all_netprps"": ""+17"",
+            ""kospi200"": ""+47839"",
+            ""basis"": ""-146.59""
+        },
+        {
+            ""cntr_tm"": ""170400"",
+            ""dfrt_trde_sel"": ""0"",
+            ""dfrt_trde_buy"": ""0"",
+            ""dfrt_trde_netprps"": ""0"",
+            ""ndiffpro_trde_sel"": ""1"",
+            ""ndiffpro_trde_buy"": ""17"",
+            ""ndiffpro_trde_netprps"": ""+17"",
+            ""dfrt_trde_sell_qty"": ""0"",
+            ""dfrt_trde_buy_qty"": ""0"",
+            ""dfrt_trde_netprps_qty"": ""0"",
+            ""ndiffpro_trde_sell_qty"": ""0"",
+            ""ndiffpro_trde_buy_qty"": ""0"",
+            ""ndiffpro_trde_netprps_qty"": ""+0"",
+            ""all_sel"": ""1"",
+            ""all_buy"": ""17"",
+            ""all_netprps"": ""+17"",
+            ""kospi200"": ""+47839"",
+            ""basis"": ""-146.59""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

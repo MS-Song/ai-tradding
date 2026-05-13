@@ -76,23 +76,32 @@ def ensure_env(force=False):
 
     env_data = dotenv_values(env_path) if os.path.exists(env_path) else {}
     
-    required_keys = ["KIS_APPKEY", "KIS_SECRET", "KIS_CANO", "TAKE_PROFIT_THRESHOLD", "STOP_LOSS_THRESHOLD", "AI_AMOUNT_PER_TRADE"]
+    broker_type = env_data.get("BROKER_TYPE", "KIS")
+    if broker_type == "KIWOOM":
+        required_keys = ["KIWOOM_APPKEY", "KIWOOM_SECRET", "KIWOOM_ACCOUNT", "TAKE_PROFIT_THRESHOLD", "STOP_LOSS_THRESHOLD", "AI_AMOUNT_PER_TRADE"]
+    else:
+        required_keys = ["KIS_APPKEY", "KIS_SECRET", "KIS_CANO", "TAKE_PROFIT_THRESHOLD", "STOP_LOSS_THRESHOLD", "AI_AMOUNT_PER_TRADE"]
     # TELEGRAM은 선택 사항이므로 필수 체크에서 제외
     missing = [key for key in required_keys if not env_data.get(key)]
     
     if missing or force:
         print("\n" + "="*60)
-        print(" 🛠️  KIS-Vibe-Trader 환경 설정")
+        print(" 🛠️  AI-Vibe-Trader 환경 설정")
         print(" 엔터를 치면 [괄호] 안의 기존 값이 유지됩니다.")
         print("="*60)
         
         # 1. 기본 KIS 설정 및 전략 설정
         general_keys = [
-            ("KIS_APPKEY", "앱 키 (App Key)", None, "text"),
-            ("KIS_SECRET", "시크릿 키 (Secret Key)", None, "text"),
-            ("KIS_CANO", "계좌번호 8자리 (CANO)", None, "text"),
-            ("KIS_ACNT_PRDT_CD", "계좌상품코드 (보통 01)", "01", "text"),
-            ("KIS_IS_VIRTUAL", "투자 모드 (1: 모의투자, 2: 실전투자)", "TRUE", "mode"),
+            ("BROKER_TYPE", "증권사 선택 (1: KIS(한국투자증권), 2: KIWOOM(키움증권))", "KIS", "broker"),
+            ("KIS_APPKEY", "KIS 앱 키 (App Key)", None, "text_kis"),
+            ("KIS_SECRET", "KIS 시크릿 키 (Secret Key)", None, "text_kis"),
+            ("KIS_CANO", "KIS 계좌번호 8자리 (CANO)", None, "text_kis"),
+            ("KIS_ACNT_PRDT_CD", "KIS 계좌상품코드 (보통 01)", "01", "text_kis"),
+            ("KIS_IS_VIRTUAL", "KIS 투자 모드 (1: 모의투자, 2: 실전투자)", "TRUE", "mode_kis"),
+            ("KIWOOM_APPKEY", "키움증권 앱 키 (App Key)", None, "text_kiwoom"),
+            ("KIWOOM_SECRET", "키움증권 시크릿 키 (Secret Key)", None, "text_kiwoom"),
+            ("KIWOOM_ACCOUNT", "키움증권 계좌번호 10자리", None, "text_kiwoom"),
+            ("KIWOOM_IS_VIRTUAL", "키움증권 투자 모드 (1: 모의투자, 2: 실전투자)", "TRUE", "mode_kiwoom"),
             ("TAKE_PROFIT_THRESHOLD", "기본 익절 기준 (%)", "5.0", "text"),
             ("STOP_LOSS_THRESHOLD", "기본 손절 기준 (%)", "-5.0", "text"),
             ("AVERAGE_DOWN_AMOUNT", "물타기 1회 추가 매수 금액 (원)", "500000", "text"),
@@ -110,7 +119,7 @@ def ensure_env(force=False):
             ("AI_AUTO_SELL_MODE", "AI 자율 매도(AUTO) 모드 사용 (Y/N)", "FALSE", "bool"),
             ("AI_DEBUG_MODE", "AI 디버그 모드 (장외 AI 강제실행) (Y/N)", "FALSE", "bool"),
             ("AUTO_APPLY_AI_STRATEGY", "AI 시황 분석 전략 자동 반영 여부 (Y/N)", "FALSE", "bool"),
-            ("BASE_SEED_MONEY", "총 누적 입금액(초기 시드 + 추가 입금액) (원)", "0", "text"),
+            ("BASE_SEED_MONEY", "[모의투자 전용] 총 누적 입금액(초기 시드 + 추가 입금액) (원)", "0", "text_kis_virtual"),
             ("MAX_STOCK_COUNT", "최대 보유 종목 수 (1~8 또는 Y:AI자동)", "8", "text"),
             ("AUTO_UPDATE", "새 버전 자동 업데이트 사용 여부 (Y/N) [EXE 실행 시에만 동작]", "FALSE", "bool"),
             ("TELEGRAM_TOKEN", "텔레그램 봇 토큰 (Bot Token)", "", "text"),
@@ -132,7 +141,27 @@ def ensure_env(force=False):
                 str: 최종 결정된 설정값.
             """
             old_val = current_env.get(key, "")
-            if input_type == "mode":
+            # 동적 프롬프트 노출 제어
+            current_broker = results.get("BROKER_TYPE", "KIS")
+            if current_broker != "KIS" and input_type.endswith("_kis"):
+                return old_val
+            if current_broker != "KIWOOM" and input_type.endswith("_kiwoom"):
+                return old_val
+            # KIS 모의투자 전용 항목: KIS + 모의투자가 아니면 표시 안 함
+            if input_type == "text_kis_virtual":
+                is_kis_virtual = (current_broker == "KIS" and results.get("KIS_IS_VIRTUAL", current_env.get("KIS_IS_VIRTUAL", "TRUE")) != "FALSE")
+                if not is_kis_virtual:
+                    return old_val or default or ""
+
+            if input_type == "broker":
+                current_disp = "1" if old_val == "KIS" else ("2" if old_val == "KIWOOM" else "1")
+                val = input(f" > {label} [{current_disp}]: ").strip()
+                if not val:
+                    val = current_disp
+                final = "KIS" if val == "1" else ("KIWOOM" if val == "2" else (old_val or default))
+                results["BROKER_TYPE"] = final
+                return final
+            elif input_type.startswith("mode"):
                 current_disp = "모의투자" if old_val != "FALSE" else "실전투자"
                 val = input(f" > {label} [{current_disp}]: ").strip()
                 final = old_val if not val else ("FALSE" if val == '2' else "TRUE")
@@ -143,7 +172,7 @@ def ensure_env(force=False):
                 if not val: return old_val if old_val else default
                 return "TRUE" if val in ['Y', 'YES', 'ON', '1'] else "FALSE"
             else:
-                if old_val and (key.endswith("KEY") or "SECRET" in key or "CANO" in key or "TOKEN" in key or "CHAT_ID" in key):
+                if old_val and (key.endswith("KEY") or "SECRET" in key or "CANO" in key or "TOKEN" in key or "CHAT_ID" in key or "ACCOUNT" in key):
                     if len(old_val) <= 8:
                         display_val = f"{old_val[:2]}****{old_val[-2:]}"
                     else:
@@ -350,12 +379,12 @@ def ensure_env(force=False):
                     results["LLM_SEQUENCE"] = ",".join(final_seq)
                     break
 
-        # 3. 파일 저장 및 정리
+        # 파일 저장 및 정리
         if not os.path.exists(env_path):
             with open(env_path, "w", encoding="utf-8") as f: f.write("")
         
         # KIS 키 변동 시 토큰 캐시 삭제
-        if results.get("KIS_APPKEY") != env_data.get("KIS_APPKEY") or results.get("KIS_SECRET") != env_data.get("KIS_SECRET"):
+        if results.get("KIS_APPKEY") != env_data.get("KIS_APPKEY") or results.get("KIS_SECRET") != env_data.get("KIS_SECRET") or results.get("KIWOOM_APPKEY") != env_data.get("KIWOOM_APPKEY") or results.get("BROKER_TYPE") != env_data.get("BROKER_TYPE"):
             if os.path.exists(".token_cache.json"):
                 try: os.remove(".token_cache.json")
                 except: pass

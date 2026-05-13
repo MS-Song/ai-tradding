@@ -1,0 +1,72 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 순위정보 > 잔량율급증요청(ka10022),,,,
+API 명,,잔량율급증요청,,,,
+API ID,,ka10022,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/rkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,mrkt_tp,시장구분,String,Y,3,"001:코스피, 101:코스닥"
+,rt_tp,비율구분,String,Y,1,"1:매수/매도비율, 2:매도/매수비율"
+,tm_tp,시간구분,String,Y,2,분 입력
+,trde_qty_tp,거래량구분,String,Y,1,"5:5천주이상, 10:만주이상, 50:5만주이상, 100:10만주이상"
+,stk_cnd,종목조건,String,Y,1,"0:전체조회, 1:관리종목제외, 5:증100제외, 6:증100만보기, 7:증40만보기, 8:증30만보기, 9:증20만보기"
+,stex_tp,거래소구분,String,Y,1,"1:KRX, 2:NXT 3.통합"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,req_rt_sdnin,잔량율급증,LIST,N,,
+,- stk_cd,종목코드,String,N,20,
+,- stk_nm,종목명,String,N,40,
+,- cur_prc,현재가,String,N,20,
+,- pred_pre_sig,전일대비기호,String,N,20,
+,- pred_pre,전일대비,String,N,20,
+,- int,기준률,String,N,20,
+,- now_rt,현재비율,String,N,20,
+,- sdnin_rt,급증률,String,N,20,
+,- tot_sel_req,총매도잔량,String,N,20,
+,- tot_buy_req,총매수잔량,String,N,20,
+Request Example,,,,,,
+"{
+    ""mrkt_tp"": ""001"",
+    ""rt_tp"": ""1"",
+    ""tm_tp"": ""1"",
+    ""trde_qty_tp"": ""5"",
+    ""stk_cnd"": ""0"",
+    ""stex_tp"": ""3""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""req_rt_sdnin"": [
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""+74300"",
+            ""pred_pre_sig"": ""2"",
+            ""pred_pre"": ""+17000"",
+            ""int"": ""+12600.00"",
+            ""now_rt"": ""-21474836.00"",
+            ""sdnin_rt"": ""-21474836.00"",
+            ""tot_sel_req"": ""74"",
+            ""tot_buy_req"": ""74337920""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

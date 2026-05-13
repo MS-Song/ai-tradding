@@ -1,0 +1,62 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 계좌 > 금현물 예수금(kt50021),,,,
+API 명,,금현물 예수금,,,,
+API ID,,kt50021,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/acnt,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,entra,예수금,String,N,15,
+,profa_ch,증거금현금,String,N,15,
+,chck_ina_amt,수표입금액,String,N,15,
+,etc_loan,기타대여금,String,N,15,
+,etc_loan_dlfe,기타대여금연체료,String,N,15,
+,etc_loan_tot,기타대여금합계,String,N,15,
+,prsm_entra,추정예수금,String,N,15,
+,buy_exct_amt,매수정산금,String,N,15,
+,sell_exct_amt,매도정산금,String,N,15,
+,sell_buy_exct_amt,매도매수정산금,String,N,15,
+,dly_amt,미수변제소요금,String,N,15,
+,prsm_pymn_alow_amt,추정출금가능금액,String,N,15,
+,pymn_alow_amt,출금가능금액,String,N,15,
+,ord_alow_amt,주문가능금액,String,N,15,
+Request Example,,,,,,
+{},,,,,,
+Response Example,,,,,,
+"{
+    ""entra"": ""000000098740486"",
+    ""profa_ch"": ""000000000000000"",
+    ""chck_ina_amt"": ""000000000000000"",
+    ""etc_loan"": ""000000000000000"",
+    ""etc_loan_dlfe"": ""000000000000000"",
+    ""etc_loan_tot"": ""000000000000000"",
+    ""prsm_entra"": ""000000098740486"",
+    ""buy_exct_amt"": ""000000000000000"",
+    ""sell_exct_amt"": ""000000000000000"",
+    ""sell_buy_exct_amt"": ""000000000000000"",
+    ""dly_amt"": ""000000000000000"",
+    ""prsm_pymn_alow_amt"": ""000000098740486"",
+    ""pymn_alow_amt"": ""000000098740486"",
+    ""ord_alow_amt"": ""000000098740486"",
+    ""return_code"": 0,
+    ""return_msg"": ""조회가 완료되었습니다.""
+}",,,,,,

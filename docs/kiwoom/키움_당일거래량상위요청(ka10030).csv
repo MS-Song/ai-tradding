@@ -1,0 +1,126 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 순위정보 > 당일거래량상위요청(ka10030),,,,
+API 명,,당일거래량상위요청,,,,
+API ID,,ka10030,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/rkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,mrkt_tp,시장구분,String,Y,3,"000:전체, 001:코스피, 101:코스닥"
+,sort_tp,정렬구분,String,Y,1,"1:거래량, 2:거래회전율, 3:거래대금"
+,mang_stk_incls,관리종목포함,String,Y,1,"0:관리종목 포함, 1:관리종목 미포함, 3:우선주제외, 11:정리매매종목제외, 4:관리종목, 우선주제외, 5:증100제외, 6:증100마나보기, 13:증60만보기, 12:증50만보기, 7:증40만보기, 8:증30만보기, 9:증20만보기, 14:ETF제외, 15:스팩제외, 16:ETF+ETN제외"
+,crd_tp,신용구분,String,Y,1,"0:전체조회, 9:신용융자전체, 1:신용융자A군, 2:신용융자B군, 3:신용융자C군, 4:신용융자D군, 8:신용대주"
+,trde_qty_tp,거래량구분,String,Y,1,"0:전체조회, 5:5천주이상, 10:1만주이상, 50:5만주이상, 100:10만주이상, 200:20만주이상, 300:30만주이상, 500:500만주이상, 1000:백만주이상"
+,pric_tp,가격구분,String,Y,1,"0:전체조회, 1:1천원미만, 2:1천원이상, 3:1천원~2천원, 4:2천원~5천원, 5:5천원이상, 6:5천원~1만원, 10:1만원미만, 7:1만원이상, 8:5만원이상, 9:10만원이상"
+,trde_prica_tp,거래대금구분,String,Y,1,"0:전체조회, 1:1천만원이상, 3:3천만원이상, 4:5천만원이상, 10:1억원이상, 30:3억원이상, 50:5억원이상, 100:10억원이상, 300:30억원이상, 500:50억원이상, 1000:100억원이상, 3000:300억원이상, 5000:500억원이상"
+,mrkt_open_tp,장운영구분,String,Y,1,"0:전체조회, 1:장중, 2:장전시간외, 3:장후시간외"
+,stex_tp,거래소구분,String,Y,1,"1:KRX, 2:NXT 3.통합"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,tdy_trde_qty_upper,당일거래량상위,LIST,N,,
+,- stk_cd,종목코드,String,N,20,
+,- stk_nm,종목명,String,N,40,
+,- cur_prc,현재가,String,N,20,
+,- pred_pre_sig,전일대비기호,String,N,20,
+,- pred_pre,전일대비,String,N,20,
+,- flu_rt,등락률,String,N,20,
+,- trde_qty,거래량,String,N,20,
+,- pred_rt,전일비,String,N,20,
+,- trde_tern_rt,거래회전율,String,N,20,
+,- trde_amt,거래금액,String,N,20,
+,- opmr_trde_qty,장중거래량,String,N,20,
+,- opmr_pred_rt,장중전일비,String,N,20,
+,- opmr_trde_rt,장중거래회전율,String,N,20,
+,- opmr_trde_amt,장중거래금액,String,N,20,
+,- af_mkrt_trde_qty,장후거래량,String,N,20,
+,- af_mkrt_pred_rt,장후전일비,String,N,20,
+,- af_mkrt_trde_rt,장후거래회전율,String,N,20,
+,- af_mkrt_trde_amt,장후거래금액,String,N,20,
+,- bf_mkrt_trde_qty,장전거래량,String,N,20,
+,- bf_mkrt_pred_rt,장전전일비,String,N,20,
+,- bf_mkrt_trde_rt,장전거래회전율,String,N,20,
+,- bf_mkrt_trde_amt,장전거래금액,String,N,20,
+Request Example,,,,,,
+"{
+    ""mrkt_tp"": ""000"",
+    ""sort_tp"": ""1"",
+    ""mang_stk_incls"": ""0"",
+    ""crd_tp"": ""0"",
+    ""trde_qty_tp"": ""0"",
+    ""pric_tp"": ""0"",
+    ""trde_prica_tp"": ""0"",
+    ""mrkt_open_tp"": ""0"",
+    ""stex_tp"": ""3""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""tdy_trde_qty_upper"": [
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""-152000"",
+            ""pred_pre_sig"": ""5"",
+            ""pred_pre"": ""-100"",
+            ""flu_rt"": ""-0.07"",
+            ""trde_qty"": ""34954641"",
+            ""pred_rt"": ""+155.13"",
+            ""trde_tern_rt"": ""+48.21"",
+            ""trde_amt"": ""5308092"",
+            ""opmr_trde_qty"": ""0"",
+            ""opmr_pred_rt"": ""0.00"",
+            ""opmr_trde_rt"": ""+0.00"",
+            ""opmr_trde_amt"": ""0"",
+            ""af_mkrt_trde_qty"": ""0"",
+            ""af_mkrt_pred_rt"": ""0.00"",
+            ""af_mkrt_trde_rt"": ""+0.00"",
+            ""af_mkrt_trde_amt"": ""0"",
+            ""bf_mkrt_trde_qty"": ""0"",
+            ""bf_mkrt_pred_rt"": ""0.00"",
+            ""bf_mkrt_trde_rt"": ""+0.00"",
+            ""bf_mkrt_trde_amt"": ""0""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""-42950"",
+            ""pred_pre_sig"": ""5"",
+            ""pred_pre"": ""-100"",
+            ""flu_rt"": ""-0.23"",
+            ""trde_qty"": ""34854261"",
+            ""pred_rt"": ""+135.53"",
+            ""trde_tern_rt"": ""+13.83"",
+            ""trde_amt"": ""1501908"",
+            ""opmr_trde_qty"": ""0"",
+            ""opmr_pred_rt"": ""0.00"",
+            ""opmr_trde_rt"": ""+0.00"",
+            ""opmr_trde_amt"": ""0"",
+            ""af_mkrt_trde_qty"": ""0"",
+            ""af_mkrt_pred_rt"": ""0.00"",
+            ""af_mkrt_trde_rt"": ""+0.00"",
+            ""af_mkrt_trde_amt"": ""0"",
+            ""bf_mkrt_trde_qty"": ""0"",
+            ""bf_mkrt_pred_rt"": ""0.00"",
+            ""bf_mkrt_trde_rt"": ""+0.00"",
+            ""bf_mkrt_trde_amt"": ""0""
+        }
+    ],
+    ""returnCode"": 0,
+    ""returnMsg"": ""정상적으로 처리되었습니다""
+}",,,,,,

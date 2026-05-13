@@ -3,7 +3,7 @@ import threading
 import requests
 import random
 from typing import List, Tuple, Optional, Dict, Any
-from src.api.base import BaseAPI
+from src.api.base import BaseAPI, BrokerRateLimiter
 from src.utils import retry_api
 
 class KISAPIClient(BaseAPI):
@@ -11,25 +11,25 @@ class KISAPIClient(BaseAPI):
 
     국내 주식 주문(현금 주문), 잔고 조회, 실시간 시세 조회, 차트 데이터 수집 등을 수행합니다.
     모의투자와 실전투자 환경에 따라 자동으로 호출 tr_id를 전환하며, 
-    API 레이트 리밋(Rate Limit)을 준수하기 위한 요청 큐 제어 기능을 포함합니다.
+    BrokerRateLimiter를 통해 중앙 집중식 API 호출 빈도를 제어합니다.
 
     Attributes:
         auth: KIS 인증 객체 (토큰 및 계좌 정보 포함).
         domain (str): KIS API 접속 도메인.
+        _rate_limiter (BrokerRateLimiter): 중앙 레이트 리미터 인스턴스.
     """
     def __init__(self, auth):
         super().__init__()
         self.auth = auth
         self.domain = auth.domain
-
-    _last_req_time = 0
-    _req_lock = threading.Lock()
+        is_v = getattr(auth, 'is_virtual', True)
+        self._rate_limiter = BrokerRateLimiter.get_instance("KIS", is_v)
 
     def _request(self, method, url, **kwargs):
-        """글로벌 레이트 리미터가 적용된 HTTP 요청을 수행합니다.
+        """중앙 레이트 리미터를 통과한 후 HTTP 요청을 수행합니다.
 
-        모의투자의 경우 초당 호출 제한이 엄격하므로(1.8초 간격), 
-        인스턴스 간 공유되는 락(_req_lock)을 통해 요청 간격을 제어합니다.
+        BrokerRateLimiter의 Token Bucket 알고리즘에 의해 모의투자(0.8 req/s)와
+        실전투자(15 req/s)의 호출 빈도가 자동으로 제어됩니다.
 
         Args:
             method (str): HTTP 메서드 (GET, POST 등).
@@ -39,20 +39,7 @@ class KISAPIClient(BaseAPI):
         Returns:
             requests.Response: API 응답 객체.
         """
-        # [개선] 글로벌 레이트 리미터: 모의투자는 초당 1회 미만 엄격 제한, 실전은 제한 해제
-        is_v = getattr(self.auth, 'is_virtual', True)
-        if is_v:
-            # 클래스 변수를 직접 참조하여 인스턴스에 상관없이 단일 큐 보장
-            with KISAPIClient._req_lock:
-                now = time.time()
-                interval = 1.8 # 1.5 -> 1.8로 상향 (RT_CD:1 방어 강화)
-                elapsed = now - KISAPIClient._last_req_time
-                if elapsed < interval:
-                    # 미세한 랜덤 지터 추가하여 동시성 충돌 완화
-                    time.sleep(interval - elapsed + random.uniform(0.01, 0.05))
-                KISAPIClient._last_req_time = time.time()
-        # 실전 거래는 별도의 대기 없이 즉시 실행 (호출 큐 해제)
-
+        self._rate_limiter.acquire()
         return requests.request(method, url, **kwargs)
 
     @retry_api(max_retries=3, delay=1.5)
@@ -263,7 +250,12 @@ class KISAPIClient(BaseAPI):
                 "vol": self._safe_float(d.get("acml_vol")),
                 "prev_vol": self._safe_float(d.get("prdy_vol")),
                 "high": self._safe_float(d.get("stck_hgpr")),
-                "low": self._safe_float(d.get("stck_lwpr"))
+                "low": self._safe_float(d.get("stck_lwpr")),
+                "per": d.get("per"),
+                "pbr": d.get("pbr"),
+                "eps": d.get("eps"),
+                "bps": d.get("bps"),
+                "market_cap": self._safe_float(d.get("lstn_stkn", 0)) * self._safe_float(d.get("stck_prpr", 0)) # 상장주식수 * 현재가
             }
         except: return None
 

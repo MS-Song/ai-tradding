@@ -52,7 +52,8 @@ class DataManager:
             log_error(f"TelegramCommandListener Load Error: {e}")
 
         
-        # --- 워커 인스턴스 (Phase 2) ---
+        from src.workers.kiwoom_ws_worker import KiwoomWSWorker
+        
         self.workers = {
             "MARKET": MarketWorker(self.state, api, strategy, self.notifier),
             "DATA": DataSyncWorker(self.state, api, strategy),
@@ -61,12 +62,17 @@ class DataManager:
             "RETRO": RetrospectiveWorker(self.state, strategy, self.notifier)
         }
         
+        # BROKER_TYPE이 KIWOOM인 경우 웹소켓 워커 추가
+        broker_type = os.getenv("BROKER_TYPE", "KIS").upper()
+        if broker_type == "KIWOOM":
+            self.workers["WS_KIWOOM"] = KiwoomWSWorker(self.state, api, strategy)
+        
         # --- 하위 호환용 락 (기존 코드에서 참조함) ---
         self.data_lock = self.state.lock
         self.ui_lock = threading.Lock() # UI 전용 락 유지
         
         # --- 초기 알림 ---
-        self.notifier.notify_alert("시스템 시작", self._build_system_msg("🚀 KIS-Vibe-Trader 엔진이 가동되었습니다."))
+        self.notifier.notify_alert("시스템 시작", self._build_system_msg("🚀 AI-Vibe-Trader 엔진이 가동되었습니다."))
 
     # --- 하위 호환성을 위한 프로퍼티 매핑 ---
     @property
@@ -360,7 +366,7 @@ class DataManager:
             import platform
             
             is_windows = platform.system() == "Windows"
-            new_bin = "KIS-Vibe-Trader_new.exe" if is_windows else "KIS-Vibe-Trader-Linux_new"
+            new_bin = "AI-Vibe-Trader_new.exe" if is_windows else "AI-Vibe-Trader-Linux_new"
             
             url = result.get("download_url", "")
             if not url:
@@ -424,7 +430,12 @@ class DataManager:
         cwd_parts = cwd.replace("\\", "/").split("/")
         cwd_short = "/".join(cwd_parts[-2:]) if len(cwd_parts) >= 2 else cwd
         
+        # [신규] 증권사 정보 추가
+        broker_type = os.getenv("BROKER_TYPE", "KIS").upper()
+        broker_name = "키움증권 (Kiwoom)" if broker_type == "KIWOOM" else "한국투자증권 (KIS)"
+
         lines = [headline, ""]
+        lines.append(f"🏛️  증권사: `[{broker_type}] {broker_name}`")
         lines.append(f"🖥️  호스트: `{hostname}`")
         lines.append(f"🌐  로칼 IP: `{local_ip}`")
         lines.append(f"🏠  외부 IP: `{public_ip}`")

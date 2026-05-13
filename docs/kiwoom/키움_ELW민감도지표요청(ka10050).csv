@@ -1,0 +1,110 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > ELW > ELW민감도지표요청(ka10050),,,,
+API 명,,ELW민감도지표요청,,,,
+API ID,,ka10050,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/elw,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,6,
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,elwsnst_ix_array,ELW민감도지표배열,LIST,N,,
+,- cntr_tm,체결시간,String,N,20,
+,- cur_prc,현재가,String,N,20,
+,- elwtheory_pric,ELW이론가,String,N,20,
+,- iv,IV,String,N,20,
+,- delta,델타,String,N,20,
+,- gam,감마,String,N,20,
+,- theta,쎄타,String,N,20,
+,- vega,베가,String,N,20,
+,- law,로,String,N,20,
+,- lp,LP,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""57JBHH""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""elwsnst_ix_array"": [
+        {
+            ""cntr_tm"": ""095820"",
+            ""cur_prc"": ""5"",
+            ""elwtheory_pric"": ""4"",
+            ""iv"": ""3336"",
+            ""delta"": ""7128"",
+            ""gam"": ""904"",
+            ""theta"": ""-2026231"",
+            ""vega"": ""1299294"",
+            ""law"": ""95218"",
+            ""lp"": ""0""
+        },
+        {
+            ""cntr_tm"": ""095730"",
+            ""cur_prc"": ""5"",
+            ""elwtheory_pric"": ""4"",
+            ""iv"": ""3342"",
+            ""delta"": ""7119"",
+            ""gam"": ""902"",
+            ""theta"": ""-2026391"",
+            ""vega"": ""1297498"",
+            ""law"": ""95078"",
+            ""lp"": ""0""
+        },
+        {
+            ""cntr_tm"": ""095640"",
+            ""cur_prc"": ""5"",
+            ""elwtheory_pric"": ""4"",
+            ""iv"": ""3345"",
+            ""delta"": ""7114"",
+            ""gam"": ""900"",
+            ""theta"": ""-2026285"",
+            ""vega"": ""1296585"",
+            ""law"": ""95012"",
+            ""lp"": ""0""
+        },
+        {
+            ""cntr_tm"": ""095550"",
+            ""cur_prc"": ""5"",
+            ""elwtheory_pric"": ""4"",
+            ""iv"": ""3346"",
+            ""delta"": ""7111"",
+            ""gam"": ""900"",
+            ""theta"": ""-2026075"",
+            ""vega"": ""1296025"",
+            ""law"": ""94974"",
+            ""lp"": ""0""
+        },
+        {
+            ""cntr_tm"": ""095500"",
+            ""cur_prc"": ""5"",
+            ""elwtheory_pric"": ""4"",
+            ""iv"": ""3339"",
+            ""delta"": ""7121"",
+            ""gam"": ""902"",
+            ""theta"": ""-2025002"",
+            ""vega"": ""1298269"",
+            ""law"": ""95168"",
+            ""lp"": ""0""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

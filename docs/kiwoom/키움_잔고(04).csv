@@ -1,0 +1,139 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 실시간시세 > 잔고(04),,,,
+API 명,,잔고,,,,
+API ID,,04,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,wss://api.kiwoom.com:10000,,,,
+모의투자 도메인,,wss://mockapi.kiwoom.com:10000(KRX만 지원가능),,,,
+URL,,/api/dostk/websocket,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+실시간 항목 04(잔고)는 종목코드(item) 등록과 상관 없이 ACCESS TOKEN을 발급한 계좌에 주문 체결이 발생할 경우 데이터가 수신됩니다. ,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,trnm,서비스명,String,Y,10,"REG : 등록 , REMOVE : 해지"
+,grp_no,그룹번호,String,Y,4,
+,refresh,기존등록유지여부,String,Y,1,"등록(REG)시
+ 
+0:기존유지안함 1:기존유지(Default)
+
+0일경우 기존등록한 item/type은 해지, 1일경우 기존등록한 item/type 유지
+
+해지(REMOVE)시 값 불필요"
+,data,실시간 등록 리스트,LIST,,,
+,- item,실시간 등록 요소,String,N,104,
+,- type,실시간 항목,String,Y,2,"TR 명(0A,0B....)"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,return_code,결과코드,String,N,,"통신결과에대한 코드
+(등록,해지요청시에만 값 전송 0:정상,1:오류 , 데이터 실시간 수신시 미전송)"
+,return_msg,결과메시지,String,N,,통신결과에대한메시지
+,trnm,서비스명,String,N,,"등록,해지요청시 요청값 반환 , 실시간수신시 REAL 반환"
+,data,실시간 등록리스트,LIST,N,,
+,- type,실시간항목,String,N,,"TR 명(0A,0B....)"
+,- name,실시간 항목명,String,N,,
+,- item,실시간 등록 요소,String,N,,종목코드
+,- values,실시간 값 리스트,LIST,N,,
+,- - 9201,계좌번호,String,N,,
+,- - 9001,"종목코드,업종코드",String,N,,
+,- - 917,신용구분,String,N,,
+,- - 916,대출일,String,N,,
+,- - 302,종목명,String,N,,
+,- - 10,현재가,String,N,,
+,- - 930,보유수량,String,N,,
+,- - 931,매입단가,String,N,,
+,- - 932,총매입가(당일누적),String,N,,
+,- - 933,주문가능수량,String,N,,
+,- - 945,당일순매수량,String,N,,
+,- - 946,매도/매수구분,String,N,,"계약,주"
+,- - 950,당일총매도손익,String,N,,
+,- - 951,Extra Item,String,N,,
+,- - 27,(최우선)매도호가,String,N,,
+,- - 28,(최우선)매수호가,String,N,,
+,- - 307,기준가,String,N,,
+,- - 8019,손익률(실현손익),String,N,,
+,- - 957,신용금액,String,N,,
+,- - 958,신용이자,String,N,,
+,- - 918,만기일,String,N,,
+,- - 990,당일실현손익(유가),String,N,,
+,- - 991,당일실현손익율(유가),String,N,,
+,- - 992,당일실현손익(신용),String,N,,
+,- - 993,당일실현손익율(신용),String,N,,
+,- - 959,담보대출수량,String,N,,
+,- - 924,Extra Item,String,N,,
+Request Example,,,,,,
+"{
+    ""trnm"": ""REG"",
+    ""grp_no"": ""1"",
+    ""refresh"": ""1"",
+    ""data"": [
+        {
+            ""item"": [
+                """"
+            ],
+            ""type"": [
+                ""04""
+            ]
+        }
+    ]
+}",,,,,,
+Response Example,,,,,,
+"#요청
+{
+    'trnm': 'REG',
+    'return_code': 0,
+    'return_msg': ''
+}
+
+#실시간 수신
+{
+    'data': [
+        {
+            'values': {
+                '9201': '1111111111',
+                '9001': '005930',
+                '917': '00',
+                '916': '00000000',
+                '302': '삼성전자',
+                '10': '-60150',
+                '930': '102',
+                '931': '154116',
+                '932': '15719834',
+                '933': '102',
+                '945': '4',
+                '946': '2',
+                '950': '0',
+                '951': '0',
+                '27': '-60200',
+                '28': '-60100',
+                '307': '60300',
+                '8019': '0.00',
+                '957': '0',
+                '958': '0',
+                '918': '00000000',
+                '990': '0',
+                '991': '0.00',
+                '992': '0',
+                '993': '0.00',
+                '959': '0',
+                '924': '0'
+            },
+            'type': '04',
+            'name': '현물잔고',
+            'item': '005930'
+        }
+    ],
+    'trnm': 'REAL'
+}",,,,,,

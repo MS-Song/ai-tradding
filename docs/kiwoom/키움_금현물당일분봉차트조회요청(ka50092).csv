@@ -1,0 +1,79 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 차트 > 금현물당일분봉차트조회요청(ka50092),,,,
+API 명,,금현물당일분봉차트조회요청,,,,
+API ID,,ka50092,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/chart,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,20,"M04020000 금 99.99_1kg, M04020100 미니금 99.99_100g"
+,tic_scope,틱범위,String,Y,2,"1:1틱, 3:3틱, 5:5틱, 10:10틱, 30:30틱"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,gds_min_chart_qry,금현물일봉차트조회,LIST,N,,
+,- cntr_pric,체결가,String,N,20,
+,- pred_pre,전일 대비(원),String,N,20,
+,- acc_trde_qty,누적 거래량,String,N,20,
+,- acc_trde_prica,누적 거래대금,String,N,20,
+,- trde_qty,거래량(체결량),String,N,20,
+,- open_pric,시가,String,N,20,
+,- high_pric,고가,String,N,20,
+,- low_pric,저가,String,N,20,
+,- cntr_tm,체결시간,String,N,20,
+,- dt,일자,String,N,20,
+,- pred_pre_sig,전일대비기호,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""M04020000"",
+    ""tic_scope"": ""1""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""gds_min_chart_qry"": [
+        {
+            ""cntr_pric"": ""+152480"",
+            ""pred_pre"": ""+800"",
+            ""acc_trde_qty"": ""10289"",
+            ""acc_trde_prica"": """",
+            ""trde_qty"": ""663"",
+            ""open_pric"": ""+152470"",
+            ""high_pric"": ""+152490"",
+            ""low_pric"": ""+152470"",
+            ""cntr_tm"": ""20250827090800"",
+            ""dt"": ""20250827090800"",
+            ""pred_pre_sig"": ""2""
+        },
+        {
+            ""cntr_pric"": ""+152470"",
+            ""pred_pre"": ""+790"",
+            ""acc_trde_qty"": ""9626"",
+            ""acc_trde_prica"": """",
+            ""trde_qty"": ""2547"",
+            ""open_pric"": ""+152450"",
+            ""high_pric"": ""+152480"",
+            ""low_pric"": ""+152450"",
+            ""cntr_tm"": ""20250827090700"",
+            ""dt"": ""20250827090700"",
+            ""pred_pre_sig"": ""2""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

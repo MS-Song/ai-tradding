@@ -74,17 +74,17 @@ def draw_hot_stocks_detail(strategy, dm, tw, th):
             buf.write("\033[1m" + f"{align_kr('NO', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 10)} | {align_kr('등락률', 8)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('업종PER', 7)}" + "\033[0m\n")
             buf.write("-" * tw + "\n")
             
-            codes = [item.get('code', '') for item in hot if item.get('code')]
-            realtime_data = strategy.api.get_naver_stocks_realtime(codes)
-            
             for idx, item in enumerate(hot, 1):
                 code = item.get('code', '')
-                r_item = realtime_data.get(code, {})
-                price = r_item.get('price', float(item.get('price', 0)))
-                rate = r_item.get('rate', float(item.get('rate', 0)))
+                # [개선] UI에서 별도 API 호출 대신 sync_worker가 1초마다 갱신하는 공통 캐시 활용
+                # 이를 통해 네이버 API 호출 횟수를 줄여 차단 리스크를 방지함
+                info = dm.cached_stock_info.get(code, {})
+                price = info.get('price', float(item.get('price', 0)))
+                rate = info.get('day_rate', float(item.get('rate', 0)))
+                
                 color = "\033[91m" if rate >= 0 else "\033[94m"
                 detail = strategy.api.get_naver_stock_detail(code)
-                name = r_item.get('name') or item.get('name', '')
+                name = info.get('name') or item.get('name', '')
                 buf.write(f"{align_kr(str(idx), 4)} | {align_kr(code, 8)} | {align_kr(name[:10], 14)} | {align_kr(f'{int(float(price)):,}', 10, 'right')} | {color}{align_kr(f'{rate:+.2f}%', 8, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')}\n")
         
         curr_t = time.time()

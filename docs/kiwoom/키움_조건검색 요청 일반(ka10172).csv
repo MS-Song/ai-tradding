@@ -1,0 +1,129 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 조건검색 > 조건검색 요청 일반(ka10172),,,,
+API 명,,조건검색 요청 일반,,,,
+API ID,,ka10172,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,wss://api.kiwoom.com:10000,,,,
+모의투자 도메인,,wss://mockapi.kiwoom.com:10000(KRX만 지원가능),,,,
+URL,,/api/dostk/websocket,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+조건검색은 영웅문4에서 만드실 수 있습니다. ,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,trnm,서비스명,String,Y,7,CNSRREQ 고정값
+,seq,조건검색식 일련번호,String,Y,3,
+,search_type,조회타입,String,Y,,0:조건검색
+,stex_tp,거래소구분,String,Y,1,K:KRX
+,cont_yn,연속조회여부,String,N,1,"Y:연속조회요청,N:연속조회미요청"
+,next_key,연속조회키,String,N,20,
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,return_code,결과코드,String,N,,정상:0 나머지:에러
+,return_msg,결과메시지,String,N,,정상인 경우는 메시지 없음
+,trnm,서비스명,String,N,,CNSRREQ
+,seq,조건검색식 일련번호,String,N,,
+,cont_yn,연속조회여부,String,N,,"연속 데이터가 존재하는경우 Y, 없으면 N"
+,next_key,연속조회키,String,N,,연속조회여부가Y일경우 다음 조회시 필요한 조회값
+,data,검색결과데이터,LIST,N,,
+,- 9001,종목코드,String,N,,
+,- 302,종목명,String,N,,
+,- 10,현재가,String,N,,
+,- 25,전일대비기호,String,N,,
+,- 11,전일대비,String,N,,
+,- 12,등락율,String,N,,
+,- 13,누적거래량,String,N,,
+,- 16,시가,String,N,,
+,- 17,고가,String,N,,
+,- 18,저가,String,N,,
+Request Example,,,,,,
+"{
+    ""trnm"": ""CNSRREQ"",
+    ""seq"": ""4"",
+    ""search_type"": ""0"",
+    ""stex_tp"": ""K"",
+    ""cont_yn"": ""N"",
+    ""next_key"": """"
+}",,,,,,
+Response Example,,,,,,
+"{
+    'trnm': 'CNSRREQ',
+    'seq': '2  ',
+    'cont_yn': 'N',
+    'next_key': '',
+    'return_code': 0,
+    'data': [
+        {
+            '9001': 'A005930',
+            '302': '삼성전자',
+            '10': '000021850',
+            '25': '3',
+            '11': '000000000',
+            '12': '000000000',
+            '13': '000000000',
+            '16': '000000000',
+            '17': '000000000',
+            '18': '000000000'
+        },
+        {
+            '9001': 'A005930',
+            '302': '삼성전자',
+            '10': '000044350',
+            '25': '3',
+            '11': '000000000',
+            '12': '000000000',
+            '13': '000000000',
+            '16': '000000000',
+            '17': '000000000',
+            '18': '000000000'
+        },
+        {
+            '9001': 'A005930',
+            '302': '삼성전자',
+            '10': '000003855',
+            '25': '3',
+            '11': '000000000',
+            '12': '000000000',
+            '13': '000000000',
+            '16': '000000000',
+            '17': '000000000',
+            '18': '000000000'
+        },
+        {
+            '9001': 'A005930',
+            '302': '삼성전자',
+            '10': '000075000',
+            '25': '5',
+            '11': '-00000100',
+            '12': '-00000130',
+            '13': '010386116',
+            '16': '000075100',
+            '17': '000075600',
+            '18': '000074700'
+        },
+        {
+            '9001': 'A005930',
+            '302': '삼성전자',
+            '10': '000002900',
+            '25': '3',
+            '11': '000000000',
+            '12': '000000000',
+            '13': '000000000',
+            '16': '000000000',
+            '17': '000000000',
+            '18': '000000000'
+        }
+    ]
+}",,,,,,

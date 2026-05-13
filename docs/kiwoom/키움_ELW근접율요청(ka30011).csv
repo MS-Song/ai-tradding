@@ -1,0 +1,58 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > ELW > ELW근접율요청(ka30011),,,,
+API 명,,ELW근접율요청,,,,
+API ID,,ka30011,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/elw,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,6,
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,elwalacc_rt,ELW근접율,LIST,N,,
+,- stk_cd,종목코드,String,N,20,
+,- stk_nm,종목명,String,N,40,
+,- cur_prc,현재가,String,N,20,
+,- pre_sig,대비기호,String,N,20,
+,- pred_pre,전일대비,String,N,20,
+,- flu_rt,등락율,String,N,20,
+,- acc_trde_qty,누적거래량,String,N,20,
+,- alacc_rt,근접율,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""57JBHH""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""elwalacc_rt"": [
+        {
+            ""stk_cd"": ""201"",
+            ""stk_nm"": ""KOSPI200"",
+            ""cur_prc"": ""+431.78"",
+            ""pre_sig"": ""2"",
+            ""pred_pre"": ""+0.03"",
+            ""flu_rt"": ""+0.01"",
+            ""acc_trde_qty"": ""31"",
+            ""alacc_rt"": ""0.00""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

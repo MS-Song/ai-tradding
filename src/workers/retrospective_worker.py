@@ -98,9 +98,13 @@ class RetrospectiveWorker(BaseWorker):
         date_str = get_now().strftime('%Y-%m-%d')
         vibe = report.get("market_vibe", "N/A")
         
+        broker_type = os.getenv("BROKER_TYPE", "KIS").upper()
+        broker_name = "키움증권 (Kiwoom)" if broker_type == "KIWOOM" else "한국투자증권 (KIS)"
+
         msg = (
             f"🎯 <b>투자 적중 복기 리포트 ({mode})</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏛️ <b>증권사</b>: <code>[{broker_type}] {broker_name}</code>\n"
             f"📅 <b>날짜</b>: {date_str}\n"
             f"🌍 <b>장세</b>: <code>{vibe}</code>\n"
             f"🔄 <b>업데이트</b>: {report.get('update_count', 1)}회차\n"

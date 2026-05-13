@@ -13,9 +13,9 @@ pip install -r requirements.txt
 pip install pyinstaller xhtml2pdf markdown2 reportlab pillow
 
 # 3. Run PyInstaller
-echo "[*] Packaging KIS-Vibe-Trader for Linux..."
+echo "[*] Packaging AI-Vibe-Trader for Linux..."
 pyinstaller --onefile --clean --strip \
-    --name KIS-Vibe-Trader-Linux \
+    --name AI-Vibe-Trader-Linux \
     --exclude-module tkinter \
     --exclude-module tcl \
     --exclude-module tk \
@@ -48,10 +48,10 @@ python3 scripts/build/gen_pdf.py
 
 # 5. Move to target
 mkdir -p target
-mv dist/KIS-Vibe-Trader-Linux target/
+mv dist/AI-Vibe-Trader-Linux target/
 cp fonts/D2Coding.ttf target/
 
 # 6. Cleanup
-rm -rf build dist KIS-Vibe-Trader-Linux.spec
+rm -rf build dist AI-Vibe-Trader-Linux.spec
 
 echo "[V] Build Complete! Check target/ directory"

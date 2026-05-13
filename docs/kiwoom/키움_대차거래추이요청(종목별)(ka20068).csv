@@ -1,0 +1,92 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 대차거래 > 대차거래추이요청(종목별)(ka20068),,,,
+API 명,,대차거래추이요청(종목별),,,,
+API ID,,ka20068,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/slb,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,strt_dt,시작일자,String,N,8,YYYYMMDD
+,end_dt,종료일자,String,N,8,YYYYMMDD
+,all_tp,전체구분,String,N,1,0:종목코드 입력종목만 표시
+,stk_cd,종목코드,String,Y,6,
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,dbrt_trde_trnsn,대차거래추이,LIST,N,,
+,- dt,일자,String,N,20,
+,- dbrt_trde_cntrcnt,대차거래체결주수,String,N,20,
+,- dbrt_trde_rpy,대차거래상환주수,String,N,20,
+,- dbrt_trde_irds,대차거래증감,String,N,20,
+,- rmnd,잔고주수,String,N,20,
+,- remn_amt,잔고금액,String,N,20,
+Request Example,,,,,,
+"{
+    ""strt_dt"": ""20250401"",
+    ""end_dt"": ""20250430"",
+    ""all_tp"": ""0"",
+    ""stk_cd"": ""005930""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""dbrt_trde_trnsn"": [
+        {
+            ""dt"": ""20250430"",
+            ""dbrt_trde_cntrcnt"": ""1210354"",
+            ""dbrt_trde_rpy"": ""2693108"",
+            ""dbrt_trde_irds"": ""-1482754"",
+            ""rmnd"": ""98242435"",
+            ""remn_amt"": ""5452455""
+        },
+        {
+            ""dt"": ""20250429"",
+            ""dbrt_trde_cntrcnt"": ""502018"",
+            ""dbrt_trde_rpy"": ""1022714"",
+            ""dbrt_trde_irds"": ""-520696"",
+            ""rmnd"": ""99725189"",
+            ""remn_amt"": ""5564666""
+        },
+        {
+            ""dt"": ""20250428"",
+            ""dbrt_trde_cntrcnt"": ""958772"",
+            ""dbrt_trde_rpy"": ""3122807"",
+            ""dbrt_trde_irds"": ""-2164035"",
+            ""rmnd"": ""100245885"",
+            ""remn_amt"": ""5593720""
+        },
+        {
+            ""dt"": ""20250425"",
+            ""dbrt_trde_cntrcnt"": ""1504273"",
+            ""dbrt_trde_rpy"": ""5217540"",
+            ""dbrt_trde_irds"": ""-3713267"",
+            ""rmnd"": ""102409920"",
+            ""remn_amt"": ""5704233""
+        },
+        {
+            ""dt"": ""20250424"",
+            ""dbrt_trde_cntrcnt"": ""1803312"",
+            ""dbrt_trde_rpy"": ""6076301"",
+            ""dbrt_trde_irds"": ""-4272989"",
+            ""rmnd"": ""106123187"",
+            ""remn_amt"": ""5911062""
+        },
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

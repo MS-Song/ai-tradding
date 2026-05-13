@@ -1,0 +1,100 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 대차거래 > 대차거래상위10종목요청(ka10069),,,,
+API 명,,대차거래상위10종목요청,,,,
+API ID,,ka10069,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/slb,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,strt_dt,시작일자,String,Y,8,"YYYYMMDD
+(연도4자리, 월 2자리, 일 2자리 형식)"
+,end_dt,종료일자,String,N,8,"YYYYMMDD
+(연도4자리, 월 2자리, 일 2자리 형식)"
+,mrkt_tp,시장구분,String,Y,3,"001:코스피, 101:코스닥"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,dbrt_trde_cntrcnt_sum,대차거래체결주수합,String,N,,
+,dbrt_trde_rpy_sum,대차거래상환주수합,String,N,,
+,rmnd_sum,잔고주수합,String,N,,
+,remn_amt_sum,잔고금액합,String,N,,
+,dbrt_trde_cntrcnt_rt,대차거래체결주수비율,String,N,,
+,dbrt_trde_rpy_rt,대차거래상환주수비율,String,N,,
+,rmnd_rt,잔고주수비율,String,N,,
+,remn_amt_rt,잔고금액비율,String,N,,
+,dbrt_trde_upper_10stk,대차거래상위10종목,LIST,N,,
+,- stk_nm,종목명,String,N,40,
+,- stk_cd,종목코드,String,N,20,
+,- dbrt_trde_cntrcnt,대차거래체결주수,String,N,20,
+,- dbrt_trde_rpy,대차거래상환주수,String,N,20,
+,- rmnd,잔고주수,String,N,20,
+,- remn_amt,잔고금액,String,N,20,
+Request Example,,,,,,
+"{
+    ""strt_dt"": ""20241110"",
+    ""end_dt"": ""20241125"",
+    ""mrkt_tp"": ""001""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""dbrt_trde_cntrcnt_sum"": ""3383301"",
+    ""dbrt_trde_rpy_sum"": ""764254"",
+    ""rmnd_sum"": ""173782689"",
+    ""remn_amt_sum"": ""14218184"",
+    ""dbrt_trde_cntrcnt_rt"": ""7061"",
+    ""dbrt_trde_rpy_rt"": ""3196"",
+    ""rmnd_rt"": ""2225"",
+    ""remn_amt_rt"": ""3728"",
+    ""dbrt_trde_upper_10stk"": [
+        {
+            ""stk_nm"": ""삼성전자"",
+            ""stk_cd"": ""005930"",
+            ""dbrt_trde_cntrcnt"": ""1209600"",
+            ""dbrt_trde_rpy"": ""0"",
+            ""rmnd"": ""1505173"",
+            ""remn_amt"": ""1203""
+        },
+        {
+            ""stk_nm"": ""삼성전자"",
+            ""stk_cd"": ""005930"",
+            ""dbrt_trde_cntrcnt"": ""681807"",
+            ""dbrt_trde_rpy"": ""304467"",
+            ""rmnd"": ""122704705"",
+            ""remn_amt"": ""9546426""
+        },
+        {
+            ""stk_nm"": ""삼성전자"",
+            ""stk_cd"": ""005930"",
+            ""dbrt_trde_cntrcnt"": ""297431"",
+            ""dbrt_trde_rpy"": ""208222"",
+            ""rmnd"": ""13731939"",
+            ""remn_amt"": ""1691775""
+        },
+        {
+            ""stk_nm"": ""삼성전자"",
+            ""stk_cd"": ""005930"",
+            ""dbrt_trde_cntrcnt"": ""230866"",
+            ""dbrt_trde_rpy"": ""301"",
+            ""rmnd"": ""3012573"",
+            ""remn_amt"": ""104838""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

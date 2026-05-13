@@ -1,0 +1,124 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 실시간시세 > 주식기세(0A),,,,
+API 명,,주식기세,,,,
+API ID,,0A,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,wss://api.kiwoom.com:10000,,,,
+모의투자 도메인,,wss://mockapi.kiwoom.com:10000(KRX만 지원가능),,,,
+URL,,/api/dostk/websocket,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+특정 종목이 기세일때 발생하는 데이터로 시장에서 체결없이 현재가가 변경되는 대량매매나 거래소에서 종목 종가데이터 보정시 발생하는 실시간 입니다.,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,trnm,서비스명,String,Y,10,"REG : 등록 , REMOVE : 해지"
+,grp_no,그룹번호,String,Y,4,
+,refresh,기존등록유지여부,String,Y,1,"등록(REG)시
+
+0:기존유지안함 1:기존유지(Default)
+
+0일경우 기존등록한 item/type은 해지, 1일경우 기존등록한 item/type 유지
+
+해지(REMOVE)시 값 불필요"
+,data,실시간 등록 리스트,LIST,,,
+,- item,실시간 등록 요소,String,N,100,"거래소별 종목코드, 업종코드
+(KRX:039490,NXT:039490_NX,SOR:039490_AL)"
+,- type,실시간 항목,String,Y,2,"TR 명(0A,0B....)"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,return_code,결과코드,String,N,,"통신결과에대한 코드
+(등록,해지요청시에만 값 전송 0:정상,1:오류 , 데이터 실시간 수신시 미전송)"
+,return_msg,결과메시지,String,N,,"통신결과에대한메시지(등록,해지시에만 값 전송,데이터 실시간 수신시 미전송)"
+,trnm,서비스명,String,N,,"등록,해지요청시 요청값 반환 , 실시간수신시 REAL 반환"
+,data,실시간 등록리스트,LIST,N,,
+,- type,실시간항목,String,N,,"TR 명(0A,0B....)"
+,- name,실시간 항목명,String,N,,
+,- item,실시간 등록 요소,String,N,,종목코드
+,- values,실시간 값 리스트,LIST,N,,
+,- - 10,현재가,String,N,,
+,- - 11,전일대비,String,N,,
+,- - 12,등락율,String,N,,
+,- - 27,(최우선)매도호가,String,N,,
+,- - 28,(최우선)매수호가,String,N,,
+,- - 13,누적거래량,String,N,,
+,- - 14,누적거래대금,String,N,,
+,- - 16,시가,String,N,,
+,- - 17,고가,String,N,,
+,- - 18,저가,String,N,,
+,- - 25,전일대비기호,String,N,,
+,- - 26,"전일거래량대비(계약,주)",String,N,,
+,- - 29,거래대금증감,String,N,,
+,- - 30,전일거래량대비(비율),String,N,,
+,- - 31,거래회전율,String,N,,
+,- - 32,거래비용,String,N,,
+,- - 311,시가총액(억),String,N,,
+,- - 567,상한가발생시간,String,N,,
+,- - 568,하한가발생시간,String,N,,
+Request Example,,,,,,
+"{
+    ""trnm"": ""REG"",
+    ""grp_no"": ""1"",
+    ""refresh"": ""1"",
+    ""data"": [
+        {
+            ""item"": [
+                ""005930""
+            ],
+            ""type"": [
+                ""0A""
+            ]
+        }
+    ]
+}",,,,,,
+Response Example,,,,,,
+"#요청
+{
+    'trnm': 'REG',
+    'return_code': 0,
+    'return_msg': ''
+}
+
+#실시간 수신
+{
+    'data': [
+        {
+            'values': {
+                '10': '+86800',
+                '11': '+19500',
+                '12': '+28.97',
+                '27': '+85200',
+                '28': '+85100',
+                '13': '367090',
+                '14': '31642',
+                '16': '+87400',
+                '17': '+87400',
+                '18': ' 67300',
+                '25': '2',
+                '26': '+131995',
+                '29': '+15843118000',
+                '30': '+156.15',
+                '31': '0.01',
+                '32': '157',
+                '311': '5181771',
+                '567': '154912',
+                '568': '000000'
+            },
+            'type': '0A',
+            'name': '주식기세',
+            'item': '005930'
+        }
+    ],
+    'trnm': 'REAL'
+}",,,,,,

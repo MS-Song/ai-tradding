@@ -122,7 +122,13 @@ class DataSyncWorker(BaseWorker):
                 self.state.last_log_msg = f"\033[96m[LOG] 📅 당일 수익률 기준점 초기화: {self.strategy.start_day_asset:,.0f}원 (초기 미실현: {self.strategy.start_day_pnl:,.0f}원)\033[0m"
                 self.state.last_log_time = time.time()
 
-        a['total_principal'] = getattr(self.strategy, "base_seed_money", 0)
+        # [개선] KIS 모의투자에서만 사용자 입력 시드머니를 원금으로 사용
+        # 실전거래(KIS/키움)에서는 API가 정확한 원금(매입원금+예수금)을 반환하므로 자동 계산
+        seed = getattr(self.strategy, "base_seed_money", 0)
+        is_virtual = getattr(self.api.auth, 'is_virtual', True)
+        is_kis = 'kis' in self.api.auth.__class__.__name__.lower()
+        if seed > 0 and is_kis and is_virtual:
+            a['total_principal'] = seed
         
         if self.strategy.start_day_asset > 0:
             # [개선] 입출금에 영향받지 않는 정확한 일일 수익 계산 로직 적용 (요구사항 반영)
@@ -206,7 +212,7 @@ class DataSyncWorker(BaseWorker):
             investor_data = None
             # [최적화] 보유 종목일 때만 KIS 상세 시세(Hoga 등) 및 수급 데이터 조회
             if is_holding and (is_heavy_cycle or code not in self.state.stock_info):
-                time.sleep(0.1) # [추가] API 속도 제한 방지용 미세 지연
+                # [제거] BrokerRateLimiter가 대기를 관리하므로 수동 sleep 불필요
                 p_data = self.api.get_inquire_price(code)
                 
                 # [신규] 수급 데이터(외인/기관/연기금) 동기화
@@ -258,7 +264,7 @@ class DataSyncWorker(BaseWorker):
                         _used_fallback = bool(m_candles)
                     
                     if not m_candles:
-                        time.sleep(0.15) # API 속도 제한 방지용 미세 지연
+                        # [제거] BrokerRateLimiter가 대기를 관리하므로 수동 sleep 불필요
                         m_candles = self.api.get_minute_chart_price(code)
                         _used_fallback = False
 
@@ -288,9 +294,16 @@ class DataSyncWorker(BaseWorker):
                 "investor": investor_data if is_holding else old_info.get("investor")
             }, task_id, ma_20, is_holding, ma_source
 
-        # [최적화] 모의투자는 Rate Limit(1.5s)이 엄격하므로 병렬도를 1로 제한하여 순차 처리 보장
+        # [최적화] 실거래에서는 큐의 동시성을 늘려 병렬 처리 가속
+        import os
         is_v = getattr(self.api.auth, 'is_virtual', True)
-        m_workers = 1 if is_v else 8
+        if is_v:
+            m_workers = 1 
+        else:
+            # 실거래 시 증권사별 RPS 수준에 맞춰 워커 수 조정
+            broker_type = os.getenv("BROKER_TYPE", "KIS").upper()
+            m_workers = 15 if broker_type == "KIS" else 8
+            
         with concurrent.futures.ThreadPoolExecutor(max_workers=m_workers) as executor:
             futures = [executor.submit(fetch_stock_task, c) for c in all_codes]
             for f in concurrent.futures.as_completed(futures):

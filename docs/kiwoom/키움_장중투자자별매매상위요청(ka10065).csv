@@ -1,0 +1,100 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 순위정보 > 장중투자자별매매상위요청(ka10065),,,,
+API 명,,장중투자자별매매상위요청,,,,
+API ID,,ka10065,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/rkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,trde_tp,매매구분,String,Y,1,"1:순매수, 2:순매도"
+,mrkt_tp,시장구분,String,Y,3,"000:전체, 001:코스피, 101:코스닥"
+,orgn_tp,기관구분,String,Y,4,"9000:외국인, 9100:외국계, 1000:금융투자, 3000:투신, 5000:기타금융, 4000:은행, 2000:보험, 6000:연기금, 7000:국가, 7100:기타법인, 9999:기관계"
+,amt_qty_tp,금액수량구분,String,N,1,"1:금액, 2:수량"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,opmr_invsr_trde_upper,장중투자자별매매상위,LIST,N,,
+,- stk_cd,종목코드,String,N,20,
+,- stk_nm,종목명,String,N,40,
+,- sel_qty,매도량,String,N,20,매도금액/매도량
+,- buy_qty,매수량,String,N,20,매수금액/매수량
+,- netslmt,순매도,String,N,20,순매수/순매도(금액/수량)
+Request Example,,,,,,
+"{
+    ""trde_tp"": ""1"",
+    ""mrkt_tp"": ""000"",
+    ""orgn_tp"": ""9000"",
+    ""amt_qty_tp"": ""1""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""opmr_invsr_trde_upper"": [
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""sel_qty"": ""-39420"",
+            ""buy_qty"": ""+73452"",
+            ""netslmt"": ""+34033""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""sel_qty"": ""-13970"",
+            ""buy_qty"": ""+25646"",
+            ""netslmt"": ""+11676""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""sel_qty"": ""-10063"",
+            ""buy_qty"": ""+21167"",
+            ""netslmt"": ""+11104""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""sel_qty"": ""-37542"",
+            ""buy_qty"": ""+47604"",
+            ""netslmt"": ""+10061""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""sel_qty"": ""-2310"",
+            ""buy_qty"": ""+10874"",
+            ""netslmt"": ""+8564""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""sel_qty"": ""-24912"",
+            ""buy_qty"": ""+33114"",
+            ""netslmt"": ""+8203""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""sel_qty"": ""-27306"",
+            ""buy_qty"": ""+34853"",
+            ""netslmt"": ""+7547""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

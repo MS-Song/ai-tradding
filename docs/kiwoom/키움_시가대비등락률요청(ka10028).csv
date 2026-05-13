@@ -1,0 +1,124 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 종목정보 > 시가대비등락률요청(ka10028),,,,
+API 명,,시가대비등락률요청,,,,
+API ID,,ka10028,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/stkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,sort_tp,정렬구분,String,Y,1,"1:시가, 2:고가, 3:저가, 4:기준가"
+,trde_qty_cnd,거래량조건,String,Y,4,"0000:전체조회, 0010:만주이상, 0050:5만주이상, 0100:10만주이상, 0500:50만주이상, 1000:백만주이상"
+,mrkt_tp,시장구분,String,Y,3,"000:전체, 001:코스피, 101:코스닥"
+,updown_incls,상하한포함,String,Y,1,"0:불 포함, 1:포함"
+,stk_cnd,종목조건,String,Y,2,"0:전체조회, 1:관리종목제외, 4:우선주+관리주제외, 3:우선주제외, 5:증100제외, 6:증100만보기, 7:증40만보기, 8:증30만보기, 9:증20만보기"
+,crd_cnd,신용조건,String,Y,1,"0:전체조회, 1:신용융자A군, 2:신용융자B군, 3:신용융자C군, 4:신용융자D군, 7:신용융자E군, 9:신용융자전체"
+,trde_prica_cnd,거래대금조건,String,Y,4,"0:전체조회, 3:3천만원이상, 5:5천만원이상, 10:1억원이상, 30:3억원이상, 50:5억원이상, 100:10억원이상, 300:30억원이상, 500:50억원이상, 1000:100억원이상, 3000:300억원이상, 5000:500억원이상"
+,flu_cnd,등락조건,String,Y,1,"1:상위, 2:하위"
+,stex_tp,거래소구분,String,Y,1,"1:KRX, 2:NXT 3.통합"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,open_pric_pre_flu_rt,시가대비등락률,LIST,N,,
+,- stk_cd,종목코드,String,N,20,
+,- stk_nm,종목명,String,N,40,
+,- cur_prc,현재가,String,N,20,
+,- pred_pre_sig,전일대비기호,String,N,20,
+,- pred_pre,전일대비,String,N,20,
+,- flu_rt,등락률,String,N,20,
+,- open_pric,시가,String,N,20,
+,- high_pric,고가,String,N,20,
+,- low_pric,저가,String,N,20,
+,- open_pric_pre,시가대비,String,N,20,
+,- now_trde_qty,현재거래량,String,N,20,
+,- cntr_str,체결강도,String,N,20,
+Request Example,,,,,,
+"{
+    ""sort_tp"": ""1"",
+    ""trde_qty_cnd"": ""0000"",
+    ""mrkt_tp"": ""000"",
+    ""updown_incls"": ""1"",
+    ""stk_cnd"": ""0"",
+    ""crd_cnd"": ""0"",
+    ""trde_prica_cnd"": ""0"",
+    ""flu_cnd"": ""1"",
+    ""stex_tp"": ""3""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""open_pric_pre_flu_rt"": [
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""+74800"",
+            ""pred_pre_sig"": ""1"",
+            ""pred_pre"": ""+17200"",
+            ""flu_rt"": ""+29.86"",
+            ""open_pric"": ""+65000"",
+            ""high_pric"": ""+74800"",
+            ""low_pric"": ""-57000"",
+            ""open_pric_pre"": ""+15.08"",
+            ""now_trde_qty"": ""448203"",
+            ""cntr_str"": ""346.54""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""-200000"",
+            ""pred_pre_sig"": ""5"",
+            ""pred_pre"": ""-15000"",
+            ""flu_rt"": ""-6.98"",
+            ""open_pric"": ""-180000"",
+            ""high_pric"": ""215000"",
+            ""low_pric"": ""-180000"",
+            ""open_pric_pre"": ""+11.11"",
+            ""now_trde_qty"": ""619"",
+            ""cntr_str"": ""385.07""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""+200000"",
+            ""pred_pre_sig"": ""2"",
+            ""pred_pre"": ""+15600"",
+            ""flu_rt"": ""+8.46"",
+            ""open_pric"": ""184400"",
+            ""high_pric"": ""+200000"",
+            ""low_pric"": ""-183500"",
+            ""open_pric_pre"": ""+8.46"",
+            ""now_trde_qty"": ""143"",
+            ""cntr_str"": ""500.00""
+        },
+        {
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""+140100"",
+            ""pred_pre_sig"": ""2"",
+            ""pred_pre"": ""+4100"",
+            ""flu_rt"": ""+3.01"",
+            ""open_pric"": ""+136100"",
+            ""high_pric"": ""+150000"",
+            ""low_pric"": ""-129000"",
+            ""open_pric_pre"": ""+2.94"",
+            ""now_trde_qty"": ""135"",
+            ""cntr_str"": ""136.36""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

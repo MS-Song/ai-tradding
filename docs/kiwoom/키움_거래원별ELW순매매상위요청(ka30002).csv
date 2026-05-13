@@ -1,0 +1,96 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > ELW > 거래원별ELW순매매상위요청(ka30002),,,,
+API 명,,거래원별ELW순매매상위요청,,,,
+API ID,,ka30002,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/elw,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,isscomp_cd,발행사코드,String,Y,3,"3자리, 영웅문4 0273화면참조 (교보:001, 신한금융투자:002, 한국투자증권:003, 대신:004, 미래대우:005, ,,,)"
+,trde_qty_tp,거래량구분,String,Y,4,"0:전체, 5:5천주, 10:만주, 50:5만주, 100:10만주, 500:50만주, 1000:백만주"
+,trde_tp,매매구분,String,Y,1,"1:순매수, 2:순매도"
+,dt,기간,String,Y,2,"1:전일, 5:5일, 10:10일, 40:40일, 60:60일"
+,trde_end_elwskip,거래종료ELW제외,String,Y,1,"0:포함, 1:제외"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,trde_ori_elwnettrde_upper,거래원별ELW순매매상위,LIST,N,,
+,- stk_cd,종목코드,String,N,20,
+,- stk_nm,종목명,String,N,40,
+,- stkpc_flu,주가등락,String,N,20,
+,- flu_rt,등락율,String,N,20,
+,- trde_qty,거래량,String,N,20,
+,- netprps,순매수,String,N,20,
+,- buy_trde_qty,매수거래량,String,N,20,
+,- sel_trde_qty,매도거래량,String,N,20,
+Request Example,,,,,,
+"{
+    ""isscomp_cd"": ""003"",
+    ""trde_qty_tp"": ""0"",
+    ""trde_tp"": ""2"",
+    ""dt"": ""60"",
+    ""trde_end_elwskip"": ""0""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""trde_ori_elwnettrde_upper"": [
+        {
+            ""stk_cd"": ""57JBHH"",
+            ""stk_nm"": ""한국JBHHKOSPI200풋"",
+            ""stkpc_flu"": ""--3140"",
+            ""flu_rt"": ""-88.95"",
+            ""trde_qty"": ""500290"",
+            ""netprps"": ""--846970"",
+            ""buy_trde_qty"": ""+719140"",
+            ""sel_trde_qty"": ""-1566110""
+        },
+        {
+            ""stk_cd"": ""57JBHH"",
+            ""stk_nm"": ""한국JBHHKOSPI200풋"",
+            ""stkpc_flu"": ""+205"",
+            ""flu_rt"": ""+73.21"",
+            ""trde_qty"": ""4950000"",
+            ""netprps"": ""--108850"",
+            ""buy_trde_qty"": ""+52450"",
+            ""sel_trde_qty"": ""-161300""
+        },
+        {
+            ""stk_cd"": ""57JBHH"",
+            ""stk_nm"": ""한국JBHHKOSPI200풋"",
+            ""stkpc_flu"": ""+340"",
+            ""flu_rt"": ""+115.25"",
+            ""trde_qty"": ""60"",
+            ""netprps"": ""--73960"",
+            ""buy_trde_qty"": ""+29560"",
+            ""sel_trde_qty"": ""-103520""
+        },
+        {
+            ""stk_cd"": ""57JBHH"",
+            ""stk_nm"": ""한국JBHHKOSPI200풋"",
+            ""stkpc_flu"": ""--65"",
+            ""flu_rt"": ""-86.67"",
+            ""trde_qty"": ""20"",
+            ""netprps"": ""--23550"",
+            ""buy_trde_qty"": ""+422800"",
+            ""sel_trde_qty"": ""-446350""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

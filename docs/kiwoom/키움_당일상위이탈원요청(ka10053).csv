@@ -1,0 +1,89 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 순위정보 > 당일상위이탈원요청(ka10053),,,,
+API 명,,당일상위이탈원요청,,,,
+API ID,,ka10053,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/rkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,6,"거래소별 종목코드
+(KRX:039490,NXT:039490_NX,SOR:039490_AL)"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,tdy_upper_scesn_ori,당일상위이탈원,LIST,N,,
+,- sel_scesn_tm,매도이탈시간,String,N,20,
+,- sell_qty,매도수량,String,N,20,
+,- sel_upper_scesn_ori,매도상위이탈원,String,N,20,
+,- buy_scesn_tm,매수이탈시간,String,N,20,
+,- buy_qty,매수수량,String,N,20,
+,- buy_upper_scesn_ori,매수상위이탈원,String,N,20,
+,- qry_dt,조회일자,String,N,20,
+,- qry_tm,조회시간,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""005930""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""tdy_upper_scesn_ori"": [
+        {
+            ""sel_scesn_tm"": ""154706"",
+            ""sell_qty"": ""32"",
+            ""sel_upper_scesn_ori"": ""키움증권"",
+            ""buy_scesn_tm"": ""151615"",
+            ""buy_qty"": ""48"",
+            ""buy_upper_scesn_ori"": ""키움증권"",
+            ""qry_dt"": ""012"",
+            ""qry_tm"": ""012""
+        },
+        {
+            ""sel_scesn_tm"": ""145127"",
+            ""sell_qty"": ""14"",
+            ""sel_upper_scesn_ori"": ""키움증권"",
+            ""buy_scesn_tm"": ""144055"",
+            ""buy_qty"": ""21"",
+            ""buy_upper_scesn_ori"": ""키움증권"",
+            ""qry_dt"": ""017"",
+            ""qry_tm"": ""046""
+        },
+        {
+            ""sel_scesn_tm"": ""145117"",
+            ""sell_qty"": ""10"",
+            ""sel_upper_scesn_ori"": ""키움증권"",
+            ""buy_scesn_tm"": ""140901"",
+            ""buy_qty"": ""3"",
+            ""buy_upper_scesn_ori"": ""키움증권"",
+            ""qry_dt"": ""050"",
+            ""qry_tm"": ""056""
+        },
+        {
+            ""sel_scesn_tm"": """",
+            ""sell_qty"": """",
+            ""sel_upper_scesn_ori"": """",
+            ""buy_scesn_tm"": ""135548"",
+            ""buy_qty"": ""2"",
+            ""buy_upper_scesn_ori"": ""키움증권"",
+            ""qry_dt"": """",
+            ""qry_tm"": ""001""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

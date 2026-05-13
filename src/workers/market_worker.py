@@ -203,6 +203,37 @@ class MarketWorker(BaseWorker):
                 self.themes = analyze_popular_themes(h_raw, v_raw)
                 
                 shared_info = self._extract_price_info(h_raw + v_raw)
+                
+                # [Fix] HTML 크롤링 스냅샷 가격을 Naver 실시간 벌크 API로 즉시 보정
+                # market_worker가 2분마다 리스트를 교체할 때 크롤링 시점의 오래된 가격이
+                # 대시보드에 노출되는 타이밍 갭을 원천 방지
+                all_ranking_codes = list(set(
+                    [item['code'] for item in h_raw if item.get('code')] +
+                    [item['code'] for item in v_raw if item.get('code')]
+                ))
+                if all_ranking_codes:
+                    try:
+                        rt_bulk = self.api.get_naver_stocks_realtime(all_ranking_codes)
+                        if rt_bulk:
+                            for item in h_raw:
+                                rt = rt_bulk.get(item.get('code'))
+                                if rt:
+                                    item['price'] = rt['price']
+                                    item['rate'] = rt['rate']
+                            for item in v_raw:
+                                rt = rt_bulk.get(item.get('code'))
+                                if rt:
+                                    item['price'] = rt['price']
+                                    item['rate'] = rt['rate']
+                            # shared_info도 실시간 가격으로 갱신
+                            for code, rt in rt_bulk.items():
+                                if code in shared_info:
+                                    shared_info[code]['price'] = rt['price']
+                                    shared_info[code]['day_rate'] = rt['rate']
+                    except Exception as e:
+                        from src.logger import logger
+                        logger.debug(f"랭킹 실시간 가격 보정 실패 (Fallback: HTML 가격 사용): {e}")
+                
                 with self.state.lock:
                     self.state.hot_raw = h_raw
                     self.state.vol_raw = v_raw
@@ -314,6 +345,21 @@ class MarketWorker(BaseWorker):
                         progress_cb=rec_prog_cb
                     )
                     
+                    # [Fix] AI 추천 종목의 분석 시점 스냅샷 가격을 실시간 벌크 가격으로 즉시 보정
+                    ai_recs = self.strategy.ai_recommendations
+                    ai_codes = [r['code'] for r in ai_recs if r.get('code')]
+                    if ai_codes:
+                        try:
+                            rt_bulk = self.api.get_naver_stocks_realtime(ai_codes)
+                            if rt_bulk:
+                                for rec in ai_recs:
+                                    rt = rt_bulk.get(rec.get('code'))
+                                    if rt:
+                                        rec['price'] = rt['price']
+                                        rec['rate'] = rt['rate']
+                        except Exception:
+                            pass  # 실패 시 기존 가격 유지 (sync_worker에서 1초 후 보정됨)
+                    
                     with self.state.lock:
                         self.state.recommendations = self.strategy.ai_recommendations
                         self.state.last_times["recommendation"] = curr_t
@@ -349,9 +395,13 @@ class MarketWorker(BaseWorker):
                         name = r.get('name', 'Unknown')
                         rec_str += f"┣ <code>[{score:.0f}점]</code> {code} <b>{name}</b>\n"
                 
+                broker_type = os.getenv("BROKER_TYPE", "KIS").upper()
+                broker_name = "키움증권 (Kiwoom)" if broker_type == "KIWOOM" else "한국투자증권 (KIS)"
+
                 msg = (
                     f"✅ <b>AI 즉시 진단 완료</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🏛️ <b>증권사</b>: <code>[{broker_type}] {broker_name}</code>\n"
                     f"🌍 <b>현재 VIBE</b>: <code>{self.state.vibe}</code>\n"
                     f"💡 <b>추천 종목 TOP 5</b>:\n{rec_str}\n"
                     f"━━━━━━━━━━━━━━━━━━━━"

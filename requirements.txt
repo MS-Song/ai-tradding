@@ -5,3 +5,4 @@ beautifulsoup4
 lxml
 python-telegram-bot
 pytest
+websocket-client

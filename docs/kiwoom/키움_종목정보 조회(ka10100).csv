@@ -1,0 +1,65 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 종목정보 > 종목정보 조회(ka10100),,,,
+API 명,,종목정보 조회,,,,
+API ID,,ka10100,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/stkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,6,
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,code,종목코드,String,N,,단축코드
+,name,종목명,String,N,40,
+,listCount,상장주식수,String,N,,
+,auditInfo,감리구분,String,N,,
+,regDay,상장일,String,N,,
+,lastPrice,전일종가,String,N,,
+,state,종목상태,String,N,,
+,marketCode,시장구분코드,String,N,,
+,marketName,시장명,String,N,,
+,upName,업종명,String,N,,
+,upSizeName,회사크기분류,String,N,,
+,companyClassName,회사분류,String,N,,코스닥만 존재함
+,orderWarning,투자유의종목여부,String,N,,"0: 해당없음, 2: 정리매매, 3: 단기과열, 4: 투자위험, 5: 투자경과, 1: ETF투자주의요망(ETF인 경우만 전달"
+,nxtEnable,NXT가능여부,String,N,,Y: 가능
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""005930""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""code"": ""005930"",
+    ""name"": ""삼성전자"",
+    ""listCount"": ""0000000026034239"",
+    ""auditInfo"": ""정상"",
+    ""regDay"": ""20090803"",
+    ""lastPrice"": ""00136000"",
+    ""state"": ""증거금20%|담보대출|신용가능"",
+    ""marketCode"": ""0"",
+    ""marketName"": ""거래소"",
+    ""upName"": ""금융업"",
+    ""upSizeName"": ""대형주"",
+    ""companyClassName"": """",
+    ""orderWarning"": ""0"",
+    ""nxtEnable"": ""Y"",
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

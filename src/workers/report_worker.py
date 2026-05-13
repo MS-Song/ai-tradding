@@ -129,9 +129,13 @@ class ReportWorker(BaseWorker):
             pnl_rt = asset.get('daily_pnl_rate', 0.0)
             pnl_emoji = "🚀" if pnl_rt >= 1.0 else "🟢" if pnl_rt >= 0 else "🔴"
             
+            broker_type = os.getenv("BROKER_TYPE", "KIS").upper()
+            broker_name = "키움증권 (Kiwoom)" if broker_type == "KIWOOM" else "한국투자증권 (KIS)"
+
             msg = (
                 f"📊 <b>정기 시장 리포트 ({time_str})</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🏛️ <b>증권사</b>: <code>[{broker_type}] {broker_name}</code>\n"
                 f"🌍 <b>시장 VIBE</b>: <code>{vibe}</code>{idx_str}\n"
                 f"💰 <b>총 자산</b>: {int(asset.get('total_asset', 0)):,}원\n"
                 f"{pnl_emoji} <b>당일 손익</b>: {int(pnl_amt):+,}원 ({pnl_rt:+.2f}%)\n"

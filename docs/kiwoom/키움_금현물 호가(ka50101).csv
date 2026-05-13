@@ -1,0 +1,91 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 시세 > 금현물 호가(ka50101),,,,
+API 명,,금현물 호가,,,,
+API ID,,ka50101,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/mrkcond,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,20,"M04020000 금 99.99_1kg, M04020100 미니금 99.99_100g"
+,tic_scope,틱범위,String,Y,2,"1:1틱, 3:3틱, 5:5틱, 10:10틱, 30:30틱"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,gold_bid,금현물호가,LIST,N,,
+,- cntr_pric,체결가,String,N,20,
+,- pred_pre,전일 대비(원),String,N,20,
+,- flu_rt,등락율,String,N,20,
+,- trde_qty,누적 거래량,String,N,20,
+,- acc_trde_prica,누적 거래대금,String,N,20,
+,- cntr_trde_qty,거래량(체결량),String,N,20,
+,- tm,체결시간,String,N,20,
+,- pre_sig,전일대비기호,String,N,20,
+,- pri_sel_bid_unit,매도호가,String,N,20,
+,- pri_buy_bid_unit,매수호가,String,N,20,
+,- trde_pre,전일 거래량 대비 비율,String,N,20,
+,- trde_tern_rt,전일 거래량 대비 순간 거래량 비율,String,N,,
+,- cntr_str,체결강도,String,N,20,
+,- lpmmcm_nm_1,K.O 접근도,String,N,20,
+,- stex_tp,거래소구분,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""M04020000"",
+    ""tic_scope"": ""1""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""gold_bid"": [
+        {
+            ""cntr_pric"": ""+152560"",
+            ""pred_pre"": ""+880"",
+            ""flu_rt"": ""+0.58"",
+            ""trde_qty"": ""16454"",
+            ""acc_trde_prica"": """",
+            ""cntr_trde_qty"": ""124"",
+            ""tm"": ""090900"",
+            ""pre_sig"": ""2"",
+            ""pri_sel_bid_unit"": """",
+            ""pri_buy_bid_unit"": """",
+            ""trde_pre"": ""+5.40"",
+            ""trde_tern_rt"": ""+0.04"",
+            ""cntr_str"": """",
+            ""lpmmcm_nm_1"": """",
+            ""stex_tp"": """"
+        },
+        {
+            ""cntr_pric"": ""+152550"",
+            ""pred_pre"": ""+870"",
+            ""flu_rt"": ""+0.57"",
+            ""trde_qty"": ""16330"",
+            ""acc_trde_prica"": """",
+            ""cntr_trde_qty"": ""6704"",
+            ""tm"": ""090800"",
+            ""pre_sig"": ""2"",
+            ""pri_sel_bid_unit"": """",
+            ""pri_buy_bid_unit"": """",
+            ""trde_pre"": ""+5.36"",
+            ""trde_tern_rt"": ""+2.20"",
+            ""cntr_str"": """",
+            ""lpmmcm_nm_1"": """",
+            ""stex_tp"": """"
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

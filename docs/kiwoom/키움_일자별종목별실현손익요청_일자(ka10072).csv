@@ -1,0 +1,88 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 계좌 > 일자별종목별실현손익요청_일자(ka10072),,,,
+API 명,,일자별종목별실현손익요청_일자,,,,
+API ID,,ka10072,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/acnt,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,N,6,
+,strt_dt,시작일자,String,Y,8,YYYYMMDD
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,dt_stk_div_rlzt_pl,일자별종목별실현손익,LIST,N,,
+,- stk_nm,종목명,String,N,40,
+,- cntr_qty,체결량,String,N,20,
+,- buy_uv,매입단가,String,N,20,
+,- cntr_pric,체결가,String,N,20,
+,- tdy_sel_pl,당일매도손익,String,N,20,
+,- pl_rt,손익율,String,N,20,
+,- stk_cd,종목코드,String,N,20,
+,- tdy_trde_cmsn,당일매매수수료,String,N,20,
+,- tdy_trde_tax,당일매매세금,String,N,20,
+,- wthd_alowa,인출가능금액,String,N,20,
+,- loan_dt,대출일,String,N,20,
+,- crd_tp,신용구분,String,N,20,
+,- stk_cd_1,종목코드1,String,N,20,
+,- tdy_sel_pl_1,당일매도손익1,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""005930"",
+    ""strt_dt"": ""20241128""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""dt_stk_div_rlzt_pl"": [
+        {
+            ""stk_nm"": ""삼성전자"",
+            ""cntr_qty"": ""1"",
+            ""buy_uv"": ""97602.96"",
+            ""cntr_pric"": ""158200"",
+            ""tdy_sel_pl"": ""59813.04"",
+            ""pl_rt"": ""+61.28"",
+            ""stk_cd"": ""A005930"",
+            ""tdy_trde_cmsn"": ""500"",
+            ""tdy_trde_tax"": ""284"",
+            ""wthd_alowa"": ""0"",
+            ""loan_dt"": """",
+            ""crd_tp"": ""현금잔고"",
+            ""stk_cd_1"": ""A005930"",
+            ""tdy_sel_pl_1"": ""59813.04""
+        },
+        {
+            ""stk_nm"": ""삼성전자"",
+            ""cntr_qty"": ""1"",
+            ""buy_uv"": ""97602.96"",
+            ""cntr_pric"": ""158200"",
+            ""tdy_sel_pl"": ""59813.04"",
+            ""pl_rt"": ""+61.28"",
+            ""stk_cd"": ""A005930"",
+            ""tdy_trde_cmsn"": ""500"",
+            ""tdy_trde_tax"": ""284"",
+            ""wthd_alowa"": ""0"",
+            ""loan_dt"": """",
+            ""crd_tp"": ""현금잔고"",
+            ""stk_cd_1"": ""A005930"",
+            ""tdy_sel_pl_1"": ""59813.04""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": "" 조회가 완료되었습니다.""
+}",,,,,,

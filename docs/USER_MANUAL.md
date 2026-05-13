@@ -1,13 +1,15 @@
-# 📖 KIS-Vibe-Trader 사용자 매뉴얼 (EXE 버전)
+# 📖 AI-Vibe-Trader 사용자 매뉴얼 (v2.0.260513)
 
-본 매뉴얼은 `KIS-Vibe-Trader.exe` 실행 파일을 사용하는 일반 사용자를 위한 가이드입니다. Python 설치 없이 실행 가능하며, TUI(터미널 UI)를 통해 모든 기능을 제어할 수 있습니다.
+본 매뉴얼은 `AI-Vibe-Trader.exe` 실행 파일을 사용하는 일반 사용자를 위한 가이드입니다. Python 설치 없이 실행 가능하며, TUI(터미널 UI)를 통해 모든 기능을 제어할 수 있습니다.
 
 ---
 
 ## 1. 시작하기 (Setup)
 
 ### A. 준비물
-1.  **한국투자증권(KIS) API 키**: [한국투자증권 개발자 센터](https://apiportal.koreainvestment.com/)에서 앱키와 앱시크릿을 발급받으세요. (실전/모의계좌 모두 가능)
+1.  **증권사 API 키**:
+    *   **한국투자증권(KIS)**: [한국투자증권 개발자 센터](https://apiportal.koreainvestment.com/)에서 앱키와 앱시크릿 발급.
+    *   **키움증권(Kiwoom)**: [키움증권 API 서비스](https://www.kiwoom.com/)를 통해 인증 키 및 계좌 연동.
 2.  **Google Gemini API 키**: [Google AI Studio](https://aistudio.google.com/)에서 발급받으세요. (AI 분석 기능을 위해 필수)
 3.  **Groq API 키 (선택 사항)**: [Groq Console](https://console.groq.com/)에서 발급받으세요. Gemini 장애 시 백업 모델로 사용하거나 주 모델로 설정 가능합니다.
 4.  **D2Coding 폰트 (필수 권장)**: 완벽한 TUI(터미널) 화면 출력을 위해 배포 파일에 동봉된 `D2Coding.ttf` 폰트를 시스템에 설치해 주세요.
@@ -21,14 +23,15 @@
         이후 터미널 에뮬레이터의 설정 창에서 텍스트 글꼴을 `D2Coding`으로 지정합니다.
 
 ### B. 첫 실행 및 환경 설정
-1.  `KIS-Vibe-Trader.exe`를 더블 클릭하여 실행합니다.
+1.  `AI-Vibe-Trader.exe`를 더블 클릭하여 실행합니다.
 2.  최초 실행 시 키보드의
 *   **`K`**: 🧪 모의거래 자가 진단 (드라이런/시간워프) ※ 모의투자 전용
 *   **`S`**: ⚙️ 시스템 설정 (Config/Setup)
  Mode]**로 진입합니다.
 3.  화면의 안내에 따라 다음 정보를 입력합니다:
-    *   `App Key / Secret`: 한국투자증권에서 발급받은 키.
-    *   `Account Number (CANO)`: 계좌번호 8자리.
+    *   **[브로커 선택]**: KIS 또는 Kiwoom 중 사용할 증권사를 선택합니다.
+    *   `App Key / Secret`: 선택한 증권사에서 발급받은 키.
+    *   `Account Number (CANO)`: 계좌번호 8~10자리.
     *   `Is Virtual? (y/n)`: 투자 모드 선택.
     *   `Gemini / Groq API Key`: 사용할 AI 서비스의 키를 입력합니다 (없으면 엔터로 스킵 가능).
     *   **[신규] 텔레그램 알림 설정**: 실시간 매매 및 리포트 알림을 받을 `TELEGRAM_TOKEN`과 `TELEGRAM_CHAT_ID`를 입력합니다. (상세 방법은 3장 참조)
@@ -53,7 +56,8 @@
 ## 2. 화면 구성 (Dashboard)
 
 1.  **헤더 바 (Header Bar)**: **[신규]** 시스템의 핵심 상태 정보를 한 줄에 고정하여 표시합니다.
-    *   `[AI TRADING SYSTEM ver 1.6.8]`: 현재 프로그램 버전 정보.
+    *   `[AI TRADING SYSTEM v2.0.260513]`: 현재 프로그램 버전 정보.
+    *   `[KIS]` 또는 `[KIW]`: 현재 활성화된 브로커 표시.
     *   **[디버그]**: AI 디버그 모드 활성화 시 버전 정보 옆에 `[디버그]` 태그가 표시됩니다.
 ...
 ### 데이터 동기화 및 안정성 강화 [v1.6.0]

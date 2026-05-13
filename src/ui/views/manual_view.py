@@ -37,7 +37,7 @@ def draw_manual_page():
             tw, th = 80, 24
         buf = io.StringIO()
 
-        buf.write("\033[46;37m" + align_kr(" [KIS-VIBE-TRADER SYSTEM MANUAL] ", tw, 'center') + "\033[0m\n")
+        buf.write("\033[46;37m" + align_kr(" [AI-VIBE-TRADER SYSTEM MANUAL] ", tw, 'center') + "\033[0m\n")
         
         # 탭 메뉴 바
         tabs = [

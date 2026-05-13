@@ -1,0 +1,88 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 순위정보 > 순매수거래원순위요청(ka10042),,,,
+API 명,,순매수거래원순위요청,,,,
+API ID,,ka10042,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/rkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,6,"거래소별 종목코드
+(KRX:039490,NXT:039490_NX,SOR:039490_AL)"
+,strt_dt,시작일자,String,N,8,"YYYYMMDD
+(연도4자리, 월 2자리, 일 2자리 형식)"
+,end_dt,종료일자,String,N,8,"YYYYMMDD
+(연도4자리, 월 2자리, 일 2자리 형식)"
+,qry_dt_tp,조회기간구분,String,Y,1,"0:기간으로 조회, 1:시작일자, 종료일자로 조회"
+,pot_tp,시점구분,String,Y,1,"0:당일, 1:전일"
+,dt,기간,String,N,4,"5:5일, 10:10일, 20:20일, 40:40일, 60:60일, 120:120일"
+,sort_base,정렬기준,String,Y,1,"1:종가순, 2:날짜순"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,netprps_trde_ori_rank,순매수거래원순위,LIST,N,,
+,- rank,순위,String,N,20,
+,- mmcm_cd,회원사코드,String,N,20,
+,- mmcm_nm,회원사명,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""005930"",
+    ""strt_dt"": ""20241031"",
+    ""end_dt"": ""20241107"",
+    ""qry_dt_tp"": ""0"",
+    ""pot_tp"": ""0"",
+    ""dt"": ""5"",
+    ""sort_base"": ""1""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""netprps_trde_ori_rank"": [
+        {
+            ""rank"": ""1"",
+            ""mmcm_cd"": ""36"",
+            ""mmcm_nm"": ""키움증권""
+        },
+        {
+            ""rank"": ""2"",
+            ""mmcm_cd"": ""50"",
+            ""mmcm_nm"": ""키움증권""
+        },
+        {
+            ""rank"": ""3"",
+            ""mmcm_cd"": ""45"",
+            ""mmcm_nm"": ""키움증권""
+        },
+        {
+            ""rank"": ""4"",
+            ""mmcm_cd"": ""6"",
+            ""mmcm_nm"": ""키움증권""
+        },
+        {
+            ""rank"": ""5"",
+            ""mmcm_cd"": ""64"",
+            ""mmcm_nm"": ""키움증권""
+        },
+        {
+            ""rank"": ""6"",
+            ""mmcm_cd"": ""31"",
+            ""mmcm_nm"": ""키움증권""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

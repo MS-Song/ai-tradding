@@ -1,0 +1,101 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 종목정보 > 거래원순간거래량요청(ka10052),,,,
+API 명,,거래원순간거래량요청,,,,
+API ID,,ka10052,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/stkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,mmcm_cd,회원사코드,String,Y,3,회원사 코드는 ka10102 조회
+,stk_cd,종목코드,String,N,20,"거래소별 종목코드
+(KRX:039490,NXT:039490_NX,SOR:039490_AL)"
+,mrkt_tp,시장구분,String,Y,1,"0:전체, 1:코스피, 2:코스닥, 3:종목"
+,qty_tp,수량구분,String,Y,3," 0:전체, 1:1000주, 2:2000주, 3:, 5:, 10:10000주, 30: 30000주, 50: 50000주, 100: 100000주"
+,pric_tp,가격구분,String,Y,1,"0:전체, 1:1천원 미만, 8:1천원 이상, 2:1천원 ~ 2천원, 3:2천원 ~ 5천원, 4:5천원 ~ 1만원, 5:1만원 이상"
+,stex_tp,거래소구분,String,Y,1,"1:KRX, 2:NXT 3.통합"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,trde_ori_mont_trde_qty,거래원순간거래량,LIST,N,,
+,- tm,시간,String,N,20,
+,- stk_cd,종목코드,String,N,20,
+,- stk_nm,종목명,String,N,20,
+,- trde_ori_nm,거래원명,String,N,20,
+,- tp,구분,String,N,20,
+,- mont_trde_qty,순간거래량,String,N,20,
+,- acc_netprps,누적순매수,String,N,20,
+,- cur_prc,현재가,String,N,20,
+,- pred_pre_sig,전일대비기호,String,N,20,
+,- pred_pre,전일대비,String,N,20,
+,- flu_rt,등락율,String,N,20,
+Request Example,,,,,,
+"{
+    ""mmcm_cd"": ""888"",
+    ""stk_cd"": """",
+    ""mrkt_tp"": ""0"",
+    ""qty_tp"": ""0"",
+    ""pric_tp"": ""0"",
+    ""stex_tp"": ""3""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""trde_ori_mont_trde_qty"": [
+        {
+            ""tm"": ""161437"",
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""trde_ori_nm"": ""다이와"",
+            ""tp"": ""-매도"",
+            ""mont_trde_qty"": ""-399928"",
+            ""acc_netprps"": ""-1073004"",
+            ""cur_prc"": ""+57700"",
+            ""pred_pre_sig"": ""2"",
+            ""pred_pre"": ""400"",
+            ""flu_rt"": ""+0.70""
+        },
+        {
+            ""tm"": ""161423"",
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""trde_ori_nm"": ""다이와"",
+            ""tp"": ""-매도"",
+            ""mont_trde_qty"": ""-100000"",
+            ""acc_netprps"": ""-673076"",
+            ""cur_prc"": ""+57700"",
+            ""pred_pre_sig"": ""2"",
+            ""pred_pre"": ""400"",
+            ""flu_rt"": ""+0.70""
+        },
+        {
+            ""tm"": ""161417"",
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""trde_ori_nm"": ""다이와"",
+            ""tp"": ""-매도"",
+            ""mont_trde_qty"": ""-100000"",
+            ""acc_netprps"": ""-573076"",
+            ""cur_prc"": ""+57700"",
+            ""pred_pre_sig"": ""2"",
+            ""pred_pre"": ""400"",
+            ""flu_rt"": ""+0.70""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

@@ -1,4 +1,4 @@
-# <img src="assets/logo.png" width="48" height="48" valign="middle"> KIS-Vibe-Trader
+# <img src="assets/logo.png" width="48" height="48" valign="middle"> AI-Vibe-Trader
 
 <p align="center">
   <a href="https://github.com/MS-Song/ai-tradding/actions/workflows/release.yml">
@@ -14,13 +14,13 @@
 </p>
 
 > **"단순한 매매가 아닙니다. 시장의 흐름(Vibe)을 읽는 AI 자율 트레이딩 엔진입니다."**
-> KIS-Vibe-Trader는 시니어 아키텍트의 설계 사상이 반영된 객체지향형 트레이딩 시스템으로, 시장 감성(Vibe)과 AI 분석(Gemini/Groq)을 결합하여 최적의 매매 전략을 자율적으로 도출합니다.
+> AI-Vibe-Trader는 시니어 아키텍트의 설계 사상이 반영된 객체지향형 트레이딩 시스템으로, 시장 감성(Vibe)과 AI 분석(Gemini/Groq)을 결합하여 최적의 매매 전략을 자율적으로 도출합니다.
 
 ---
 
 ## 🌌 Overview (프로젝트 소개)
 
-**KIS-Vibe-Trader**는 단순한 자동 매매 프로그램을 넘어, **시니어 아키텍트의 설계 사상**이 반영된 객체지향형 자율 트레이딩 엔진입니다. 
+**AI-Vibe-Trader**는 단순한 자동 매매 프로그램을 넘어, **시니어 아키텍트의 설계 사상**이 반영된 객체지향형 자율 트레이딩 엔진입니다. 
 
 기존의 단순 지표 기반 트레이딩에서 벗어나, 시장 전체의 감성(Vibe)을 입체적으로 분석하고 Google Gemini와 Groq의 최첨단 AI 통찰을 결합하여 **"지키는 투자"**와 **"수익 극대화"** 사이의 완벽한 균형을 추구합니다.
 
@@ -61,7 +61,7 @@
 ### 💻 실행 방법
 
 #### 1. EXE 실행 (일반 사용자)
-- [Releases](https://github.com/MS-Song/ai-tradding/releases) 페이지에서 최신 버전의 `KIS-Vibe-Trader.exe`와 `USER_MANUAL.pdf`를 다운로드하세요. 별도의 설치 없이 즉시 실행 가능합니다.
+- [Releases](https://github.com/MS-Song/ai-tradding/releases) 페이지에서 최신 버전의 `AI-Vibe-Trader.exe`와 `USER_MANUAL.pdf`를 다운로드하세요. 별도의 설치 없이 즉시 실행 가능합니다.
 
 #### 2. 소스 코드 실행 (개발자)
 ```bash

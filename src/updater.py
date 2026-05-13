@@ -61,7 +61,7 @@ def check_for_updates(current_version: str) -> dict:
             if has_update:
                 # 플랫폼에 맞는 자산 찾기
                 is_windows = platform.system() == "Windows"
-                target_asset_name = "KIS-Vibe-Trader.exe" if is_windows else "KIS-Vibe-Trader-Linux"
+                target_asset_name = "AI-Vibe-Trader.exe" if is_windows else "AI-Vibe-Trader-Linux"
                 
                 asset_url = ""
                 for asset in data.get("assets", []):

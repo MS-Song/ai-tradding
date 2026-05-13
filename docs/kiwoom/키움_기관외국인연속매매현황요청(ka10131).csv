@@ -1,0 +1,115 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 기관/외국인 > 기관외국인연속매매현황요청(ka10131),,,,
+API 명,,기관외국인연속매매현황요청,,,,
+API ID,,ka10131,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/frgnistt,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,dt,기간,String,Y,3,"1:최근일, 3:3일, 5:5일, 10:10일, 20:20일, 120:120일, 0:시작일자/종료일자로 조회"
+,strt_dt,시작일자,String,N,8,YYYYMMDD
+,end_dt,종료일자,String,N,8,YYYYMMDD
+,mrkt_tp,장구분,String,Y,3,"001:코스피, 101:코스닥"
+,netslmt_tp,순매도수구분,String,Y,1,2:순매수(고정값)
+,stk_inds_tp,종목업종구분,String,Y,1,"0:종목(주식),1:업종"
+,amt_qty_tp,금액수량구분,String,Y,1,"0:금액, 1:수량"
+,stex_tp,거래소구분,String,Y,1,"1:KRX, 2:NXT, 3:통합"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,orgn_frgnr_cont_trde_prst,기관외국인연속매매현황,LIST,N,,
+,- rank,순위,String,N,,
+,- stk_cd,종목코드,String,N,6,
+,- stk_nm,종목명,String,N,40,
+,- prid_stkpc_flu_rt,기간중주가등락률,String,N,,
+,- orgn_nettrde_amt,기관순매매금액,String,N,,
+,- orgn_nettrde_qty,기관순매매량,String,N,,
+,- orgn_cont_netprps_dys,기관계연속순매수일수,String,N,,
+,- orgn_cont_netprps_qty,기관계연속순매수량,String,N,,
+,- orgn_cont_netprps_amt,기관계연속순매수금액,String,N,,
+,- frgnr_nettrde_qty,외국인순매매량,String,N,,
+,- frgnr_nettrde_amt,외국인순매매액,String,N,,
+,- frgnr_cont_netprps_dys,외국인연속순매수일수,String,N,,
+,- frgnr_cont_netprps_qty,외국인연속순매수량,String,N,,
+,- frgnr_cont_netprps_amt,외국인연속순매수금액,String,N,,
+,- nettrde_qty,순매매량,String,N,,
+,- nettrde_amt,순매매액,String,N,,
+,- tot_cont_netprps_dys,합계연속순매수일수,String,N,,
+,- tot_cont_nettrde_qty,합계연속순매매수량,String,N,,
+,- tot_cont_netprps_amt,합계연속순매수금액,String,N,,
+Request Example,,,,,,
+"{
+    ""dt"": ""1"",
+    ""strt_dt"": """",
+    ""end_dt"": """",
+    ""mrkt_tp"": ""001"",
+    ""netslmt_tp"": ""2"",
+    ""stk_inds_tp"": ""0"",
+    ""amt_qty_tp"": ""0"",
+    ""stex_tp"": ""1""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""orgn_frgnr_cont_trde_prst"": [
+        {
+            ""rank"": ""1"",
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""prid_stkpc_flu_rt"": ""-5.80"",
+            ""orgn_nettrde_amt"": ""+48"",
+            ""orgn_nettrde_qty"": ""+173"",
+            ""orgn_cont_netprps_dys"": ""+1"",
+            ""orgn_cont_netprps_qty"": ""+173"",
+            ""orgn_cont_netprps_amt"": ""+48"",
+            ""frgnr_nettrde_qty"": ""+0"",
+            ""frgnr_nettrde_amt"": ""+0"",
+            ""frgnr_cont_netprps_dys"": ""+1"",
+            ""frgnr_cont_netprps_qty"": ""+1"",
+            ""frgnr_cont_netprps_amt"": ""+0"",
+            ""nettrde_qty"": ""+173"",
+            ""nettrde_amt"": ""+48"",
+            ""tot_cont_netprps_dys"": ""+2"",
+            ""tot_cont_nettrde_qty"": ""+174"",
+            ""tot_cont_netprps_amt"": ""+48""
+        },
+        {
+            ""rank"": ""2"",
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""prid_stkpc_flu_rt"": ""-4.21"",
+            ""orgn_nettrde_amt"": ""+41"",
+            ""orgn_nettrde_qty"": ""+159"",
+            ""orgn_cont_netprps_dys"": ""+1"",
+            ""orgn_cont_netprps_qty"": ""+159"",
+            ""orgn_cont_netprps_amt"": ""+41"",
+            ""frgnr_nettrde_qty"": ""+0"",
+            ""frgnr_nettrde_amt"": ""+0"",
+            ""frgnr_cont_netprps_dys"": ""+1"",
+            ""frgnr_cont_netprps_qty"": ""+1"",
+            ""frgnr_cont_netprps_amt"": ""+0"",
+            ""nettrde_qty"": ""+159"",
+            ""nettrde_amt"": ""+41"",
+            ""tot_cont_netprps_dys"": ""+2"",
+            ""tot_cont_nettrde_qty"": ""+160"",
+            ""tot_cont_netprps_amt"": ""+42""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

@@ -184,7 +184,9 @@ def draw_trading_logs(strategy, dm):
                 "UPDATE": "최신 버전 확인", "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 발신", "TG_RECEIVE": "텔레그램 수신",
                 "AI_ENGINE": "AI 전략 엔진", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진", 
                 "TRADE": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링",
-                "REPORT": "정기 리포트 발송"
+                "REPORT": "정기 리포트 발송",
+                "WS_KIWOOM": "실시간 웹소켓",
+                "DB_SYNC": "테마 DB 갱신"
             }
             all_workers = set(worker_desc.keys()); all_workers.update([k.upper() for k in last_times.keys()]); all_workers.update(worker_status.keys())
             

@@ -1,4 +1,4 @@
-# 🌲 KIS-Vibe-Trader Logic Tree & Checklist
+# 🌲 AI-Vibe-Trader Logic Tree & Checklist (v2.0.260513)
 
 이 문서는 시스템의 모든 기능 단위(자동/수동)를 정의하고, Docstring 기반의 표준 명세와 테스트 코드가 커버해야 할 특정 조건을 기술합니다.
 
@@ -37,6 +37,7 @@ graph TD
 
     %% [Infrastructure]
     Main --> Infra[5. 인프라 및 로깅]
+    Infra --> RateLimiter[BaseAPI: 중앙 집중식 Token Bucket Rate Limiting]
     Infra --> StateSync[DataManager: trading_state.json 실시간 동기화]
     Infra --> Logger[TradingLogManager: JSON/텍스트 로그 및 텔레그램 알림]
 ```
@@ -49,6 +50,7 @@ graph TD
 - **장세 판단**: KOSPI/KOSDAQ 지수와 DEMA(20)의 이격도를 분석하여 Bull/Bear/Defensive 판정.
 - **패닉 차단**: 글로벌 지수(NASDAQ 등) 급락 시 `is_panic=True`로 모든 신규 매수 원천 차단.
 - **현금 보호**: Vibe별 최소 현금 비중(Bear 30%, Defensive 80%) 미달 시 매수 엔진 비활성화.
+- **멀티 브로커 [v2.0]**: KIS 및 Kiwoom API 통합 지원. 중앙 집중식 Rate Limiter를 통한 API 안정성 확보.
 
 ### 🛡️ Exit Manager (Exit Strategy)
 - **가변 임계치**: Vibe와 Phase(P1~P4)를 결합하여 실시간 TP/SL 보정.
@@ -66,10 +68,11 @@ graph TD
 
 ---
 
-## 3. Test Coverage (Ver 1.6.5)
+## 3. Test Coverage (v2.0.260513)
 
 ### ✅ [T-01] 인프라 및 연결성 테스트
 - [x] **`tests/test_kis_price.py`**: KIS 시세 조회 API 응답성 및 도메인 정합성 확인.
+- [x] **`tests/test_kiwoom_api.py`**: Kiwoom REST API 인증 및 잔고 조회 확인.
 - [x] **`tests/test_naver_api.py`**: 네이버 환율 및 지수 데이터 수집 확인.
 - [x] **`tests/verify_gemini_api.py`**: 멀티 LLM(Gemini/Groq) 통신 및 모델 리스트 확인.
 
@@ -95,6 +98,6 @@ graph TD
 ---
 
 ## 5. NEXT_TASK (To-Do)
-- [ ] **추천 페이지 버그 수정**: `recommendation_view.py`에서 발생하는 텍스트 렌더링 및 인덱스 정합성 버그 해결.
-- [ ] **수급 데이터 정밀화**: 수급 사이클 가점 로직의 시계열 정밀도 향상.
+- [ ] **성능 최적화**: 멀티 브로커 동시 가동 시 자원 소모 최적화.
+- [ ] **UI 고도화**: 지수 및 종목 차트 렌더링 품질 향상.
 

@@ -75,7 +75,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             update_tag = f" \033[1;93m[🆕NEW v{dm.update_info['latest_version']} ▶U]\033[0;44m"
     else:
         update_tag = ""
-    version_text = f"[AI TRADING SYSTEM ver {VERSION_CACHE}]{mode_tag}{update_tag}"
+    # 브로커 정보 확인 (키움 또는 KIS)
+    broker_name = "키움" if "kiwoom" in strategy.api.auth.__class__.__name__.lower() else "KIS"
+    version_text = f"[AI TRADING SYSTEM ver {VERSION_CACHE}] [{broker_name}]{mode_tag}{update_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg
@@ -328,12 +330,15 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
 
         # [v1.6.3] 컬럼 폭 최적화 (가용 줄이고 BEAR/BULL 늘림) 및 가독성 개선
         # W1:총자산, W2:가용/AI, W3:주식/BEAR, W4:일일/BULL, W5:실현/리스크
-        W1, W2, W3, W4, W5 = 30, 16, 30, 30, 32
+        W1, W2, W3, W4, W5 = 30, 22, 27, 30, 29
 
         # Line 1: ASSET & COSTS
         label_asset = align_kr(" ASSET", L1)
         seed = getattr(strategy, "base_seed_money", 0)
-        if seed > 0:
+        is_v_mode = getattr(strategy.api.auth, 'is_virtual', True)
+        is_kis_broker = 'kis' in strategy.api.auth.__class__.__name__.lower()
+        use_seed = seed > 0 and is_kis_broker and is_v_mode
+        if use_seed:
             c_prof = tot_eval - seed
             c_rt = (c_prof / seed) * 100
             c_color = "\033[91m" if c_prof > 0 else "\033[94m" if c_prof < 0 else "\033[0m"

@@ -8,22 +8,24 @@ import threading
 from dotenv import load_dotenv
 
 from src.config_init import ensure_env, get_config
-from src.auth import KISAuth
-from src.api import KISAPI
-from src.strategy import VibeStrategy
 from src.utils import *
-from src.data_manager import DataManager
-from src.ui.renderer import draw_tui
-from src.ui.interaction import perform_interaction
 
 def main():
-    """KIS-Vibe-Trader의 메인 엔트리 포인트입니다.
+    """AI-Vibe-Trader의 메인 엔트리 포인트입니다.
 
     시스템 초기화(설정, 인증, API, 전략), 데이터 매니저를 통한 백그라운드 워커 구동, 
     TUI(터미널 UI) 렌더링 루프 및 사용자 키 입력 처리를 통합적으로 제어합니다.
     """
-    ensure_env(); load_dotenv(); config = get_config(); init_terminal()
-    auth = KISAuth(); api = KISAPI(auth); strategy = VibeStrategy(api, config)
+    ensure_env(); load_dotenv(override=True); config = get_config(); init_terminal()
+    
+    from src.auth import get_auth
+    from src.api import KISAPI
+    from src.strategy import VibeStrategy
+    from src.data_manager import DataManager
+    from src.ui.renderer import draw_tui
+    from src.ui.interaction import perform_interaction
+    
+    auth = get_auth(); api = KISAPI(auth); strategy = VibeStrategy(api, config)
     
     dm = DataManager(api, strategy)
     auth.on_error_message = lambda msg: dm.show_status(msg, is_error=True)

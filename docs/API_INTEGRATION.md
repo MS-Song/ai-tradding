@@ -1,6 +1,6 @@
 # 🔌 API 및 연동 규격서
 
-본 문서는 KIS-Vibe-Trader에서 사용하는 외부 API 및 연동 규격을 상세히 설명합니다.
+본 문서는 AI-Vibe-Trader에서 사용하는 외부 API 및 연동 규격을 상세히 설명합니다.
 
 ## 1. 한국투자증권 (KIS) API
 

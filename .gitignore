@@ -21,5 +21,8 @@ telegram.log
 theme_data.json
 brain/
 test_results.txt
+.token_cache*.json
 *.tmp
 *.log
+*.json.tmp
+/scratch/

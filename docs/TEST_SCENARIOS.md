@@ -1,4 +1,4 @@
-# 🧪 KIS-Vibe-Trader 통합 테스트 시나리오
+# 🧪 AI-Vibe-Trader 통합 테스트 시나리오
 
 본 문서는 `LOGIC_TREE.md`를 기반으로 시스템의 안정성과 정확성을 검증하기 위한 상세 테스트 시나리오를 정의합니다.
 
@@ -52,6 +52,8 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-F02** | 시장 상태 동기화 | 15:30 장 마감 시점 | `MarketWorker` 실행 | `is_market_open=False` 전환 및 매수 로직 중단 |
 | **TC-F03** | 사후 복기 워커 | 16:00 장 종료 후 | `RetrospectiveWorker` | 당일 매매 분석 및 `trade_retrospective.json` 생성 |
 | **TC-F04** | 상태 영속성 | 강제 종료 후 재시작 | 시스템 초기화 단계 | 이전의 `rejected_stocks`, `strategies` 로드 확인 |
+| **TC-F05** | API 속도 제한 (Rate Limit) | 초당 20회 이상 API 요청 | `BaseAPI.request` 호출 | Token Bucket에 의해 속도 제어 및 안정적 응답 수신 확인 |
+| **TC-F06** | 브로커 전환 (Multi-Broker) | KIS -> Kiwoom 설정 변경 | 시스템 재시작 | Kiwoom API 인증 및 실시간 시세 수집 확인 |
 
 ## 5. 스케줄러 및 자동 실행 사이클 테스트 (Scheduled Automation)
 사용자의 개입 없이 시간/주기에 의해 자동으로 실행되는 워커 로직을 검증합니다.

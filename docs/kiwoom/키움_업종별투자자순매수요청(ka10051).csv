@@ -1,0 +1,110 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 업종 > 업종별투자자순매수요청(ka10051),,,,
+API 명,,업종별투자자순매수요청,,,,
+API ID,,ka10051,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/sect,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,mrkt_tp,시장구분,String,Y,1,"코스피:0, 코스닥:1"
+,amt_qty_tp,금액수량구분,String,Y,1,"금액:0, 수량:1"
+,base_dt,기준일자,String,N,8,YYYYMMDD
+,stex_tp,거래소구분,String,Y,1,"1:KRX, 2:NXT, 3:통합"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,inds_netprps,업종별순매수,LIST,N,,
+,- inds_cd,업종코드,String,N,20,
+,- inds_nm,업종명,String,N,20,
+,- cur_prc,현재가,String,N,20,
+,- pre_smbol,대비부호,String,N,20,
+,- pred_pre,전일대비,String,N,20,
+,- flu_rt,등락율,String,N,20,
+,- trde_qty,거래량,String,N,20,
+,- sc_netprps,증권순매수,String,N,20,
+,- insrnc_netprps,보험순매수,String,N,20,
+,- invtrt_netprps,투신순매수,String,N,20,
+,- bank_netprps,은행순매수,String,N,20,
+,- jnsinkm_netprps,종신금순매수,String,N,20,
+,- endw_netprps,기금순매수,String,N,20,
+,- etc_corp_netprps,기타법인순매수,String,N,20,
+,- ind_netprps,개인순매수,String,N,20,
+,- frgnr_netprps,외국인순매수,String,N,20,
+,- native_trmt_frgnr_netprps,내국인대우외국인순매수,String,N,20,
+,- natn_netprps,국가순매수,String,N,20,
+,- samo_fund_netprps,사모펀드순매수,String,N,20,
+,- orgn_netprps,기관계순매수,String,N,20,
+Request Example,,,,,,
+"{
+    ""mrkt_tp"": ""0"",
+    ""amt_qty_tp"": ""0"",
+    ""base_dt"": ""20241107"",
+    ""stex_tp"": ""3""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""inds_netprps"": [
+        {
+            ""inds_cd"": ""001_AL"",
+            ""inds_nm"": ""종합(KOSPI)"",
+            ""cur_prc"": ""+265381"",
+            ""pre_smbol"": ""2"",
+            ""pred_pre"": ""+9030"",
+            ""flu_rt"": ""352"",
+            ""trde_qty"": ""1164"",
+            ""sc_netprps"": ""+255"",
+            ""insrnc_netprps"": ""+0"",
+            ""invtrt_netprps"": ""+0"",
+            ""bank_netprps"": ""+0"",
+            ""jnsinkm_netprps"": ""+0"",
+            ""endw_netprps"": ""+0"",
+            ""etc_corp_netprps"": ""+0"",
+            ""ind_netprps"": ""-0"",
+            ""frgnr_netprps"": ""-622"",
+            ""native_trmt_frgnr_netprps"": ""+4"",
+            ""natn_netprps"": ""+0"",
+            ""samo_fund_netprps"": ""+1"",
+            ""orgn_netprps"": ""+601""
+        },
+        {
+            ""inds_cd"": ""002_AL"",
+            ""inds_nm"": ""대형주"",
+            ""cur_prc"": ""+265964"",
+            ""pre_smbol"": ""2"",
+            ""pred_pre"": ""+10690"",
+            ""flu_rt"": ""419"",
+            ""trde_qty"": ""1145"",
+            ""sc_netprps"": ""+255"",
+            ""insrnc_netprps"": ""+0"",
+            ""invtrt_netprps"": ""+0"",
+            ""bank_netprps"": ""+0"",
+            ""jnsinkm_netprps"": ""+0"",
+            ""endw_netprps"": ""+0"",
+            ""etc_corp_netprps"": ""+0"",
+            ""ind_netprps"": ""+16"",
+            ""frgnr_netprps"": ""-622"",
+            ""native_trmt_frgnr_netprps"": ""+4"",
+            ""natn_netprps"": ""+0"",
+            ""samo_fund_netprps"": ""+1"",
+            ""orgn_netprps"": ""+602""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

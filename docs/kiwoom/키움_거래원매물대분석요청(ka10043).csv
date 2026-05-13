@@ -1,0 +1,110 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 종목정보 > 거래원매물대분석요청(ka10043),,,,
+API 명,,거래원매물대분석요청,,,,
+API ID,,ka10043,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/stkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,20,"거래소별 종목코드
+(KRX:039490,NXT:039490_NX,SOR:039490_AL)"
+,strt_dt,시작일자,String,Y,8,YYYYMMDD
+,end_dt,종료일자,String,Y,8,YYYYMMDD
+,qry_dt_tp,조회기간구분,String,Y,1,"0:기간으로 조회, 1:시작일자, 종료일자로 조회"
+,pot_tp,시점구분,String,Y,1,"0:당일, 1:전일"
+,dt,기간,String,Y,4,"5:5일, 10:10일, 20:20일, 40:40일, 60:60일, 120:120일"
+,sort_base,정렬기준,String,Y,1,"1:종가순, 2:날짜순"
+,mmcm_cd,회원사코드,String,Y,3,회원사 코드는 ka10102 조회
+,stex_tp,거래소구분,String,Y,1,"1:KRX, 2:NXT 3.통합"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,trde_ori_prps_anly,거래원매물대분석,LIST,N,,
+,- dt,일자,String,N,20,
+,- close_pric,종가,String,N,20,
+,- pre_sig,대비기호,String,N,20,
+,- pred_pre,전일대비,String,N,20,
+,- sel_qty,매도량,String,N,20,
+,- buy_qty,매수량,String,N,20,
+,- netprps_qty,순매수수량,String,N,20,
+,- trde_qty_sum,거래량합,String,N,20,
+,- trde_wght,거래비중,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""005930"",
+    ""strt_dt"": ""20241031"",
+    ""end_dt"": ""20241107"",
+    ""qry_dt_tp"": ""0"",
+    ""pot_tp"": ""0"",
+    ""dt"": ""5"",
+    ""sort_base"": ""1"",
+    ""mmcm_cd"": ""36"",
+    ""stex_tp"": ""3""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""trde_ori_prps_anly"": [
+        {
+            ""dt"": ""20241105"",
+            ""close_pric"": ""135300"",
+            ""pre_sig"": ""2"",
+            ""pred_pre"": ""+1700"",
+            ""sel_qty"": ""43"",
+            ""buy_qty"": ""1090"",
+            ""netprps_qty"": ""1047"",
+            ""trde_qty_sum"": ""1133"",
+            ""trde_wght"": ""+1317.44""
+        },
+        {
+            ""dt"": ""20241107"",
+            ""close_pric"": ""133600"",
+            ""pre_sig"": ""3"",
+            ""pred_pre"": ""0"",
+            ""sel_qty"": ""0"",
+            ""buy_qty"": ""0"",
+            ""netprps_qty"": ""0"",
+            ""trde_qty_sum"": ""0"",
+            ""trde_wght"": ""0.00""
+        },
+        {
+            ""dt"": ""20241106"",
+            ""close_pric"": ""132500"",
+            ""pre_sig"": ""5"",
+            ""pred_pre"": ""--1100"",
+            ""sel_qty"": ""117"",
+            ""buy_qty"": ""3459"",
+            ""netprps_qty"": ""3342"",
+            ""trde_qty_sum"": ""3576"",
+            ""trde_wght"": ""+4158.14""
+        },
+        {
+            ""dt"": ""20241101"",
+            ""close_pric"": ""65100"",
+            ""pre_sig"": ""5"",
+            ""pred_pre"": ""--68500"",
+            ""sel_qty"": ""3728"",
+            ""buy_qty"": ""12680"",
+            ""netprps_qty"": ""8952"",
+            ""trde_qty_sum"": ""16408"",
+            ""trde_wght"": ""+19079.07""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

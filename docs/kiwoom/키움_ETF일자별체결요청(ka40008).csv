@@ -1,0 +1,102 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > ETF > ETF일자별체결요청(ka40008),,,,
+API 명,,ETF일자별체결요청,,,,
+API ID,,ka40008,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/etf,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,6,
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,cntr_tm,체결시간,String,N,20,
+,cur_prc,현재가,String,N,20,
+,pre_sig,대비기호,String,N,20,
+,pred_pre,전일대비,String,N,20,
+,trde_qty,거래량,String,N,20,
+,etfnetprps_qty_array,ETF순매수수량배열,LIST,N,,
+,- dt,일자,String,N,20,
+,- cur_prc_n,현재가n,String,N,20,
+,- pre_sig_n,대비기호n,String,N,20,
+,- pred_pre_n,전일대비n,String,N,20,
+,- acc_trde_qty,누적거래량,String,N,20,
+,- for_netprps_qty,외인순매수수량,String,N,20,
+,- orgn_netprps_qty,기관순매수수량,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""069500""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""cntr_tm"": ""130747"",
+    ""cur_prc"": ""+4900"",
+    ""pre_sig"": ""2"",
+    ""pred_pre"": ""+450"",
+    ""trde_qty"": ""1"",
+    ""etfnetprps_qty_array"": [
+        {
+            ""dt"": ""20241125"",
+            ""cur_prc_n"": ""+4900"",
+            ""pre_sig_n"": ""2"",
+            ""pred_pre_n"": ""+450"",
+            ""acc_trde_qty"": ""1"",
+            ""for_netprps_qty"": ""0"",
+            ""orgn_netprps_qty"": ""0""
+        },
+        {
+            ""dt"": ""20241122"",
+            ""cur_prc_n"": ""-4450"",
+            ""pre_sig_n"": ""5"",
+            ""pred_pre_n"": ""-60"",
+            ""acc_trde_qty"": ""46"",
+            ""for_netprps_qty"": ""--10558895"",
+            ""orgn_netprps_qty"": ""0""
+        },
+        {
+            ""dt"": ""20241121"",
+            ""cur_prc_n"": ""4510"",
+            ""pre_sig_n"": ""3"",
+            ""pred_pre_n"": ""0"",
+            ""acc_trde_qty"": ""0"",
+            ""for_netprps_qty"": ""--8894146"",
+            ""orgn_netprps_qty"": ""0""
+        },
+        {
+            ""dt"": ""20241120"",
+            ""cur_prc_n"": ""-4510"",
+            ""pre_sig_n"": ""5"",
+            ""pred_pre_n"": ""-160"",
+            ""acc_trde_qty"": ""0"",
+            ""for_netprps_qty"": ""--3073507"",
+            ""orgn_netprps_qty"": ""0""
+        },
+        {
+            ""dt"": ""20241119"",
+            ""cur_prc_n"": ""+4670"",
+            ""pre_sig_n"": ""2"",
+            ""pred_pre_n"": ""+160"",
+            ""acc_trde_qty"": ""94"",
+            ""for_netprps_qty"": ""--2902200"",
+            ""orgn_netprps_qty"": ""0""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

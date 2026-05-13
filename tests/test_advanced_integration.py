@@ -116,8 +116,8 @@ class MockStrategy(ExecutionMixin):
         return False, ""
     def _is_emergency_sl(self, rt, sl, panic, vibe, phase, recent_buy): return False, ""
     def _async_update_ma_cache(self, code): pass
-    def get_replacement_target(self, code, name, score, holdings): return True, "OLD", "Better"
-    def confirm_buy_decision(self, code, name, score): return True, "OK"
+    def get_replacement_target(self, code, name, score, holdings): return True, "OLD", "Better", 0
+    def confirm_buy_decision(self, code, name, score): return True, "OK", 0
 
 @pytest.fixture
 def strategy():
@@ -218,16 +218,18 @@ class TestAIDecisionScenarios:
     def test_tc_i02_overbought_protection(self, strategy):
         """[TC-I02] 상투 매수 방어 로직"""
         strategy.indicator_eng.get_dual_timeframe_analysis.return_value = {"signal":"OVERBOUGHT"}
-        is_ok, _ = strategy.confirm_buy_decision("005930", "S", 95)
+        is_ok, _, _ = strategy.confirm_buy_decision("005930", "S", 95)
         assert is_ok is True
 
-    def test_tc_i03_replacement_entry(self, strategy):
+    @patch('src.strategy.vibe.execution.time.time')
+    def test_tc_i03_replacement_entry(self, mock_time, strategy):
         """[TC-I03] 종목 교체 진입"""
         strategy.get_max_stock_count = MagicMock(return_value=1)
         holdings = [{"pdno":"OLD", "hldg_qty":10, "prpr":10000, "prdt_name":"O", "pchs_avg_pric":9000, "pchs_amt": 100000}]
         strategy.ai_recommendations = [{"code":"NEW", "name":"N", "score":115.0, "price":5000, "rate": 1.0}]
         strategy.indicator_eng.get_dual_timeframe_analysis.return_value = {"signal":"BUY_ZONE"}
         cur_t = strategy.mock_tester.get_now().timestamp()
+        mock_time.return_value = cur_t
         strategy.last_buy_times["OLD"] = cur_t - 3600
         strategy.api.order_market.reset_mock()
         strategy.run_cycle(holdings=holdings)
@@ -238,10 +240,10 @@ class TestAIDecisionScenarios:
         strategy.api.get_naver_stock_detail.return_value = {"price": 0, "rate": 0}
         def real_confirm(code, name, score):
             detail = strategy.api.get_naver_stock_detail(code)
-            if float(detail.get('price', 0)) == 0: return False, "0원"
-            return True, "OK"
+            if float(detail.get('price', 0)) == 0: return False, "0원", 60
+            return True, "OK", 0
         strategy.confirm_buy_decision = real_confirm
-        is_ok, reason = strategy.confirm_buy_decision("005930", "S", 90)
+        is_ok, reason, _ = strategy.confirm_buy_decision("005930", "S", 90)
         assert is_ok is False and "0원" in reason
 
 class TestThresholdScenarios:

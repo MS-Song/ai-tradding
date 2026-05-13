@@ -17,9 +17,9 @@ if exist .venv (
 )
 
 REM 3. Run PyInstaller
-echo [*] Packaging KIS-Vibe-Trader into a single EXE...
+echo [*] Packaging AI-Vibe-Trader into a single EXE...
 %PYINSTALLER_EXE% --onefile --clean ^
-    --name KIS-Vibe-Trader ^
+    --name AI-Vibe-Trader ^
     --exclude-module tkinter ^
     --exclude-module tcl ^
     --exclude-module tk ^
@@ -54,7 +54,7 @@ if %ERRORLEVEL% neq 0 (
 REM 4. Move output
 echo [*] Moving executable to target folder...
 if not exist target mkdir target
-move /y dist\KIS-Vibe-Trader.exe target\
+move /y dist\AI-Vibe-Trader.exe target\
 copy /y fonts\D2Coding.ttf target\
 
 REM 5. Generate PDF
@@ -69,6 +69,6 @@ REM 6. Cleanup
 echo [*] Cleaning up...
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
-if exist KIS-Vibe-Trader.spec del /f /q KIS-Vibe-Trader.spec
+if exist AI-Vibe-Trader.spec del /f /q AI-Vibe-Trader.spec
 
 echo [V] Build Complete! Check target directory.

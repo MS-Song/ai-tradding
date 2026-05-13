@@ -1,0 +1,96 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 순위정보 > 외인기간별매매상위요청(ka10034),,,,
+API 명,,외인기간별매매상위요청,,,,
+API ID,,ka10034,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/rkinfo,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,mrkt_tp,시장구분,String,Y,3,"000:전체, 001:코스피, 101:코스닥"
+,trde_tp,매매구분,String,Y,1,"1:순매도, 2:순매수, 3:순매매"
+,dt,기간,String,Y,2,"0:당일, 1:전일, 5:5일, 10;10일, 20:20일, 60:60일"
+,stex_tp,거래소구분,String,Y,1,"1:KRX, 2:NXT, 3:통합"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,for_dt_trde_upper,외인기간별매매상위,LIST,N,,
+,- rank,순위,String,N,20,
+,- stk_cd,종목코드,String,N,20,
+,- stk_nm,종목명,String,N,40,
+,- cur_prc,현재가,String,N,20,
+,- pred_pre_sig,전일대비기호,String,N,20,
+,- pred_pre,전일대비,String,N,20,
+,- sel_bid,매도호가,String,N,20,
+,- buy_bid,매수호가,String,N,20,
+,- trde_qty,거래량,String,N,20,
+,- netprps_qty,순매수량,String,N,20,
+,- gain_pos_stkcnt,취득가능주식수,String,N,20,
+Request Example,,,,,,
+"{
+    ""mrkt_tp"": ""001"",
+    ""trde_tp"": ""2"",
+    ""dt"": ""0"",
+    ""stex_tp"": ""1""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""for_dt_trde_upper"": [
+        {
+            ""rank"": ""1"",
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""+74800"",
+            ""pred_pre_sig"": ""1"",
+            ""pred_pre"": ""+17200"",
+            ""sel_bid"": ""0"",
+            ""buy_bid"": ""+74800"",
+            ""trde_qty"": ""435771"",
+            ""netprps_qty"": ""+290232191"",
+            ""gain_pos_stkcnt"": ""2548278006""
+        },
+        {
+            ""rank"": ""2"",
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""-183500"",
+            ""pred_pre_sig"": ""5"",
+            ""pred_pre"": ""-900"",
+            ""sel_bid"": ""+184900"",
+            ""buy_bid"": ""0"",
+            ""trde_qty"": ""135"",
+            ""netprps_qty"": ""+167189864"",
+            ""gain_pos_stkcnt"": ""0""
+        },
+        {
+            ""rank"": ""3"",
+            ""stk_cd"": ""005930"",
+            ""stk_nm"": ""삼성전자"",
+            ""cur_prc"": ""4115"",
+            ""pred_pre_sig"": ""3"",
+            ""pred_pre"": ""0"",
+            ""sel_bid"": ""0"",
+            ""buy_bid"": ""0"",
+            ""trde_qty"": ""0"",
+            ""netprps_qty"": ""+59255646"",
+            ""gain_pos_stkcnt"": ""430439234""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

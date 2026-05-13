@@ -1,0 +1,71 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 계좌 > 미체결 분할주문 상세(ka10088),,,,
+API 명,,미체결 분할주문 상세,,,,
+API ID,,ka10088,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/acnt,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,ord_no,주문번호,String,Y,20,
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,osop,미체결분할주문리스트,LIST,N,,
+,- stk_cd,종목코드,String,N,20,
+,- stk_nm,종목명,String,N,40,
+,- ord_no,주문번호,String,N,20,
+,- ord_qty,주문수량,String,N,20,
+,- ord_pric,주문가격,String,N,20,
+,- osop_qty,미체결수량,String,N,20,
+,- io_tp_nm,주문구분,String,N,20,
+,- trde_tp,매매구분,String,N,20,
+,- sell_tp,매도/수 구분,String,N,20,
+,- cntr_qty,체결량,String,N,20,
+,- ord_stt,주문상태,String,N,20,
+,- cur_prc,현재가,String,N,20,
+,- stex_tp,거래소구분,String,N,20,"0 : 통합, 1 : KRX, 2 : NXT"
+,- stex_tp_txt,거래소구분텍스트,String,N,20,"통합,KRX,NXT"
+Request Example,,,,,,
+"{
+    ""ord_no"": ""8""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""osop"": [
+        {
+            ""stk_cd"": ""005930"",
+            ""acnt_no"": ""1234567890"",
+            ""stk_nm"": ""삼성전자"",
+            ""ord_no"": ""0000008"",
+            ""ord_qty"": ""1"",
+            ""ord_pric"": ""5150"",
+            ""osop_qty"": ""1"",
+            ""io_tp_nm"": ""+매수정정"",
+            ""trde_tp"": ""보통"",
+            ""sell_tp"": ""2"",
+            ""cntr_qty"": ""0"",
+            ""ord_stt"": ""접수"",
+            ""cur_prc"": ""5250"",
+            ""stex_tp"": ""1"",
+            ""stex_tp_txt"": ""S-KRX""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": "" 조회가 완료되었습니다.""
+}",,,,,,

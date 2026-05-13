@@ -179,3 +179,102 @@ class KISAuth:
             "tr_id": "",
             "custtype": "P"
         }
+
+class KiwoomAuth:
+    """키움증권 REST API 인증 및 토큰 관리를 담당하는 클래스."""
+    def __init__(self, is_virtual=None):
+        self.appkey = os.getenv("KIWOOM_APPKEY")
+        self.secret = os.getenv("KIWOOM_SECRET")
+        self.account = os.getenv("KIWOOM_ACCOUNT")
+        
+        if is_virtual is None:
+            env_val = os.getenv("KIWOOM_IS_VIRTUAL", "TRUE").upper()
+            self.is_virtual = (env_val != "FALSE")
+        else:
+            self.is_virtual = is_virtual
+        
+        self.domain = (
+            "https://mockapi.kiwoom.com" 
+            if self.is_virtual else 
+            "https://api.kiwoom.com"
+        )
+        self.ws_domain = (
+            "wss://mockapi.kiwoom.com:10000"
+            if self.is_virtual else
+            "wss://api.kiwoom.com:10000"
+        )
+        
+        self.cache_file = ".token_cache_kiwoom.json"
+        self.access_token = None
+        self.token_issued_at = 0
+        self.token_expiry_sec = 43200
+        self._lock = threading.Lock()
+
+    def _load_token_cache(self):
+        if not os.path.exists(self.cache_file): return False
+        try:
+            with open(self.cache_file, "r") as f:
+                cache = json.load(f)
+                if cache.get("is_virtual") == self.is_virtual:
+                    self.access_token = cache.get("access_token")
+                    self.token_issued_at = cache.get("token_issued_at", 0)
+                    return True
+        except: pass
+        return False
+
+    def _save_token_cache(self):
+        try:
+            cache = {
+                "access_token": self.access_token,
+                "token_issued_at": self.token_issued_at,
+                "is_virtual": self.is_virtual
+            }
+            with open(self.cache_file, "w") as f: json.dump(cache, f)
+        except Exception as e:
+            logger.error(f"키움 토큰 캐시 저장 실패: {e}")
+
+    def is_token_valid(self):
+        if not self.access_token: self._load_token_cache()
+        if not self.access_token: return False
+        elapsed = time.time() - self.token_issued_at
+        return elapsed < self.token_expiry_sec
+
+    def generate_token(self):
+        if self.is_token_valid(): return True
+        with self._lock:
+            if self._load_token_cache() and self.is_token_valid(): return True
+            url = f"{self.domain}/oauth2/token"
+            headers = {"content-type": "application/json"}
+            body = {"grant_type": "client_credentials", "appkey": self.appkey, "secretkey": self.secret}
+            try:
+                res = requests.post(url, headers=headers, json=body, timeout=10)
+                if res.status_code != 200:
+                    logger.error(f"❌ 키움 토큰 발급 실패: {res.text}")
+                    return False
+                data = res.json()
+                self.access_token = data.get("token")
+                self.token_issued_at = time.time()
+                if not self.access_token: return False
+                self._save_token_cache()
+                logger.info("✅ 키움 API 접근 토큰 발급 완료")
+                return True
+            except Exception as e:
+                logger.error(f"❌ 키움 토큰 발급 예외: {e}")
+                return False
+
+    def get_auth_headers(self):
+        if not self.is_token_valid(): self.generate_token()
+        return {
+            "content-type": "application/json;charset=UTF-8",
+            "authorization": f"Bearer {self.access_token}",
+            "appkey": self.appkey,
+            "appsecret": self.secret
+        }
+
+def get_auth():
+    """현재 BROKER_TYPE 설정에 맞는 인증 객체를 반환합니다."""
+    broker_type = os.getenv("BROKER_TYPE", "KIS").upper()
+    if broker_type == "KIWOOM":
+        return KiwoomAuth()
+    return KISAuth()
+

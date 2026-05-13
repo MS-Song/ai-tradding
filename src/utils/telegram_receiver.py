@@ -132,6 +132,9 @@ class TelegramCommandListener:
             holdings = getattr(self.dm.state, "holdings", [])
             dema = getattr(self.dm.state, "dema_info", {})
 
+            broker_type = os.getenv("BROKER_TYPE", "KIS").upper()
+            broker_name = "키움증권 (Kiwoom)" if broker_type == "KIWOOM" else "한국투자증권 (KIS)"
+
             # 지수 정보 추출
             idx_str = ""
             for idx_name in ["KOSPI", "KOSDAQ"]:
@@ -174,6 +177,7 @@ class TelegramCommandListener:
             msg = (
                 f"📊 <b>현재 시스템 상태</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🏛️ <b>증권사</b>: <code>[{broker_type}] {broker_name}</code>\n"
                 f"🌍 <b>시장 VIBE</b>: <code>{vibe}</code>{idx_str}\n"
                 f"💰 <b>총 자산</b>: {int(asset.get('total_asset', 0)):,}원\n"
                 f"{pnl_emoji} <b>당일 손익</b>: {int(pnl_amt):+,}원 ({pnl_rt:+.2f}%)\n"

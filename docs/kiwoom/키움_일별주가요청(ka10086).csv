@@ -1,0 +1,115 @@
+◀ API 리스트 이동,Unnamed: 1,Unnamed: 2,Unnamed: 3,Unnamed: 4,Unnamed: 5,Unnamed: 6
+키움 REST API,,,,,,
+API 정보,,,,,,
+메뉴 위치,,국내주식 > 시세 > 일별주가요청(ka10086),,,,
+API 명,,일별주가요청,,,,
+API ID,,ka10086,,,,
+기본정보,,,,,,
+Method,,POST,,,,
+운영 도메인,,https://api.kiwoom.com,,,,
+모의투자 도메인,,https://mockapi.kiwoom.com(KRX만 지원가능),,,,
+URL,,/api/dostk/mrkcond,,,,
+Format,,JSON,,,,
+Content-Type,,application/json;charset=UTF-8,,,,
+개요,,,,,,
+[ 주의 ]  외국인순매수 데이터는 거래소로부터 금액데이터가 제공되지 않고 수량으로만 조회됩니다.,,,,,,
+Request,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,authorization,접근토큰,String,Y,1000,"토큰 지정시 토큰타입(""Bearer"") 붙혀서 호출 
+ 예) Bearer Egicyx..."
+,cont-yn,연속조회여부,String,N,1,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 cont-yn값 세팅
+,next-key,연속조회키,String,N,50,응답 Header의 연속조회여부값이 Y일 경우 다음데이터 요청시 응답 Header의 next-key값 세팅
+Body,stk_cd,종목코드,String,Y,20,"거래소별 종목코드
+(KRX:039490,NXT:039490_NX,SOR:039490_AL)"
+,qry_dt,조회일자,String,Y,8,YYYYMMDD
+,indc_tp,표시구분,String,Y,1,"0:수량, 1:금액(백만원)"
+Response,,,,,,
+구분,Element,한글명,Type,Required,Length,Description
+Header,api-id,TR명,String,Y,10,
+,cont-yn,연속조회여부,String,N,1,다음 데이터가 있을시 Y값 전달
+,next-key,연속조회키,String,N,50,다음 데이터가 있을시 다음 키값 전달
+Body,daly_stkpc,일별주가,LIST,N,,
+,- date,날짜,String,N,20,
+,- open_pric,시가,String,N,20,
+,- high_pric,고가,String,N,20,
+,- low_pric,저가,String,N,20,
+,- close_pric,종가,String,N,20,
+,- pred_rt,전일비,String,N,20,
+,- flu_rt,등락률,String,N,20,
+,- trde_qty,거래량,String,N,20,
+,- amt_mn,금액(백만),String,N,20,
+,- crd_rt,신용비,String,N,20,
+,- ind,개인,String,N,20,
+,- orgn,기관,String,N,20,
+,- for_qty,외인수량,String,N,20,
+,- frgn,외국계,String,N,20,
+,- prm,프로그램,String,N,20,
+,- for_rt,외인비,String,N,20,
+,- for_poss,외인보유,String,N,20,
+,- for_wght,외인비중,String,N,20,
+,- for_netprps,외인순매수,String,N,20,
+,- orgn_netprps,기관순매수,String,N,20,
+,- ind_netprps,개인순매수,String,N,20,
+,- crd_remn_rt,신용잔고율,String,N,20,
+Request Example,,,,,,
+"{
+    ""stk_cd"": ""005930"",
+    ""qry_dt"": ""20241125"",
+    ""indc_tp"": ""0""
+}",,,,,,
+Response Example,,,,,,
+"{
+    ""daly_stkpc"": [
+        {
+            ""date"": ""20241125"",
+            ""open_pric"": ""+78800"",
+            ""high_pric"": ""+101100"",
+            ""low_pric"": ""-54500"",
+            ""close_pric"": ""-55000"",
+            ""pred_rt"": ""-22800"",
+            ""flu_rt"": ""-29.31"",
+            ""trde_qty"": ""20278"",
+            ""amt_mn"": ""1179"",
+            ""crd_rt"": ""0.00"",
+            ""ind"": ""--714"",
+            ""orgn"": ""+693"",
+            ""for_qty"": ""--266783"",
+            ""frgn"": ""0"",
+            ""prm"": ""0"",
+            ""for_rt"": ""+51.56"",
+            ""for_poss"": ""+51.56"",
+            ""for_wght"": ""+51.56"",
+            ""for_netprps"": ""--266783"",
+            ""orgn_netprps"": ""+693"",
+            ""ind_netprps"": ""--714"",
+            ""crd_remn_rt"": ""0.00""
+        },
+        {
+            ""date"": ""20241122"",
+            ""open_pric"": ""-54500"",
+            ""high_pric"": ""77800"",
+            ""low_pric"": ""-54500"",
+            ""close_pric"": ""77800"",
+            ""pred_rt"": ""0"",
+            ""flu_rt"": ""0.00"",
+            ""trde_qty"": ""209653"",
+            ""amt_mn"": ""11447"",
+            ""crd_rt"": ""0.00"",
+            ""ind"": ""--196415"",
+            ""orgn"": ""+196104"",
+            ""for_qty"": ""--2965929"",
+            ""frgn"": ""0"",
+            ""prm"": ""--6"",
+            ""for_rt"": ""+51.56"",
+            ""for_poss"": ""+51.56"",
+            ""for_wght"": ""+51.56"",
+            ""for_netprps"": ""--2965929"",
+            ""orgn_netprps"": ""+196104"",
+            ""ind_netprps"": ""--196415"",
+            ""crd_remn_rt"": ""0.00""
+        }
+    ],
+    ""return_code"": 0,
+    ""return_msg"": ""정상적으로 처리되었습니다""
+}",,,,,,

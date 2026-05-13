@@ -90,7 +90,7 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
         from src.ui.renderer import draw_tui, draw_manual_page
         from src.utils import get_key_immediate, restore_terminal_settings, exit_alt_screen, enter_alt_screen, set_terminal_raw, flush_input, get_market_name
         from src.config_init import ensure_env, get_config
-        from src.auth import KISAuth
+        from src.auth import get_auth
         from src.theme_engine import get_cached_themes
         from src.strategy import PRESET_STRATEGIES
         from dotenv import load_dotenv
@@ -188,9 +188,19 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                 time.sleep(0.5)
                 restore_terminal_settings(); exit_alt_screen()
                 os.system('cls' if os.name == 'nt' else 'clear')
-                print("\n" + "="*60 + "\n ⚙️  KIS-Vibe-Trader 환경 설정 모드\n" + "="*60); flush_input()
+                print("\n" + "="*60 + "\n ⚙️  AI-Vibe-Trader 환경 설정 모드\n" + "="*60); flush_input()
                 ensure_env(force=True); load_dotenv(override=True); config = get_config()
-                new_auth = KISAuth(); api.auth = new_auth; api.domain = new_auth.domain; api.clear_cache(); strategy.api = api
+                new_auth = get_auth()
+                
+                # 증권사가 변경되었을 경우 클래스 상속 구조가 바뀌어야 하므로 시스템 전체 재시작
+                if new_auth.__class__.__name__ != api.auth.__class__.__name__:
+                    print("\n" + align_kr(" ⚠️ 증권사 설정이 변경되어 시스템을 재시작합니다... ", tw, 'center'))
+                    time.sleep(2)
+                    restore_terminal_settings()
+                    exit_alt_screen()
+                    os.execl(sys.executable, sys.executable, *sys.argv)
+                
+                api.auth = new_auth; api.domain = new_auth.domain; api.clear_cache(); strategy.api = api
                 strategy.reload_config(config)
                 enter_alt_screen(); set_terminal_raw(); dm.last_size = (0, 0)
                 dm.set_busy("데이터 동기화 중...")
@@ -257,7 +267,7 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                         import platform
                         
                         is_windows = platform.system() == "Windows"
-                        new_bin = "KIS-Vibe-Trader_new.exe" if is_windows else "KIS-Vibe-Trader-Linux_new"
+                        new_bin = "AI-Vibe-Trader_new.exe" if is_windows else "AI-Vibe-Trader-Linux_new"
                         
                         def prog_cb(d, t):
                             dm.set_busy(f"다운로드 중 ({d/t*100:.1f}%)", "GLOBAL")
@@ -458,8 +468,10 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                         command_queue.put((task_single, (res_strat,), {}))
 
     except Exception as e:
+        import traceback
         from src.logger import log_error
-        log_error(f"Interaction Error: {e}"); dm.show_status(f"오류: {e}", True)
+        log_error(f"Interaction Error: {e}\n{traceback.format_exc()}")
+        dm.show_status(f"오류: {e}", True)
     finally:
         sys.stdout.write("\033[7;1H\033[K\033[8;1H\033[K"); sys.stdout.flush(); set_terminal_raw(); flush_input()
 
