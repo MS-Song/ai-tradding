@@ -93,9 +93,14 @@ class VibeAlphaEngine:
             # 상세 데이터 수집 (캐시 활용)
             detail = self.api.get_naver_stock_detail(code)
             
-            # [필터] 시총 1000억 미만 및 ETF 제외 (사용자 요청)
+            # [필터] 시총 1000억 미만 및 ETF/ETN 제외 (사용자 요청)
             mkt_cap = safe_cast_float(detail.get('market_cap'))
-            is_etf = any(ex in item['name'].upper() for x in ["ETF", "KODEX", "TIGER", "KBSTAR", "ACE", "RISE", "SOL", "HANARO", "KOSEF", "ARIRANG", "WOORI", "PLUS"] if (ex:=x) in item['name'].upper())
+            ETF_KEYWORDS = [
+                "KODEX", "TIGER", "ACE", "KBSTAR", "SOL", "ARIRANG", "HANARO", "KOSEF", 
+                "KINDEX", "WOORI", "TREX", "POWER", "Focus", "SMART", "TRUE", "GURUM",
+                "레버리지", "인버스", "2X", "선물", "TOP10", "ETF", "ETN", "RISE", "PLUS"
+            ]
+            is_etf = any(kw in item['name'].upper() for kw in ETF_KEYWORDS)
             
             if is_etf:
                 with lock:

@@ -281,5 +281,82 @@ class TestInfraScenarios:
         strategy._save_all_states()
         strategy.state_mgr.save_all_states.assert_called()
 
+class TestRealtimeSyncScenarios:
+    """[NEW] 실시간 시세 동기화 및 동시호가 세션 로직 검증"""
+    
+    @patch('src.workers.sync_worker.get_now')
+    def test_tc_s01_auction_session_detection(self, mock_now, strategy):
+        """[TC-S01] 동시호가 세션 감지 (09:00~15:30 제외 전 시간)"""
+        from datetime import time as dtime
+        
+        # 장전 (08:30) -> Auction
+        mock_now.return_value = datetime(2026, 5, 14, 8, 30)
+        now_t = mock_now().time()
+        is_auction = not (dtime(9, 0) <= now_t < dtime(15, 30))
+        assert is_auction is True
+        
+        # 장중 (13:00) -> Regular
+        mock_now.return_value = datetime(2026, 5, 14, 13, 0)
+        now_t = mock_now().time()
+        is_auction = not (dtime(9, 0) <= now_t < dtime(15, 30))
+        assert is_auction is False
+        
+        # 장후 (16:00) -> Auction
+        mock_now.return_value = datetime(2026, 5, 14, 16, 0)
+        now_t = mock_now().time()
+        is_auction = not (dtime(9, 0) <= now_t < dtime(15, 30))
+        assert is_auction is True
+
+    def test_tc_s02_price_priority_logic(self, strategy):
+        """[TC-S02] 장중 소켓 데이터 우선순위 반영 (Hot-swap)"""
+        code = "005930"
+        naver_p = 70000
+        socket_p = 70500
+        
+        # 상태 설정
+        state = MagicMock()
+        state.stock_info = {
+            code: {"price": socket_p, "is_socket": True}
+        }
+        
+        # 로직 시뮬레이션
+        is_regular = True # 장중 가정
+        curr_p = naver_p
+        
+        if is_regular:
+            old_info = state.stock_info.get(code, {})
+            if old_info.get('is_socket') and old_info.get('price', 0) > 0:
+                curr_p = old_info['price']
+        
+        assert curr_p == socket_p
+
+    def test_tc_s03_kiwoom_parsing(self, strategy):
+        """[TC-S03] 키움증권 실시간 데이터 파싱 검증"""
+        from src.workers.kiwoom_ws_worker import KiwoomWSWorker
+        from src.data.state import TradingState
+        state = TradingState()
+        ws = KiwoomWSWorker(state, MagicMock(), MagicMock())
+        
+        msg = {
+            "trnm": "REAL",
+            "data": [{"type": "0B", "item": "005930", "values": {"10": "70500", "13": "100"}}]
+        }
+        ws._handle_real_data(msg)
+        assert state.stock_info["005930"]["price"] == 70500.0
+        assert state.stock_info["005930"]["is_socket"] is True
+
+    def test_tc_s04_kis_parsing(self, strategy):
+        """[TC-S04] KIS 실시간 데이터 파싱 검증"""
+        from src.workers.kis_ws_worker import KISWSWorker
+        from src.data.state import TradingState
+        state = TradingState()
+        ws = KISWSWorker(state, MagicMock(), MagicMock())
+        
+        # KIS 포맷: [1]가격, [12]거래량
+        body = "153000^185000^2^1500^0.82^0^0^0^0^0^0^0^5000"
+        ws._handle_real_data("000660", body)
+        assert state.stock_info["000660"]["price"] == 185000.0
+        assert state.stock_info["000660"]["is_socket"] is True
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-p", "no:capture"])

@@ -195,10 +195,19 @@ class DataSyncWorker(BaseWorker):
         all_codes = list(all_codes)
         if not all_codes: return
 
+        # [필수] 네이버 벌크 API로 전 종목 기본 시세 일괄 수급
         bulk_data = self.api.get_naver_stocks_realtime(all_codes)
-        is_heavy_cycle = (curr_t - self.last_heavy_sync > 60)
-        if is_heavy_cycle:
-            self.last_heavy_sync = curr_t
+
+        # [신규] 동시호가 세션 감지 (09:00~15:30 정규장 제외 전 시간)
+        from datetime import time as dtime
+        now_dt = get_now()
+        now_t = now_dt.time()
+        is_regular_session = dtime(9, 0) <= now_t < dtime(15, 30)
+        is_auction_session = not is_regular_session
+        
+        # 동시호가 세션에는 10초마다, 평시에는 60초마다 상세 시세(예상체결가/지표) 갱신
+        heavy_sync_interval = 10.0 if is_auction_session else 60.0
+        is_heavy_cycle = (curr_t - self.last_heavy_sync > heavy_sync_interval)
         if is_heavy_cycle:
             self.last_heavy_sync = curr_t
         
@@ -207,7 +216,7 @@ class DataSyncWorker(BaseWorker):
         def fetch_stock_task(code):
             task_id = f"STOCK_{code}"
             n_data = bulk_data.get(code)
-            # 보유 종목 여부 확인 (미보유 종목은 실시간 시세만 갱신하고 무거운 분석은 제외)
+            # 보유 종목 여부 확인
             is_holding = any(s.get('pdno') == code for s in holdings)
             
             # [수정] 캐시된 이름이 있으면 즉시 표시하여 'STOCK_' 코드 노출 최소화
@@ -223,13 +232,17 @@ class DataSyncWorker(BaseWorker):
             
             p_data = None
             investor_data = None
-            # [최적화] 보유 종목일 때만 KIS 상세 시세(Hoga 등) 및 수급 데이터 조회
-            if is_holding and (is_heavy_cycle or code not in self.state.stock_info):
-                # [제거] BrokerRateLimiter가 대기를 관리하므로 수동 sleep 불필요
+            
+            # [개선] 동시호가 세션이거나 보유 종목인 경우 주기적으로 상세 시세(예상체결가 포함) 조회
+            # rankings에 있는 종목들도 동시호가 표시를 위해 p_data 조회가 필요함
+            should_fetch_pdata = (is_heavy_cycle or code not in self.state.stock_info) and (is_holding or is_auction_session)
+
+            if should_fetch_pdata:
                 p_data = self.api.get_inquire_price(code)
                 
-                # [신규] 수급 데이터(외인/기관/연기금) 동기화
-                investor_data = self.api.get_investor_trading_trend(code)
+                # [신규] 수급 데이터는 보유 종목만 동기화 (리소스 절약)
+                if is_holding:
+                    investor_data = self.api.get_investor_trading_trend(code)
             
             if n_data:
                 curr_p, day_rate, day_val = n_data['price'], n_data['rate'], n_data['cv']
@@ -251,28 +264,39 @@ class DataSyncWorker(BaseWorker):
                 day_rate = p_data.get('ctrt', 0) if p_data else 0
                 p_vol = p_data.get('prev_vol', 0) if p_data else 0
 
-            # [신규] 동시호가(예상체결가) 세션 대응 (08:00~09:00, 15:30~16:30)
-            is_antc = False
-            from datetime import time as dtime
-            now_t = get_now().time()
-            is_pre_market = dtime(8, 0) <= now_t < dtime(9, 0)
-            is_post_market = dtime(15, 30) <= now_t < dtime(16, 30)
+            # [개선] 동시호가(예상체결가) 세션 대응
+            # flickering 방지: p_data가 없는 사이클에서도 세션 시간이면 is_antc 유지
+            is_antc = is_auction_session
 
-            if p_data and (is_pre_market or is_post_market):
-                # 동시호가 세션이면 무조건 (예) 표시 활성화 (데이터가 0이더라도 세션임을 알림)
-                is_antc = True
+            if p_data and is_antc:
+                # 상세 시세 API(KIS/Kiwoom)에서 예상체결가가 수신되면 최우선 적용
                 if p_data.get('antc_price', 0) > 0:
                     curr_p = p_data['antc_price']
                     day_rate = p_data.get('antc_rate', day_rate)
+            elif is_antc:
+                # 상세 시세를 조회하지 않는 사이클(네이버 시세만 사용)인 경우
+                # 기존 캐시에 예상체결가 정보가 있었다면 이를 유지하여 전일종가 회귀 방지
+                old_info = self.state.stock_info.get(code, {})
+                if old_info.get('is_antc') and old_info.get('price', 0) > 0:
+                    curr_p = old_info['price']
+                    day_rate = old_info.get('day_rate', day_rate)
+            
+            # [신규] 장중 실시간 데이터 우선순위 (Socket > Naver)
+            # 네이버는 20분 지연일 수 있으므로, 소켓에서 수급된 최신 가격이 있다면 이를 우선 사용
+            if is_regular_session:
+                old_info = self.state.stock_info.get(code, {})
+                # 'is_socket' 플래그는 소켓 워커에서 가격 업데이트 시 설정하도록 함
+                if old_info.get('is_socket') and old_info.get('price', 0) > 0:
+                    curr_p = old_info['price']
+                    # 소켓 데이터의 등락률은 별도 계산 또는 수신 데이터 활용 (여기서는 가격 우선)
+                    # day_rate = old_info.get('day_rate', day_rate)
             
             if not s_name: 
                 s_name = self.state.stock_info.get(code, {}).get('name')
                 if not s_name or s_name == "Unknown":
-                    # 마지막 수단: API 데이터나 캐시된 정보 활용
                     if p_data: s_name = p_data.get('name', code)
                     else: s_name = code
 
-            # [수정] 분석 완료된 명칭으로 최종 업데이트 (보유 종목만)
             if is_holding:
                 f_name = f"{code}_{s_name}" if s_name else task_id
                 self.state.update_worker_status(task_id, friendly_name=f_name)

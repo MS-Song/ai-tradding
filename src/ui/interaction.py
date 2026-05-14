@@ -77,7 +77,7 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
 
     Args:
         key (str): 눌린 키 값.
-        api (KISAPI): API 클라이언트.
+        api (TradingAPI): API 클라이언트.
         strategy (VibeStrategy): 전략 엔진.
         dm (DataManager): 상태 관리자.
         cycle (int): 현재 시스템 사이클 번호.

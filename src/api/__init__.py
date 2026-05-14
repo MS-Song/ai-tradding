@@ -11,7 +11,7 @@ def get_base_broker_class():
 
 BaseBrokerClass = get_base_broker_class()
 
-class KISAPI(BaseBrokerClass, NaverAPIClient, YahooAPIClient):
+class TradingAPI(BaseBrokerClass, NaverAPIClient, YahooAPIClient):
     """설정된 증권사(KIS 또는 KIWOOM), Naver, Yahoo API를 통합하여 제공하는 메인 API 클래스."""
     
     def __init__(self, auth):

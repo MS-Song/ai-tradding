@@ -1,4 +1,6 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import time
 import random
 from typing import List, Dict, Optional, Any
@@ -27,6 +29,16 @@ class NaverAPIClient(BaseAPI):
         self._cache_duration = 120
         self._session = requests.Session()
         self._session.headers.update(self.headers)
+        # [v2.0.1] ConnectionResetError(10054) 등 서버 측 연결 끊김에 대한 자동 재시도 설정
+        retry_strategy = Retry(
+            total=3,                          # 최대 3회 재시도
+            backoff_factor=0.5,               # 0.5초, 1초, 2초 백오프
+            status_forcelist=[500, 502, 503, 504],  # 서버 에러 시에도 재시도
+            allowed_methods=["GET", "POST"],   # GET/POST 모두 재시도 허용
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
 
     def get_naver_stocks_realtime(self, codes: List[str]) -> Dict[str, dict]:
         """여러 종목의 실시간 시세를 한 번에 조회합니다.

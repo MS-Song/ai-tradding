@@ -198,16 +198,30 @@ class MarketWorker(BaseWorker):
         if curr_t - getattr(self, "_last_ranking_time", 0) > ranking_interval:
             try:
                 # [v1.7.1] 개별 수집 상태 모니터링 세분화 (사용자 요청)
+                # [신규] ETF/ETN 필터링 키워드 정의
+                ETF_KEYWORDS = [
+                    "KODEX", "TIGER", "ACE", "KBSTAR", "SOL", "ARIRANG", "HANARO", "KOSEF", 
+                    "KINDEX", "WOORI", "TREX", "POWER", "Focus", "SMART", "TRUE", "GURUM",
+                    "레버리지", "인버스", "2X", "선물", "TOP10", "ETF", "ETN", "RISE", "PLUS"
+                ]
+                
+                def is_etf(name):
+                    return any(kw in name.upper() for kw in ETF_KEYWORDS)
+
                 self.state.update_worker_status("HOT_RANKING", status="수집 중", friendly_name="RANK_HOT")
                 h_raw = self.api.get_naver_hot_stocks()
+                # 인기 검색은 그대로 두거나 필터링 (사용자 요청은 거래량 위주였으나 일관성을 위해 필터링 적용 가능)
+                h_raw = [item for item in h_raw if not is_etf(item.get('name', ''))]
                 self.state.update_worker_status("HOT_RANKING", status="대기 중", result="성공", last_task=f"인기 {len(h_raw)}개 수집")
                 
                 self.state.update_worker_status("VOL_RANKING", status="수집 중", friendly_name="RANK_VOL")
-                v_raw = self.api.get_naver_volume_stocks()
+                v_raw_all = self.api.get_naver_volume_stocks()
+                v_raw = [item for item in v_raw_all if not is_etf(item.get('name', ''))]
                 self.state.update_worker_status("VOL_RANKING", status="대기 중", result="성공", last_task=f"거래량 {len(v_raw)}개 수집")
                 
                 self.state.update_worker_status("AMT_RANKING", status="수집 중", friendly_name="RANK_AMT")
-                a_raw = self.api.get_naver_amount_stocks()
+                a_raw_all = self.api.get_naver_amount_stocks()
+                a_raw = [item for item in a_raw_all if not is_etf(item.get('name', ''))]
                 self.state.update_worker_status("AMT_RANKING", status="대기 중", result="성공", last_task=f"거래대금 {len(a_raw)}개 수집")
                 
                 # [v1.7.1] 랭킹 노출 우선순위 로직 (장외: 거래량, 장내: 거래대금)

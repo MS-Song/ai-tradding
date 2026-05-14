@@ -53,6 +53,7 @@ class DataManager:
 
         
         from src.workers.kiwoom_ws_worker import KiwoomWSWorker
+        from src.workers.kis_ws_worker import KISWSWorker
         
         self.workers = {
             "MARKET": MarketWorker(self.state, api, strategy, self.notifier),
@@ -62,10 +63,12 @@ class DataManager:
             "RETRO": RetrospectiveWorker(self.state, strategy, self.notifier)
         }
         
-        # BROKER_TYPE이 KIWOOM인 경우 웹소켓 워커 추가
+        # 증권사 타입에 따른 웹소켓 워커 추가
         broker_type = os.getenv("BROKER_TYPE", "KIS").upper()
         if broker_type == "KIWOOM":
             self.workers["WS_KIWOOM"] = KiwoomWSWorker(self.state, api, strategy)
+        elif broker_type == "KIS":
+            self.workers["WS_KIS"] = KISWSWorker(self.state, api, strategy)
         
         # --- 하위 호환용 락 (기존 코드에서 참조함) ---
         self.data_lock = self.state.lock

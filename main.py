@@ -16,16 +16,29 @@ def main():
     시스템 초기화(설정, 인증, API, 전략), 데이터 매니저를 통한 백그라운드 워커 구동, 
     TUI(터미널 UI) 렌더링 루프 및 사용자 키 입력 처리를 통합적으로 제어합니다.
     """
-    ensure_env(); load_dotenv(override=True); config = get_config(); init_terminal()
+    import argparse
+    parser = argparse.ArgumentParser(description="AI-Vibe-Trader - 객체지향형 자율 트레이딩 엔진")
+    parser.add_argument("-s", "--setup", action="store_true", help="시스템 시작 전 환경 설정(Setup)을 강제로 실행합니다.")
+    args, unknown = parser.parse_known_args()
+
+    # -s 파라미터가 있으면 즉시 설정 모드 실행
+    if args.setup:
+        init_terminal()
+        print("\n" + "="*60 + "\n ⚙️  AI-Vibe-Trader 환경 설정 모드 (Startup Param)\n" + "="*60)
+        ensure_env(force=True)
+    else:
+        ensure_env()
+
+    load_dotenv(override=True); config = get_config(); init_terminal()
     
     from src.auth import get_auth
-    from src.api import KISAPI
+    from src.api import TradingAPI
     from src.strategy import VibeStrategy
     from src.data_manager import DataManager
     from src.ui.renderer import draw_tui
     from src.ui.interaction import perform_interaction
     
-    auth = get_auth(); api = KISAPI(auth); strategy = VibeStrategy(api, config)
+    auth = get_auth(); api = TradingAPI(auth); strategy = VibeStrategy(api, config)
     
     dm = DataManager(api, strategy)
     auth.on_error_message = lambda msg: dm.show_status(msg, is_error=True)

@@ -238,7 +238,15 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             "IDLE": ("🌙", "IDLE",        "비장중"),
         }
         p_icon, p_eng, p_kr = phase_labels.get(phase["id"], ("❓", phase["id"], ""))
-        phase_txt = f" | PHASE: {p_icon}{p_eng} ({p_kr})"
+        
+        # [신규] 세션 상태 (시세/동시호가) 추가
+        from datetime import time as dtime
+        now_dt_inner = get_now()
+        now_t_inner = now_dt_inner.time()
+        is_regular = dtime(9, 0) <= now_t_inner < dtime(15, 30)
+        session_txt = "시세" if is_regular else "동시호가"
+        
+        phase_txt = f" | PHASE: {p_icon}{p_eng} ({p_kr}) | {session_txt}"
         vibe_desc = f"(하락장 대응[\033[94m{b_cfg.get('min_loss_to_buy')}% / {b_cfg.get('average_down_amount')/10000:,.0f}만/ 자동:{auto_st}\033[0m])" if "Bear" in dm.cached_vibe else ("(\033[91m상승장 수익 극대화 모드 [+3.0%]\033[0m)" if "Bull" in dm.cached_vibe else "(보합장 기본 전략 유지)")
         ai_msg = strategy.analyzer.ai_override_msg if hasattr(strategy.analyzer, "ai_override_msg") else ""
         ai_msg_formatted = f" \033[92m{ai_msg}\033[0m" if "일치" in ai_msg else (f" \033[93m{ai_msg}\033[0m" if ai_msg else "")
@@ -425,10 +433,10 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                         supply_tag = f" [{f_tag}{'/' if f_tag and p_tag else ''}{p_tag}]"
 
                 name_area = f"[{code}] {name[:(w[2]-15)//2*2]}" + ("*" if info['spike'] else "") + supply_tag
-                # [신규] 동시호가(예상체결가) 표시
+                # [신규] 동시호가(예상체결가) 표시 - (예) 제거 요청 반영
                 p_cu_txt = f"{int(p_cu):,}"
-                if info.get('is_antc'):
-                    p_cu_txt += "(예)"
+                # if info.get('is_antc'):
+                #     p_cu_txt += "(예)"
                 
                 buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(name_area, w[2]) + align_kr(p_cu_txt, w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw-1) + "\n")
             if len(f_h) > max_h_display: buf.write(align_kr(f"... 외 {len(f_h) - max_h_display}종목 생략됨 ...", tw, 'center') + "\n")
@@ -591,10 +599,10 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             # [Fix] 우측 끝 1칸 여백 고정 확보
             prefix = f"[{theme_fmt}][{item['code']}]"
             
-            # [신규] 동시호가 표시 (중앙 상태에서 확인)
+            # [신규] 동시호가 표시 (중앙 상태에서 확인) - (예) 제거 요청 반영
             p_txt = f"{p:,}"
-            if dm.state.stock_info.get(item['code'], {}).get('is_antc'):
-                p_txt += "(예)"
+            # if dm.state.stock_info.get(item['code'], {}).get('is_antc'):
+            #     p_txt += "(예)"
             
             spaces = max(0, width - 16 - get_visual_width(d_name) - get_visual_width(f"({p_txt}/{rate_str})"))
             price_txt = f"({p_txt}/{c}{rate_str}\033[0m)"
@@ -642,8 +650,8 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             prefix = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m"
             
             p_txt = f"{p:,}"
-            if dm.state.stock_info.get(item['code'], {}).get('is_antc'):
-                p_txt += "(예)"
+            # if dm.state.stock_info.get(item['code'], {}).get('is_antc'):
+            #     p_txt += "(예)"
             
             spaces = max(0, width - base_w - get_visual_width(d_name) - get_visual_width(f"({p_txt}/{rate_str})"))
             price_txt = f"({p_txt}/{c}{rate_str}\033[0m)"

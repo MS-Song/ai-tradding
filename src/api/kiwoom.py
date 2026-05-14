@@ -25,12 +25,35 @@ class KiwoomAPIClient(BaseAPI):
 
     def _request(self, method, url, **kwargs):
         """중앙 레이트 리미터를 통과한 후 HTTP 요청을 수행합니다.
-
-        BrokerRateLimiter의 Token Bucket 알고리즘에 의해 모의투자(0.8 req/s)와
-        실전투자(증권사별 권장 RPS)의 호출 빈도가 자동으로 제어됩니다.
+        
+        [인증 자동 복구] 키움 API에서 'Token이 유효하지 않습니다' (8005/RT_CD:3) 에러가 발생하면
+        자동으로 로컬 캐시를 무효화하고 새 토큰을 받아 1회 재시도합니다.
         """
         self._rate_limiter.acquire()
-        return requests.request(method, url, **kwargs)
+        res = requests.request(method, url, **kwargs)
+        
+        # 1회성 토큰 에러 체크 및 자동 재발급/재시도
+        try:
+            # 키움 REST API는 에러 시에도 200 OK와 함께 JSON body에 에러 코드를 실어보냄
+            data = res.json()
+            ret_code = str(data.get("return_code", ""))
+            ret_msg = data.get("return_msg", "")
+            
+            if ret_code == "3" or "Token이 유효하지 않습니다" in ret_msg:
+                from src.logger import logger
+                logger.warning(f"🔑 키움 토큰 만료 감지 (API: {kwargs.get('headers', {}).get('api-id')}) -> 재발급 후 재시도")
+                self.auth.invalidate_token()
+                # 새 토큰으로 헤더 업데이트
+                if "headers" in kwargs:
+                    kwargs["headers"] = self.auth.get_auth_headers()
+                
+                self._rate_limiter.acquire() # 재시도 전 다시 레이트 리밋 획득
+                res = requests.request(method, url, **kwargs)
+        except:
+            # JSON이 아니거나 일반 응답인 경우 무시
+            pass
+            
+        return res
 
     @retry_api(max_retries=3, delay=1.5)
     def get_full_balance(self, force=False, **kwargs) -> Tuple[List[dict], dict]:
@@ -42,6 +65,7 @@ class KiwoomAPIClient(BaseAPI):
         headers["api-id"] = "kt00001"
         res_cash = self._request("POST", url, headers=headers, json={"qry_tp": "2"}, timeout=10)
         data_cash = res_cash.json()
+
         if str(data_cash.get("return_code")) != "0":
             raise Exception(f"Kiwoom Cash API Error: {data_cash.get('return_msg')} (RT_CD:{data_cash.get('return_code')})")
         
@@ -52,7 +76,9 @@ class KiwoomAPIClient(BaseAPI):
         headers["api-id"] = "kt00018"
         res_bal = self._request("POST", url, headers=headers, json={"qry_tp": "1", "dmst_stex_tp": "KRX"}, timeout=10)
         data_bal = res_bal.json()
+        
         if str(data_bal.get("return_code")) != "0":
+            # 여기도 토큰 에러 체크 가능하지만 보통 1번에서 걸러짐
             raise Exception(f"Kiwoom Balance API Error: {data_bal.get('return_msg')} (RT_CD:{data_bal.get('return_code')})")
         
         raw_holdings = data_bal.get("acnt_evlt_remn_indv_tot", [])

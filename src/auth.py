@@ -239,6 +239,18 @@ class KiwoomAuth:
         elapsed = time.time() - self.token_issued_at
         return elapsed < self.token_expiry_sec
 
+    def invalidate_token(self):
+        """현재 토큰을 무효화하고 로컬 캐시 파일을 삭제합니다."""
+        with self._lock:
+            self.access_token = None
+            self.token_issued_at = 0
+            if os.path.exists(self.cache_file):
+                try:
+                    os.remove(self.cache_file)
+                    logger.info(f"🗑️ 키움 토큰 캐시 파일 삭제 완료 ({self.cache_file})")
+                except Exception as e:
+                    logger.error(f"키움 토큰 캐시 파일 삭제 실패: {e}")
+
     def generate_token(self):
         if self.is_token_valid(): return True
         with self._lock:

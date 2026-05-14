@@ -187,10 +187,14 @@ def draw_trading_logs(strategy, dm):
                 "TRADE": "실시간 매매", "TRADE_EXECUTION": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링",
                 "REPORT": "정기 리포트 발송",
                 "WS_KIWOOM": "실시간 웹소켓",
+                "WS_KIS": "실시간 웹소켓",
                 "THEME_SYNC": "테마 DB 갱신"
             }
-            # [수정] 전체 모니터링 대상 워커 목록 취합 (설명 DB + 실제 실행 이력)
-            all_workers = sorted(list(set(worker_desc.keys()) | {w.upper() for w in last_times.keys()}))
+            # [수정] 현재 구동 중인 워커(dm.workers) 또는 실제 실행 이력(last_times)이 있는 워커만 필터링하여 표시
+            # 무분별하게 모든 정의된 워커(worker_desc)를 노출하지 않음
+            active_ids = {k.upper() for k in dm.workers.keys()}
+            run_ids = {w.upper() for w in last_times.keys()}
+            all_workers = sorted(list(active_ids | run_ids))
             
             # [중복 제거 로직] 동일한 friendly name을 가진 워커가 여러 ID로 존재할 경우,
             # 가장 최근에 갱신(ts)된 ID 하나만 남깁니다. (미갱신 고스트 행 제거)
