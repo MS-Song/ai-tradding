@@ -54,11 +54,23 @@ class DataSyncWorker(BaseWorker):
                 self.force_sync = False # 플래그 초기화
                 
                 if h or a.get('total_asset', 0) > 0:
-                    # [개선] KIS API의 자산 총계가 가끔 캐시+주식 합계와 맞지 않는 경우가 있어 직접 재계산하여 정정함
-                    # 특히 모의투자 환경에서 tot_evlu_amt가 구버전 데이터를 반환하는 경우가 많음
+                    # [개선] 주식 평가금은 보유 종목 합산으로 직접 보정 (KIS API 지연 대응)
                     actual_stock_eval = sum(float(item.get('evlu_amt', 0)) for item in h)
+                    api_stock_eval = a.get('stock_eval', 0)
                     a['stock_eval'] = actual_stock_eval
-                    a['total_asset'] = a.get('cash', 0) + actual_stock_eval
+                    
+                    # [수정] 총자산 재계산: KIS API 원본 총자산(tot_evlu_amt)을 기반으로 주식 평가금만 보정
+                    # cash(D+2 정산예수금)로 총자산을 재계산하면 D+0 예수금과의 차이로 자산이 누락됨
+                    api_total = a.get('total_asset', 0)
+                    if api_total > 0 and api_stock_eval > 0:
+                        # 원본 총자산에서 API 주식평가를 빼고 실제 주식평가를 더함
+                        a['total_asset'] = api_total - api_stock_eval + actual_stock_eval
+                    elif api_total > 0:
+                        # API 주식평가가 0이면 원본 총자산 + 실제 주식평가 (신규 매수 직후 등)
+                        a['total_asset'] = api_total + actual_stock_eval
+                    else:
+                        # API 총자산이 0이면 현금 + 주식평가로 폴백
+                        a['total_asset'] = a.get('cash', 0) + actual_stock_eval
                     
                     self._update_asset_metrics(a)
                     with self.state.lock:
@@ -174,8 +186,8 @@ class DataSyncWorker(BaseWorker):
             if r.get('code'):
                 all_codes.add(r['code'].strip())
         
-        # [추가] 대시보드에 표시되는 인기/거래량 상위 종목도 실시간 가격 갱신 대상에 포함
-        for item_list in [self.state.hot_raw, self.state.vol_raw]:
+        # [추가] 대시보드에 표시되는 인기/거래량/거래대금 상위 종목도 실시간 가격 갱신 대상에 포함
+        for item_list in [self.state.hot_raw, self.state.vol_raw, self.state.amt_raw]:
             for item in (item_list or [])[:20]:
                 if item.get('code'):
                     all_codes.add(item['code'].strip())
@@ -238,11 +250,25 @@ class DataSyncWorker(BaseWorker):
                 day_val = p_data.get('vrss', 0) if p_data else 0
                 day_rate = p_data.get('ctrt', 0) if p_data else 0
                 p_vol = p_data.get('prev_vol', 0) if p_data else 0
+
+            # [신규] 동시호가(예상체결가) 세션 대응 (08:00~09:00, 15:30~16:30)
+            is_antc = False
+            from datetime import time as dtime
+            now_t = get_now().time()
+            is_pre_market = dtime(8, 0) <= now_t < dtime(9, 0)
+            is_post_market = dtime(15, 30) <= now_t < dtime(16, 30)
+
+            if p_data and (is_pre_market or is_post_market):
+                # 동시호가 세션이면 무조건 (예) 표시 활성화 (데이터가 0이더라도 세션임을 알림)
+                is_antc = True
+                if p_data.get('antc_price', 0) > 0:
+                    curr_p = p_data['antc_price']
+                    day_rate = p_data.get('antc_rate', day_rate)
             
             if not s_name: 
                 s_name = self.state.stock_info.get(code, {}).get('name')
                 if not s_name or s_name == "Unknown":
-                    # 마지막 수단: KIS 데이터나 캐시된 정보 활용
+                    # 마지막 수단: API 데이터나 캐시된 정보 활용
                     if p_data: s_name = p_data.get('name', code)
                     else: s_name = code
 
@@ -292,6 +318,7 @@ class DataSyncWorker(BaseWorker):
                 "tp": tp if is_holding else 0, "sl": sl if is_holding else 0, "spike": spike if is_holding else False,
                 "day_val": day_val, "day_rate": day_rate,
                 "ma_20": ma_20, "price": curr_p, "prev_vol": p_vol, "name": s_name, "ma_source": ma_source,
+                "is_antc": is_antc,
                 "investor": investor_data if is_holding else old_info.get("investor")
             }, task_id, ma_20, is_holding, ma_source
 
@@ -374,18 +401,26 @@ class DataSyncWorker(BaseWorker):
             # [Fix] 실시간 시세를 추천 종목 및 인기/거래량 리스트에 반영하여 TUI 가격 최신화
             # ai_recommendations, hot_raw, vol_raw는 최초 수집 시점의 스냅샷 가격을 갖고 있으므로
             # bulk_data(Naver 실시간 API)로 가격/등락률을 덮어씌워 대시보드 표시 정확성 보장
-            if bulk_data:
-                for rec in getattr(self.strategy, 'ai_recommendations', []):
-                    rt = bulk_data.get(rec.get('code'))
-                    if rt:
-                        rec['price'] = rt['price']
-                        rec['rate'] = rt['rate']
-                for item_list in [self.state.hot_raw, self.state.vol_raw]:
-                    for item in item_list:
-                        rt = bulk_data.get(item.get('code'))
-                        if rt:
-                            item['price'] = rt['price']
-                            item['rate'] = rt['rate']
+            # [Fix] 실시간 시세를 추천 종목 및 인기/거래량 리스트에 반영
+            # KIS/Kiwoom API에서 가져온 정보(temp_info)를 최우선으로 하고, 없으면 Naver(bulk_data) 활용
+            for rec in getattr(self.strategy, 'ai_recommendations', []):
+                code = rec.get('code')
+                if code in temp_info:
+                    rec['price'] = temp_info[code]['price']
+                    rec['rate'] = temp_info[code]['day_rate']
+                elif bulk_data and code in bulk_data:
+                    rec['price'] = bulk_data[code]['price']
+                    rec['rate'] = bulk_data[code]['rate']
+            
+            for item_list in [self.state.hot_raw, self.state.vol_raw, self.state.amt_raw]:
+                for item in item_list:
+                    code = item.get('code')
+                    if code in temp_info:
+                        item['price'] = temp_info[code]['price']
+                        item['rate'] = temp_info[code]['day_rate']
+                    elif bulk_data and code in bulk_data:
+                        item['price'] = bulk_data[code]['price']
+                        item['rate'] = bulk_data[code]['rate']
 
         if is_heavy_cycle:
             self.last_heavy_sync = curr_t

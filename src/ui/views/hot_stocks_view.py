@@ -9,6 +9,9 @@ from src.utils import *
 from src.theme_engine import get_cached_themes, get_theme_for_stock
 from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
+from src.ui.views.stock_table_renderer import (
+    render_core_header, render_core_row, CORE_SEPARATOR
+)
 
 def draw_hot_stocks_detail(strategy, dm, tw, th):
     """실시간 인기 테마와 종목 트렌드를 분석하여 AI 리포트 화면을 렌더링합니다.
@@ -35,6 +38,8 @@ def draw_hot_stocks_detail(strategy, dm, tw, th):
     import threading
     
     _is_running = False
+    _investor_cache = {}
+    _investor_loaded = False
     
     def run_bg_analysis(hot, themes):
         nonlocal _is_running
@@ -50,6 +55,26 @@ def draw_hot_stocks_detail(strategy, dm, tw, th):
             if not report:
                 strategy.hot_report_err_time = time.time()
             dm.clear_busy("UI")
+
+    def load_investor_data(hot_items):
+        """인기 종목들의 기관/외국인 수급 데이터를 백그라운드로 수집합니다."""
+        nonlocal _investor_loaded
+        for item in hot_items[:10]:
+            code = item.get('code', '')
+            if not code:
+                continue
+            try:
+                inv = strategy.api.get_investor_trading_trend(code)
+                if inv:
+                    _investor_cache[code] = inv
+            except:
+                pass
+        _investor_loaded = True
+
+    # 최초 진입 시 수급 데이터 백그라운드 로드
+    hot_initial = dm.cached_hot_raw[:10]
+    if hot_initial:
+        threading.Thread(target=load_investor_data, args=(hot_initial,), daemon=True).start()
 
     while True:
         try:
@@ -71,21 +96,45 @@ def draw_hot_stocks_detail(strategy, dm, tw, th):
         if not hot:
             buf.write(align_kr("인기 검색 데이터가 없습니다.", tw, 'center') + "\n")
         else:
-            buf.write("\033[1m" + f"{align_kr('NO', 4)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('현재가', 10)} | {align_kr('등락률', 8)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)} | {align_kr('업종PER', 7)}" + "\033[0m\n")
+            # 인기 리포트 전용 컬럼: NO, 업종PER
+            extra_h = [('업종PER', 8, 'right')]
+            # NO 컬럼은 Core 앞에 수동 추가
+            no_header = align_kr('NO', 4)
+            header_str = no_header + CORE_SEPARATOR + render_core_header(extra_headers=extra_h)
+            buf.write("\033[1m" + header_str + "\033[0m\n")
             buf.write("-" * tw + "\n")
             
             for idx, item in enumerate(hot, 1):
                 code = item.get('code', '')
                 # [개선] UI에서 별도 API 호출 대신 sync_worker가 1초마다 갱신하는 공통 캐시 활용
-                # 이를 통해 네이버 API 호출 횟수를 줄여 차단 리스크를 방지함
                 info = dm.cached_stock_info.get(code, {})
                 price = info.get('price', float(item.get('price', 0)))
                 rate = info.get('day_rate', float(item.get('rate', 0)))
                 
-                color = "\033[91m" if rate >= 0 else "\033[94m"
                 detail = strategy.api.get_naver_stock_detail(code)
                 name = info.get('name') or item.get('name', '')
-                buf.write(f"{align_kr(str(idx), 4)} | {align_kr(code, 8)} | {align_kr(name[:10], 14)} | {align_kr(f'{int(float(price)):,}', 10, 'right')} | {color}{align_kr(f'{rate:+.2f}%', 8, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')} | {align_kr(detail.get('sector_per','N/A'), 7, 'right')}\n")
+                inv = _investor_cache.get(code, {})
+                
+                # 전용 컬럼: 업종PER
+                sector_per_str = detail.get('sector_per', 'N/A')
+                extra_cols = [(sector_per_str, 8, 'right')]
+                
+                no_col = align_kr(str(idx), 4)
+                core_row = render_core_row(
+                    code=code,
+                    name=name,
+                    price=price,
+                    rate=rate,
+                    per=detail.get('per', 'N/A'),
+                    pbr=detail.get('pbr', 'N/A'),
+                    mktcap=detail.get('market_cap', 'N/A'),
+                    vol=detail.get('vol', 0),
+                    amt=detail.get('amt', 0),
+                    frgn=inv.get('frgn_net_buy', 0),
+                    inst=inv.get('inst_net_buy', 0),
+                    extra_columns=extra_cols
+                )
+                buf.write(no_col + CORE_SEPARATOR + core_row + "\n")
         
         curr_t = time.time()
         has_cache = strategy.hot_report_cache and (curr_t - strategy.hot_report_time < 300)
@@ -129,4 +178,3 @@ def draw_hot_stocks_detail(strategy, dm, tw, th):
                     return
             time.sleep(0.1)
             inner_cycle += 1
-

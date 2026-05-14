@@ -9,6 +9,9 @@ from src.utils import *
 from src.theme_engine import get_cached_themes, get_theme_for_stock
 from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
+from src.ui.views.stock_table_renderer import (
+    render_core_header, render_core_row, CORE_SEPARATOR, get_core_width
+)
 
 def draw_recommendation_report(strategy, dm, tw, th):
     """AI가 엄선한 TOP 10 추천 종목의 상세 분석 리포트 화면을 렌더링합니다.
@@ -65,71 +68,61 @@ def draw_recommendation_report(strategy, dm, tw, th):
         recs = strategy.ai_recommendations
         if not recs: buf.write(align_kr("현재 분석된 상세 추천 종목이 없습니다. '8'을 눌러 분석을 먼저 수행하세요.", tw, 'center') + "\n")
         else:
-            # 헤더와 데이터 컬럼 너비 정의 (충분한 간격 확보)
-            # w_supply는 F↑ I↑ P↑ (최대 11자)를 고려하여 12로 설정
-            w_theme, w_code, w_name, w_price, w_rate, w_supply, w_cycle, w_score = 10, 8, 18, 10, 8, 12, 10, 8
-            
-            header = (
-                f"{align_kr('테마', w_theme)} | "
-                f"{align_kr('코드', w_code)} | "
-                f"{align_kr('종목명', w_name)} | "
-                f"{align_kr('현재가', w_price, 'right')} | "
-                f"{align_kr('등락', w_rate, 'right')} | "
-                f"{align_kr('수급상태', w_supply, 'center')} | "
-                f"{align_kr('사이클', w_cycle, 'center')} | "
-                f"{align_kr('AI점수', w_score, 'right')} | "
-                "발굴 근거"
-            )
-            buf.write("\033[1;97m" + header + "\033[0m\n")
+            # AI추천 전용 컬럼: 테마, AI점수, 발굴근거
+            w_theme, w_score = 12, 8
+            extra_h = [('테마', w_theme, 'left'), ('AI점수', w_score, 'right'), ('발굴 근거', 0, 'left')]
+            header_str = render_core_header(extra_headers=[('테마', w_theme, 'left'), ('AI점수', w_score, 'right')]) + CORE_SEPARATOR + "발굴 근거"
+            buf.write("\033[1;97m" + header_str + "\033[0m\n")
             buf.write("\033[90m" + "═" * tw + "\033[0m\n")
             
             for r in recs[:max(1, th-15)]:
                 code = r['code']
                 rate = float(r['rate'])
-                color = "\033[91m" if rate > 0 else "\033[94m" if rate < 0 else ""
                 gem_mark = "💎" if r.get('is_gem') else ("📊" if r.get('is_etf') else "  ")
                 
                 theme_raw = r.get('theme', '?')
                 theme_clean = re.sub(r'\(.*?\)', '', theme_raw).strip()
                 theme_fmt = f"[{theme_clean}]"
                 
-                # 수급 데이터 및 사이클 추출
+                # 수급 데이터 (이미 추천 데이터에 포함)
                 inv = r.get('investor', {})
-                f_net, i_net, p_net = inv.get('frgn_net_buy', 0), inv.get('inst_net_buy', 0), inv.get('pnsn_net_buy', 0)
+                frgn = inv.get('frgn_net_buy', 0)
+                inst = inv.get('inst_net_buy', 0)
                 
-                signals = []
-                # 시각적 가독성을 위해 각 수급 주체별로 일정한 간격 유지 시도
-                if f_net > 0: signals.append("\033[91mF↑\033[0m")
-                if i_net > 0: signals.append("\033[91mI↑\033[0m")
-                if p_net > 0: signals.append("\033[91mP↑\033[0m")
-                supply_str = " ".join(signals) if signals else "-"
-                
-                cycle_tag = inv.get('cycle', '-')
-                cycle_fmt = f"[{cycle_tag}]" if cycle_tag != "-" else "-"
+                # PER/PBR 가져오기 (detail 캐시 활용)
+                detail = strategy.api.get_naver_stock_detail(code, force=False)
 
                 reason = r.get('reason', '').replace('\n', ' ')
                 
-                # 가용 너비 계산 (기존 컬럼 너비 + 구분자들 너비 합산)
-                # ANSI 코드가 없는 순수 너비 기준으로 계산하여 정렬 흐트러짐 방지
-                fixed_w = w_theme + w_code + w_name + w_price + w_rate + w_supply + w_cycle + w_score + (8 * 3)
-                avail_w = tw - fixed_w - 2
-                
+                # 가용 너비 계산하여 발굴근거 자르기
+                core_w = get_core_width()
+                extra_fixed_w = w_theme + w_score + len(CORE_SEPARATOR) * 3
+                avail_w = tw - core_w - extra_fixed_w - 2
                 if get_visual_width(reason) > avail_w:
                     while get_visual_width(reason) > max(5, avail_w - 3): reason = reason[:-1]
                     reason += "..."
                 
-                row = (
-                    f"{align_kr(theme_fmt, w_theme)} | "
-                    f"{align_kr(code, w_code)} | "
-                    f"{align_kr(gem_mark + r['name'], w_name)} | "
-                    f"{align_kr(f'{int(float(r.get('price',0))):,}', w_price, 'right')} | "
-                    f"{align_kr(f'{color}{rate:+.1f}%\033[0m', w_rate, 'right')} | "
-                    f"{align_kr(supply_str, w_supply, 'center')} | "
-                    f"{align_kr(cycle_fmt, w_cycle, 'center')} | "
-                    f"{align_kr(f'{r['score']:.1f}', w_score, 'right')} | "
-                    f"{reason}"
+                # 전용 컬럼
+                extra_cols = [
+                    (theme_fmt, w_theme, 'left'),
+                    (f'{r["score"]:.1f}', w_score, 'right'),
+                ]
+                
+                core_row = render_core_row(
+                    code=code,
+                    name=gem_mark + r['name'],
+                    price=r.get('price', 0),
+                    rate=rate,
+                    per=detail.get('per', 'N/A'),
+                    pbr=detail.get('pbr', 'N/A'),
+                    mktcap=r.get('market_cap', 'N/A'),
+                    vol=r.get('vol', 0),
+                    amt=r.get('amt', 0),
+                    frgn=frgn,
+                    inst=inst,
+                    extra_columns=extra_cols
                 )
-                buf.write(row + "\n")
+                buf.write(core_row + CORE_SEPARATOR + reason + "\n")
         
         buf.write("\n" + "\033[90m" + "─" * tw + "\033[0m\n\033[1;96m" + " [AI 수급 사이클 심층 진단 (최근 10일 흐름)]" + "\033[0m\n")
         if recs:
@@ -188,4 +181,3 @@ def draw_recommendation_report(strategy, dm, tw, th):
             if k: return
             time.sleep(0.1)
             inner_cycle += 1
-

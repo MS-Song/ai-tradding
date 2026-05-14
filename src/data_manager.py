@@ -120,6 +120,8 @@ class DataManager:
     @property
     def vol_stocks(self): return self.state.vol_raw
     @property
+    def cached_amt_raw(self): return self.state.amt_raw
+    @property
     def cached_recommendations(self): return self.state.recommendations
     @property
     def recommendations(self): return self.state.recommendations

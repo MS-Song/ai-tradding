@@ -53,7 +53,9 @@ class TradingState:
         self.ai_costs: Dict[str, float] = {"gemini": 0.0, "groq": 0.0} # AI 모델별 누적 비용
         self.recommendations: List[dict] = [] # AI 추천 종목 리스트
         self.hot_raw: List[dict] = [] # 실시간 인기 종목 데이터
-        self.vol_raw: List[dict] = [] # 거래량 폭발 종목 데이터
+        self.vol_raw: List[dict] = [] # 거래량 상위 종목 데이터
+        self.amt_raw: List[dict] = [] # 거래대금 상위 종목 데이터
+        self.ranking_type: str = "거래량" # 현재 표시 중인 랭킹 타입
         
         # --- 주요 지표 갱신 기록 ---
         self.indicator_updates: Dict[str, dict] = {} # 기술적 지표 갱신 시점 추적

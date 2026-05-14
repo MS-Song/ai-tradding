@@ -22,7 +22,7 @@ class AnalysisMixin:
             logger.info("시장 분석 완료 및 전략 적용 성공")
             return True
         except Exception as e:
-            trading_log.log_ai_activity("시황분석", "실시간 시황 업데이트 실패", "FAIL", str(e)[:50])
+            trading_log.log_ai_activity("시황분석", "실시간 시황 업데이트 실패", "FAIL", str(e))
             log_error(f"시장 분석 실패: {e}")
             self.is_ready = True 
             return False
@@ -78,17 +78,17 @@ class AnalysisMixin:
             logger.info("✅ 주기적 AI 시황 분석 완료")
         except Exception as e:
             if dm: dm.update_worker_status("AI_ENGINE", result="실패", last_task=f"분석 오류: {str(e)[:20]}")
-            trading_log.log_ai_activity("정기분석", "주기적 통합 분석 중 에러", "FAIL", str(e)[:50])
+            trading_log.log_ai_activity("정기분석", "주기적 통합 분석 중 에러", "FAIL", str(e))
             log_error(f"주기적 분석 오류: {e}")
         finally:
             self.is_analyzing = False
             self.current_action = "대기중"
             if dm: dm.clear_busy("AI_ENGINE")
 
-    def update_ai_recommendations(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], progress_cb: Optional[Callable] = None, on_item_found: Optional[Callable] = None):
+    def update_ai_recommendations(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], amt_raw: List[dict] = None, progress_cb: Optional[Callable] = None, on_item_found: Optional[Callable] = None):
         try: 
             if on_item_found: self.ai_recommendations = []
-            self.ai_recommendations = self.alpha_eng.analyze(themes, hot_raw, vol_raw, self.ai_config.get("min_score", 60.0), progress_cb=progress_cb, kr_vibe=self.current_market_vibe, market_data=self.current_market_data, on_item_found=on_item_found)
+            self.ai_recommendations = self.alpha_eng.analyze(themes, hot_raw, vol_raw, amt_raw, self.ai_config.get("min_score", 60.0), progress_cb=progress_cb, kr_vibe=self.current_market_vibe, market_data=self.current_market_data, on_item_found=on_item_found)
             self._save_all_states()
         except Exception as e: log_error(f"AI 추천 업데이트 오류: {e}")
 

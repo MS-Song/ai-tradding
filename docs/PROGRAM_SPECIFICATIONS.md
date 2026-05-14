@@ -49,7 +49,7 @@ AI-Vibe-Trader/
 - **`state.py`**: 시스템의 영속적 상태를 정의하는 데이터 모델 및 초기값 설정.
 
 ### 📂 `src/strategy/` (Analysis & Calculation)
-- **`alpha_engine.py`**: AI 추천 점수와 퀀트 지표를 결합한 최종 매수 점수 산출.
+- **`alpha_engine.py`**: AI 추천 점수와 퀀트 지표를 결합한 최종 매수 점수 산출. 시총 1000억 미만 및 ETF를 원천 제외하는 필터링 로직 포함.
 - **`chart_renderer.py`**: TUI 내에서 간단한 텍스트 기반 차트 렌더링 지원.
 - **`constants.py`**: 전략 전반에서 사용하는 고정 상수(타임아웃, 임계치 등) 정의.
 - **`exit_manager.py`**: Vibe와 Phase에 따른 실시간 TP/SL 보정 로직 총괄.
@@ -83,12 +83,13 @@ AI-Vibe-Trader/
 - **`renderer.py`**: TUI 대시보드의 메인 프레임워크 및 전역 레이아웃 관리.
 - **`views/ai_logs_view.py`**: AI의 판단 사유와 활동 내역을 상세히 표시.
 - **`views/dashboard_view.py`**: 실시간 자산, 지수, 인기 종목 랭킹 요약 표시.
-- **`views/holdings_view.py`**: 현재 보유 중인 종목 리스트와 상세 수익률 표시.
-- **`views/hot_stocks_view.py`**: 실시간 인기 종목 및 테마 분석 결과 표시.
+- **`views/holdings_view.py`**: 현재 보유 중인 종목의 통합 정보(현재가, 등락률, PER, PBR, 시총, 거래량, 거래금액, 외국인/기관 수급, 수익률, 평가손액) 표시.
+- **`views/hot_stocks_view.py`**: 실시간 인기 종목 및 테마 분석 결과를 통합 포맷으로 표시. 업종PER 포함.
 - **`views/manual_view.py`**: 사용자가 직접 조작할 수 있는 설정 및 제어 가이드 표시.
 - **`views/performance_view.py`**: 수익/손실 상위 종목 및 모델별 성과 통계 표시.
-- **`views/recommendation_view.py`**: AI가 선정한 당일 추천 종목 리스트 가시화.
+- **`views/recommendation_view.py`**: AI가 선정한 당일 추천 종목을 통합 포맷으로 표시. 테마, AI점수, 발굴근거 전용 컬럼 포함.
 - **`views/stock_analysis_view.py`**: 특정 종목에 대한 심층 분석 리포트 표시.
+- **`views/stock_table_renderer.py`**: D/B/H 3대 리포트 공통 종목 테이블 렌더링 유틸리티. 11개 Core 컬럼(코드, 종목명, 현재가, 등락률, PER, PBR, 시총, 거래량, 거래금액, 외국인, 기관) 통합 포맷 제공.
 - **`views/trading_logs_view.py`**: 실제 체결된 매매 내역 리스트 가시화.
 - **`views/__init__.py`**: 뷰 패키지 초기화.
 

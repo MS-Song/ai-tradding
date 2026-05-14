@@ -42,6 +42,7 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-I06** | 장 초반 안정화 필터 | 09:10 (Stabilizing), Vibe Neutral | AI 매수 시도 | `strict_min` 점수 미달 시 매수 차단 및 로그 기록 확인 |
 | **TC-I07** | 수급 사이클 분석 | 매집 가속화(최근 2일 > 3일 평균) | AI 스코어링 단계 | 사이클 가점(+5~15pt) 반영 및 상승 사이클 초입 판정 확인 |
 | **TC-I08** | 수급 데이터 2중화 | Naver 수집 성공 / KIS 실패 | `get_investor_trading_trend` | Naver 데이터 우선 채택 및 KIS 보완 데이터(연기금 등) 통합 확인 |
+| **TC-I09** | AI 추천 필터링 | 시총 500억 또는 ETF 후보군 포함 | `VibeAlphaEngine.analyze` | 해당 종목 분석 단계에서 즉시 스킵(Return) 및 추천 리스트 제외 확인 |
 
 ## 4. 인프라 및 워커 안정성 테스트 (Infrastructure)
 백그라운드 워커와 데이터 소스의 신뢰성을 검증합니다.

@@ -18,7 +18,7 @@ class VibeAlphaEngine:
         self.ai_advisor = None # Strategy에서 Gemini Advisor 주입
         self._lock = threading.Lock()
 
-    def analyze(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], min_score: float = 60.0, progress_cb: Optional[Callable] = None, kr_vibe: str = "Neutral", market_data: dict = None, on_item_found: Optional[Callable] = None) -> List[dict]:
+    def analyze(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], amt_raw: List[dict] = None, min_score: float = 60.0, progress_cb: Optional[Callable] = None, kr_vibe: str = "Neutral", market_data: dict = None, on_item_found: Optional[Callable] = None) -> List[dict]:
         """시장 데이터와 펀더멘털을 통합 분석하여 최적의 추천 종목 및 ETF 리스트를 생성합니다.
 
         이 메서드는 실시간 테마, 인기 검색어, 거래량 급증 데이터를 바탕으로 후보군을 선정하고, 
@@ -46,24 +46,31 @@ class VibeAlphaEngine:
         if v == "BEAR": dynamic_min_score = max(min_score, 70.0)      # 하락장: 더 엄격하게
         elif v == "DEFENSIVE": dynamic_min_score = max(min_score, 85.0) # 방어모드: 초우량주만
 
-        combined = hot_raw + vol_raw
-        candidates = []
-        seen = set()
-
+        # 모든 원천 데이터 통합 및 속성 병합 (거래량/거래대금 정보 유실 방지)
+        pool = {}
+        for item in hot_raw + vol_raw + (amt_raw or []):
+            code = item.get('code')
+            if not code: continue
+            if code not in pool:
+                pool[code] = item.copy()
+            else:
+                # 데이터 병합: 기존에 없는 필드나 0인 필드를 채움
+                for k, v in item.items():
+                    if k not in pool[code] or (pool[code][k] == 0 and v != 0):
+                        pool[code][k] = v
+        
         # 테마 카운트 맵핑 (테마점수 산정용)
         theme_count_map = {t['name']: t['count'] for t in themes}
-
-        for item in combined:
-            code = item['code']
-            if code in seen: continue
-            seen.add(code)
+        
+        candidates = []
+        for code, item in pool.items():
             if not (len(code) == 6 and code.isdigit()): continue
-
+            
             # 해당 종목의 테마 결정
             theme_name = get_theme_for_stock(code, item.get('name', ''))
             theme_count = theme_count_map.get(theme_name, 1)
             my_theme = {"name": theme_name, "count": theme_count}
-
+            
             is_hot = any(x['code'] == code for x in hot_raw)
             candidates.append((item, my_theme, is_hot))
 
@@ -86,6 +93,20 @@ class VibeAlphaEngine:
             # 상세 데이터 수집 (캐시 활용)
             detail = self.api.get_naver_stock_detail(code)
             
+            # [필터] 시총 1000억 미만 및 ETF 제외 (사용자 요청)
+            mkt_cap = safe_cast_float(detail.get('market_cap'))
+            is_etf = any(ex in item['name'].upper() for x in ["ETF", "KODEX", "TIGER", "KBSTAR", "ACE", "RISE", "SOL", "HANARO", "KOSEF", "ARIRANG", "WOORI", "PLUS"] if (ex:=x) in item['name'].upper())
+            
+            if is_etf:
+                with lock:
+                    current += 1
+                return # ETF 제외
+                
+            if mkt_cap > 0 and mkt_cap < 1000:
+                with lock:
+                    current += 1
+                return # 시총 1000억 미만 제외
+
             # 1차 입체 점수 산정 (장세 기반 보정 포함, 수급 데이터 제외)
             item_score = self._calculate_ai_score(item, my_theme, False, kr_vibe, market_data, detail, is_hot)
 
@@ -99,14 +120,6 @@ class VibeAlphaEngine:
                     supply_bonus = self._calculate_supply_demand_bonus(investor_data, kr_vibe)
                     item_score += supply_bonus
                     item['investor'] = investor_data # AI Advisor 전달용
-
-            is_etf = any(ex in item['name'].upper() for x in ["KODEX", "TIGER", "KBSTAR", "ACE", "RISE", "SOL", "HANARO"] if (ex:=x) in item['name'].upper())
-            is_inverse = "인버스" in item['name']
-
-            # 하락장/방어장에선 인버스 ETF 가점, 상승장에선 페널티
-            if is_inverse:
-                if kr_vibe.upper() in ["BEAR", "DEFENSIVE"]: item_score += 10.0
-                else: item_score -= 50.0
 
             with lock:
                 current += 1
@@ -138,12 +151,19 @@ class VibeAlphaEngine:
                     reasons.append(f"{my_theme['name']} 테마 수급/지표 우수")
                 
                 final_reason = " | ".join(reasons)
-                res = {**item, "score": item_score, "theme": my_theme['name'], "is_gem": False, "reason": final_reason, "auto_eligible": auto_eligible}
-                if not is_etf:
+                res = {
+                    **item, 
+                    "score": item_score, 
+                    "theme": my_theme['name'], 
+                    "is_gem": False, 
+                    "reason": final_reason, 
+                    "auto_eligible": auto_eligible,
+                    "market_cap": detail.get("market_cap", "N/A"),
+                    "vol": item.get("vol", 0),
+                    "amt": item.get("amt", 0)
+                }
+                if item_score >= dynamic_min_score:
                     with lock: stocks_pool.append(res)
-                    if on_item_found: on_item_found(res)
-                else:
-                    with lock: etfs_pool.append(res)
                     if on_item_found: on_item_found(res)
 
         # 병렬 처리로 지표와 1차 점수 수집
@@ -151,8 +171,7 @@ class VibeAlphaEngine:
             list(executor.map(fetch_detail_and_score, candidates))
 
         # 1차 필터링된 종목 중 Top N개 선별
-        top_stocks = sorted(stocks_pool, key=lambda x: x['score'], reverse=True)[:10]
-        top_etfs = sorted(etfs_pool, key=lambda x: x['score'], reverse=True)[:3]
+        top_stocks = sorted(stocks_pool, key=lambda x: x['score'], reverse=True)[:15]
 
         # 2차: AI 감성 분석 (뉴스 모멘텀 체크)
         if self.ai_advisor and top_stocks:
@@ -170,12 +189,10 @@ class VibeAlphaEngine:
             with ThreadPoolExecutor(max_workers=10) as executor:
                 list(executor.map(apply_sentiment, top_stocks))
 
-        # 최종 추천 리스트 확정
-        final_etfs = sorted(top_etfs, key=lambda x: x['score'], reverse=True)[:2]
-        needed_stocks = 10 - len(final_etfs)
-        final_stocks = sorted(top_stocks, key=lambda x: x['score'], reverse=True)[:needed_stocks]
+        # 최종 추천 리스트 확정 (Top 10)
+        final_stocks = sorted(top_stocks, key=lambda x: x['score'], reverse=True)[:10]
 
-        return final_stocks + final_etfs
+        return final_stocks
 
     def _calculate_ai_score(self, stock: dict, theme: dict, is_gem: bool, kr_vibe: str = "Neutral", market_data: dict = None, detail: dict = None, is_hot: bool = False) -> float:
         """종목별 입체 퀀트 스코어를 산출합니다.

@@ -37,7 +37,7 @@ class MarketWorker(BaseWorker):
         
         1. 지수 데이터 수집 및 한국 시장 개장 상태 동기화 (5초).
         2. 지수 변동성 또는 정기 주기에 따른 시장 Vibe 분석 (120초).
-        3. 인기 검색 및 거래량 상위 종목 기반 테마 분석 (120초).
+        3. 인기 검색 및 거래량/거래대금 상위 종목 기반 테마 분석 (120초).
         4. AI 추천 종목 리스트 및 API 사용 비용 업데이트 (5분).
         5. 장 개시/마감 등 주요 시점 알림 처리.
         """
@@ -197,57 +197,73 @@ class MarketWorker(BaseWorker):
         ranking_interval = 120
         if curr_t - getattr(self, "_last_ranking_time", 0) > ranking_interval:
             try:
-                self.state.update_worker_status("RANKING", status="수집 중")
+                # [v1.7.1] 개별 수집 상태 모니터링 세분화 (사용자 요청)
+                self.state.update_worker_status("HOT_RANKING", status="수집 중", friendly_name="RANK_HOT")
                 h_raw = self.api.get_naver_hot_stocks()
+                self.state.update_worker_status("HOT_RANKING", status="대기 중", result="성공", last_task=f"인기 {len(h_raw)}개 수집")
+                
+                self.state.update_worker_status("VOL_RANKING", status="수집 중", friendly_name="RANK_VOL")
                 v_raw = self.api.get_naver_volume_stocks()
-                self.themes = analyze_popular_themes(h_raw, v_raw)
+                self.state.update_worker_status("VOL_RANKING", status="대기 중", result="성공", last_task=f"거래량 {len(v_raw)}개 수집")
                 
-                shared_info = self._extract_price_info(h_raw + v_raw)
+                self.state.update_worker_status("AMT_RANKING", status="수집 중", friendly_name="RANK_AMT")
+                a_raw = self.api.get_naver_amount_stocks()
+                self.state.update_worker_status("AMT_RANKING", status="대기 중", result="성공", last_task=f"거래대금 {len(a_raw)}개 수집")
                 
-                # [Fix] HTML 크롤링 스냅샷 가격을 Naver 실시간 벌크 API로 즉시 보정
-                # market_worker가 2분마다 리스트를 교체할 때 크롤링 시점의 오래된 가격이
-                # 대시보드에 노출되는 타이밍 갭을 원천 방지
+                # [v1.7.1] 랭킹 노출 우선순위 로직 (장외: 거래량, 장내: 거래대금)
+                from src.utils import is_market_open
+                if is_market_open() and a_raw:
+                    r_type = "거래대금"
+                else:
+                    # 장외 시간이거나, 장내라도 거래대금 데이터가 비어있으면 거래량으로 폴백
+                    r_type = "거래량"
+                
+                # 테마 분석은 모든 수집 데이터를 통합 활용
+                self.state.update_worker_status("RANKING", status="테마분석")
+                self.themes = analyze_popular_themes(h_raw, v_raw + a_raw)
+                
+                from src.logger import logger
+                logger.info(f"📊 [RANKING] 시장 랭킹 데이터 수집 완료 ({r_type}) | 인기:{len(h_raw)} 거래량:{len(v_raw)} 거래대금:{len(a_raw)}")
+                
+                # 모든 랭킹 종목의 실시간 가격 보정을 위한 코드 통합
                 all_ranking_codes = list(set(
                     [item['code'] for item in h_raw if item.get('code')] +
-                    [item['code'] for item in v_raw if item.get('code')]
+                    [item['code'] for item in v_raw if item.get('code')] +
+                    [item['code'] for item in a_raw if item.get('code')]
                 ))
+                
                 if all_ranking_codes:
                     try:
                         rt_bulk = self.api.get_naver_stocks_realtime(all_ranking_codes)
                         if rt_bulk:
-                            for item in h_raw:
-                                rt = rt_bulk.get(item.get('code'))
-                                if rt:
-                                    item['price'] = rt['price']
-                                    item['rate'] = rt['rate']
-                            for item in v_raw:
-                                rt = rt_bulk.get(item.get('code'))
-                                if rt:
-                                    item['price'] = rt['price']
-                                    item['rate'] = rt['rate']
-                            # shared_info도 실시간 가격으로 갱신
-                            for code, rt in rt_bulk.items():
-                                if code in shared_info:
-                                    shared_info[code]['price'] = rt['price']
-                                    shared_info[code]['day_rate'] = rt['rate']
+                            for raw_list in [h_raw, v_raw, a_raw]:
+                                for item in raw_list:
+                                    rt = rt_bulk.get(item.get('code'))
+                                    if rt:
+                                        item['price'] = rt['price']
+                                        item['rate'] = rt['rate']
                     except Exception as e:
                         from src.logger import logger
-                        logger.debug(f"랭킹 실시간 가격 보정 실패 (Fallback: HTML 가격 사용): {e}")
+                        logger.debug(f"랭킹 실시간 가격 보정 실패: {e}")
+                
+                shared_info = self._extract_price_info(h_raw + v_raw + a_raw)
                 
                 with self.state.lock:
                     self.state.hot_raw = h_raw
                     self.state.vol_raw = v_raw
+                    self.state.amt_raw = a_raw
+                    self.state.ranking_type = r_type
                     for c, info in shared_info.items():
                         if c in self.state.stock_info: self.state.stock_info[c].update(info)
                         else: self.state.stock_info[c] = {"tp": 0, "sl": 0, "spike": False, "ma_20": 0, "prev_vol": 0, "day_val": 0, "day_rate": 0, "price": 0, **info}
                 
                 self._last_ranking_time = curr_t
-                self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw)
-                self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="성공", last_task="랭킹/테마 갱신 완료")
+                self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw + a_raw)
+                self.state.update_worker_status("THEME_ANAL", status="대기 중 (IDLE)", result="성공", last_task=f"랭킹/테마 갱신 완료 ({r_type})", friendly_name="RANK_THEME")
             except Exception as e:
                 from src.logger import log_error
                 log_error(f"MarketWorker Ranking Error: {e}")
-                self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="실패", last_task=f"수집 오류: {e}")
+                self.state.update_worker_status("THEME_ANAL", status="대기 중 (IDLE)", result="실패", last_task=f"수집 오류: {e}")
 
         # 4. 공통 기능 (5초)
         self._handle_notifications()
@@ -295,7 +311,7 @@ class MarketWorker(BaseWorker):
                 self.state.notified_dates["market_end"] = today_str
 
     def _extract_price_info(self, items: List[Dict]) -> Dict[str, Dict]:
-        """네이버 인기/거래량 상위 종목의 원시 데이터에서 핵심 가격 정보를 추출합니다.
+        """네이버 인기/거래량/거래대금 상위 종목의 원시 데이터에서 핵심 가격 정보를 추출합니다.
 
         Args:
             items (List[dict]): 네이버 금융 API에서 수집된 종목 리스트.
@@ -342,6 +358,7 @@ class MarketWorker(BaseWorker):
                         themes=self.themes,
                         hot_raw=self.state.hot_raw,
                         vol_raw=self.state.vol_raw,
+                        amt_raw=self.state.amt_raw,
                         progress_cb=rec_prog_cb
                     )
                     
@@ -357,6 +374,9 @@ class MarketWorker(BaseWorker):
                                     if rt:
                                         rec['price'] = rt['price']
                                         rec['rate'] = rt['rate']
+                                        # [추가] 실시간 거래량 및 거래대금 동기화 (aa->amt, aq->vol)
+                                        if 'amt' in rt: rec['amt'] = rt['amt']
+                                        if 'aq' in rt: rec['vol'] = rt['aq']
                         except Exception:
                             pass  # 실패 시 기존 가격 유지 (sync_worker에서 1초 후 보정됨)
                     

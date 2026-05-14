@@ -64,8 +64,14 @@ class KiwoomAPIClient(BaseAPI):
             code = h.get("stk_cd", "").replace("A", "") # 키움은 'A'가 붙어서 오는 경우가 많음
             cur_prc = self._safe_float(h.get("cur_prc", 0))
             pred_close = self._safe_float(h.get("pred_close_pric", 0))
+            antc_prc = self._safe_float(h.get("antc_cntg_prc", 0))
             
-            vrss = cur_prc - pred_close
+            # [신규] 장전 동시호가 시 현재가가 0이면 예상가 사용
+            display_prc = cur_prc
+            if display_prc <= 0 and antc_prc > 0:
+                display_prc = antc_prc
+            
+            vrss = display_prc - pred_close
             ctrt = (vrss / pred_close * 100) if pred_close else 0.0
             
             holdings.append({
@@ -73,10 +79,10 @@ class KiwoomAPIClient(BaseAPI):
                 "prdt_name": h.get("stk_nm", ""),
                 "hldg_qty": str(qty),
                 "pchs_avg_pric": str(self._safe_float(h.get("pur_pric", 0))),
-                "prpr": str(cur_prc),
-                "evlu_amt": str(self._safe_float(h.get("evlt_amt", 0))),
+                "prpr": str(display_prc),
+                "evlu_amt": str(display_prc * qty), # 평가금액 재계산
                 "evlu_pfls_rt": str(self._safe_float(h.get("prft_rt", 0))),
-                "evlu_pfls_amt": str(self._safe_float(h.get("evltv_prft", 0))),
+                "evlu_pfls_amt": str((display_prc - self._safe_float(h.get("pur_pric", 0))) * qty),
                 "prdy_vrss": str(vrss),
                 "prdy_ctrt": str(ctrt)
             })
@@ -117,13 +123,11 @@ class KiwoomAPIClient(BaseAPI):
         headers["api-id"] = tr_id
         
         body = {
-            "acnt_no": self.auth.account,
-            "pwd": "",
+            "dmst_stex_tp": "KRX",  # 국내거래소구분 (KRX: 한국거래소)
             "stk_cd": code,
             "ord_qty": str(int(qty)),
-            "ord_prc": str(int(price)),
-            "ord_tp": "1" if price == 0 else "0", # 1: 시장가, 0: 지정가 (가정) 키움 문서를 확인해야 하나 일반적으로 0이 지정가, 1이 시장가일 확률 높음.
-            "stcl_ord_tp": "0" # 당일(0)
+            "ord_uv": str(int(price)),
+            "trde_tp": "03" if price == 0 else "00" # 03: 시장가, 00: 보통(지정가)
         }
         try:
             res = self._request("POST", url, headers=headers, json=body, timeout=5)
@@ -250,7 +254,9 @@ class KiwoomAPIClient(BaseAPI):
                 "pbr": data.get("pbr"),
                 "eps": data.get("eps"),
                 "bps": data.get("bps"),
-                "market_cap": self._safe_float(data.get("total_eval_pric", 0)) * 1000000 # 보통 백만원 단위로 오므로 보정 필요할 수 있음 (확인 필요하나 일단 필드명 위주)
+                "antc_price": self._safe_float(data.get("antc_cntg_prc", 0)),
+                "antc_rate": self._safe_float(data.get("antc_cntg_prdy_ctrt", 0)),
+                "market_cap": self._safe_float(data.get("total_eval_pric", 0)) * 1000000 
             }
         except: return None
 

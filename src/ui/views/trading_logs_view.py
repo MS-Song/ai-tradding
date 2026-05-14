@@ -9,7 +9,6 @@ from src.utils import *
 from src.theme_engine import get_cached_themes, get_theme_for_stock
 from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
-from src.ui.renderer import truncate_log_line
 
 def draw_trading_logs(strategy, dm):
     """시스템의 원시 로그와 실시간 워커 상태를 모니터링하는 통합 로그 대시보드를 렌더링합니다.
@@ -179,16 +178,35 @@ def draw_trading_logs(strategy, dm):
                 last_times = dict(dm.last_times); worker_status = dict(dm._worker_statuses); worker_results = dict(dm.worker_results)
             
             worker_desc = {
-                "MARKET": "마켓 엔진 (수집)", "VIBE": "Vibe 분석 (AI)", "RANKING": "인기/테마 (랭킹)",
+                "INDEX": "지수 데이터 수집", "MARKET": "마켓 엔진 (수집)", "VIBE": "Vibe 분석 (AI)",
+                "RANKING": "인기/테마 (랭킹)", "HOT_RANKING": "인기 종목 수집", "VOL_RANKING": "거래량 랭킹 수집", "AMT_RANKING": "거래대금 랭킹 수집",
+                "THEME_ANAL": "테마 종목 분석",
                 "DATA": "데이터 동기화", "ASSET": "계좌 정보 수집", "BILLING": "API 비용 정산", 
                 "UPDATE": "최신 버전 확인", "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 발신", "TG_RECEIVE": "텔레그램 수신",
-                "AI_ENGINE": "AI 전략 엔진", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진", 
-                "TRADE": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링",
+                "AI_ENGINE": "AI 전략 엔진", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진",
+                "TRADE": "실시간 매매", "TRADE_EXECUTION": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링",
                 "REPORT": "정기 리포트 발송",
                 "WS_KIWOOM": "실시간 웹소켓",
-                "DB_SYNC": "테마 DB 갱신"
+                "THEME_SYNC": "테마 DB 갱신"
             }
-            all_workers = set(worker_desc.keys()); all_workers.update([k.upper() for k in last_times.keys()]); all_workers.update(worker_status.keys())
+            # [수정] 전체 모니터링 대상 워커 목록 취합 (설명 DB + 실제 실행 이력)
+            all_workers = sorted(list(set(worker_desc.keys()) | {w.upper() for w in last_times.keys()}))
+            
+            # [중복 제거 로직] 동일한 friendly name을 가진 워커가 여러 ID로 존재할 경우,
+            # 가장 최근에 갱신(ts)된 ID 하나만 남깁니다. (미갱신 고스트 행 제거)
+            worker_map = {}
+            for w in all_workers:
+                if not w or w == "...": continue
+                friendly = dm.worker_names.get(w, w)
+                ts = last_times.get(w.lower(), 0)
+                if friendly not in worker_map:
+                    worker_map[friendly] = w
+                else:
+                    prev_w = worker_map[friendly]
+                    if ts > last_times.get(prev_w.lower(), 0):
+                        worker_map[friendly] = w
+            
+            display_workers = list(worker_map.values())
             
             # [수정] 워커명 너비 확장 (15 -> 20) 및 경과 시간 너비 동기화 (12)
             h_name = align_kr('워커명', 20); h_desc = align_kr('설명(Task)', 18)
@@ -199,8 +217,8 @@ def draw_trading_logs(strategy, dm):
             
             sort_order = {"MARKET": 0, "VIBE": 1, "RANKING": 2, "AI_ENGINE": 3, "DATA": 4, "GLOBAL": 5, "TELEGRAM": 6, "TG_RECEIVE": 7, "ASSET": 8}
             def get_sort_key(x): return (sort_order.get(x, 99), x) if not x.startswith("STOCK_") else (100, x)
-            sorted_workers = sorted([w for w in all_workers if w and w != "..."], key=get_sort_key)
-            if "TELEGRAM" not in sorted_workers: sorted_workers.append("TELEGRAM")
+            sorted_workers = sorted(display_workers, key=get_sort_key)
+            if "TELEGRAM" not in sorted_workers and "TELEGRAM" in all_workers: sorted_workers.append("TELEGRAM")
             
             display_limit = max(5, available_h - 2)
             for w in sorted_workers[:display_limit]:

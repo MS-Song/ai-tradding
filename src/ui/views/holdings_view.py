@@ -9,6 +9,9 @@ from src.utils import *
 from src.theme_engine import get_cached_themes, get_theme_for_stock
 from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
+from src.ui.views.stock_table_renderer import (
+    render_core_header, render_core_row, CORE_SEPARATOR
+)
 
 def draw_holdings_detail(strategy, dm):
     """현재 보유 포트폴리오의 상세 현황과 AI 진단 의견을 보여주는 TUI 리포트 화면을 렌더링합니다.
@@ -35,6 +38,8 @@ def draw_holdings_detail(strategy, dm):
     from datetime import datetime
     
     _is_running_analysis = False
+    _investor_cache = {}  # 종목별 기관/외국인 수급 캐시
+    _investor_loaded = False
     
     def run_bg_analysis():
         nonlocal _is_running_analysis
@@ -49,6 +54,25 @@ def draw_holdings_detail(strategy, dm):
             dm.clear_busy("UI")
             time.sleep(0.2)
             flush_input()
+
+    def load_investor_data():
+        """보유 종목들의 기관/외국인 수급 데이터를 백그라운드로 수집합니다."""
+        nonlocal _investor_loaded
+        if not dm.cached_holdings:
+            _investor_loaded = True
+            return
+        for h in dm.cached_holdings:
+            code = h['pdno']
+            try:
+                inv = strategy.api.get_investor_trading_trend(code)
+                if inv:
+                    _investor_cache[code] = inv
+            except:
+                pass
+        _investor_loaded = True
+
+    # 최초 진입 시 수급 데이터 백그라운드 로드
+    threading.Thread(target=load_investor_data, daemon=True).start()
 
     while True:
         try:
@@ -72,14 +96,41 @@ def draw_holdings_detail(strategy, dm):
         if not dm.cached_holdings:
             buf.write(align_kr("현재 보유 중인 종목이 없습니다.", tw, 'center') + "\n")
         else:
-            buf.write("\033[1m" + f"{align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('수익률', 10)} | {align_kr('평가손액', 12)} | {align_kr('PER', 7)} | {align_kr('PBR', 6)}" + "\033[0m\n")
+            # 보유 리포트 전용 컬럼: 수익률, 평가손액
+            extra_h = [('수익률', 10, 'right'), ('평가손액', 12, 'right')]
+            header_str = render_core_header(extra_headers=extra_h)
+            buf.write("\033[1m" + header_str + "\033[0m\n")
             buf.write("-" * tw + "\n")
             max_h = max(3, th - 15)
             for h in dm.cached_holdings[:max_h]:
-                code = h['pdno']; pnl_rt = float(h.get('evlu_pfls_rt', 0)); pnl_amt = int(float(h.get('evlu_pfls_amt', 0)))
-                color = "\033[91m" if pnl_amt > 0 else "\033[94m" if pnl_amt < 0 else "\033[0m"
+                code = h['pdno']
+                pnl_rt = float(h.get('evlu_pfls_rt', 0))
+                pnl_amt = int(float(h.get('evlu_pfls_amt', 0)))
+                pnl_color = "\033[91m" if pnl_amt > 0 else "\033[94m" if pnl_amt < 0 else "\033[0m"
+                
                 detail = strategy.api.get_naver_stock_detail(code, force=False)
-                buf.write(f"{align_kr(code, 8)} | {align_kr(h['prdt_name'], 14)} | {color}{align_kr(f'{pnl_rt:+.2f}%', 10, 'right')}\033[0m | {color}{align_kr(f'{pnl_amt:+,}', 12, 'right')}\033[0m | {align_kr(detail.get('per','N/A'), 7, 'right')} | {align_kr(detail.get('pbr','N/A'), 6, 'right')}\n")
+                inv = _investor_cache.get(code, {})
+                
+                # 전용 컬럼 값
+                rt_str = f"{pnl_color}{pnl_rt:+.2f}%\033[0m"
+                amt_str = f"{pnl_color}{pnl_amt:+,}\033[0m"
+                extra_cols = [(rt_str, 10, 'right'), (amt_str, 12, 'right')]
+                
+                row = render_core_row(
+                    code=code,
+                    name=h['prdt_name'],
+                    price=detail.get('price', 0),
+                    rate=detail.get('rate', 0.0),
+                    per=detail.get('per', 'N/A'),
+                    pbr=detail.get('pbr', 'N/A'),
+                    mktcap=detail.get('market_cap', 'N/A'),
+                    vol=detail.get('vol', 0),
+                    amt=detail.get('amt', 0),
+                    frgn=inv.get('frgn_net_buy', 0),
+                    inst=inv.get('inst_net_buy', 0),
+                    extra_columns=extra_cols
+                )
+                buf.write(row + "\n")
 
         buf.write("\n\033[1;96m" + " [AI 포트폴리오 매니저의 실시간 진단 의견]" + "\033[0m")
         if hasattr(strategy, 'ai_holdings_update_time') and strategy.ai_holdings_update_time > 0:
@@ -141,4 +192,3 @@ def draw_holdings_detail(strategy, dm):
                     return
             time.sleep(0.01)
             inner_cycle += 1
-

@@ -157,7 +157,7 @@ class KISAPIClient(BaseAPI):
         url = f"{self.domain}/uapi/domestic-stock/v1/trading/order-cash"
         headers = self.auth.get_auth_headers()
         tr_id = "VTTC0802U" if is_buy else "VTTC0801U"
-        if not self.auth.is_virtual: tr_id = "TTTC0802U" if is_buy else "TTTC0801U"
+        if not self.auth.is_virtual: tr_id = "TTTC0012U" if is_buy else "TTTC0011U"
         headers.update({"tr_id": tr_id})
         dvsn = "01" if price == 0 else "00"
         body = {"CANO": self.auth.cano, "ACNT_PRDT_CD": "01", "PDNO": code, "ORD_DVSN": dvsn, "ORD_QTY": str(int(qty)), "ORD_UNPR": str(int(price))}
@@ -255,6 +255,8 @@ class KISAPIClient(BaseAPI):
                 "pbr": d.get("pbr"),
                 "eps": d.get("eps"),
                 "bps": d.get("bps"),
+                "antc_price": self._safe_float(d.get("antc_cntg_prce", 0)),
+                "antc_rate": self._safe_float(d.get("antc_cntg_prdy_ctrt", 0)),
                 "market_cap": self._safe_float(d.get("lstn_stkn", 0)) * self._safe_float(d.get("stck_prpr", 0)) # 상장주식수 * 현재가
             }
         except: return None

@@ -48,7 +48,7 @@ class KiwoomWSWorker(BaseWorker):
             self._connect()
         else:
             self._reconnect_count = 0  # 연결 유지 중이면 카운터 리셋
-            self.set_result("수신 중", "웹소켓")
+            self.set_result("수신 중", last_task="실시간 시세 수신 대기", friendly_name="웹소켓")
             self._check_and_subscribe()
 
     def _connect(self):

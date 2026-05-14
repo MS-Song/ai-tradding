@@ -25,6 +25,8 @@ class NaverAPIClient(BaseAPI):
         super().__init__()
         self._detail_cache = {}
         self._cache_duration = 120
+        self._session = requests.Session()
+        self._session.headers.update(self.headers)
 
     def get_naver_stocks_realtime(self, codes: List[str]) -> Dict[str, dict]:
         """여러 종목의 실시간 시세를 한 번에 조회합니다.
@@ -41,7 +43,7 @@ class NaverAPIClient(BaseAPI):
         try:
             codes_str = ",".join(codes)
             api_url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes_str}"
-            res = requests.get(api_url, headers=self.headers, timeout=5)
+            res = self._session.get(api_url, timeout=5)
             results = {}
             if res.status_code == 200:
                 data = res.json()
@@ -63,6 +65,7 @@ class NaverAPIClient(BaseAPI):
                             "rate": rate,
                             "cv": cv,
                             "aq": float(item.get('aq', 0)),
+                            "amt": float(item.get('aa', 0)), # [추가] 거래대금 (백만 단위)
                             "hv": float(item.get('hv', price)),
                             "lv": float(item.get('lv', price)),
                             "ov": float(item.get('ov', price))
@@ -83,7 +86,7 @@ class NaverAPIClient(BaseAPI):
         try:
             url = "https://finance.naver.com/sise/lastsearch2.naver"
             self._wait_for_domain_delta(url)
-            res = requests.get(url, headers=self.headers, timeout=5)
+            res = self._session.get(url, timeout=5)
             if not BeautifulSoup: return []
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             table = soup.find('table', {'class': 'type_5'})
@@ -134,7 +137,8 @@ class NaverAPIClient(BaseAPI):
         detail = {
             "name": "Unknown", "price": 0, "rate": 0.0, "cv": 0, 
             "market_cap": "N/A", "per": "N/A", "pbr": "N/A", 
-            "yield": "N/A", "sector_per": "N/A"
+            "yield": "N/A", "sector_per": "N/A",
+            "vol": 0, "amt": 0
         }
         
         # 1. 실시간 시세 및 기본 정보 (캐시 확인 후 polling API 활용)
@@ -154,13 +158,15 @@ class NaverAPIClient(BaseAPI):
                 detail["price"] = item.get("price", 0)
                 detail["rate"] = item.get("rate", 0.0)
                 detail["cv"] = item.get("cv", 0)
+                detail["vol"] = item.get("aq", 0)
+                detail["amt"] = item.get("amt", 0)
         except: pass
 
         # 2. 펀더멘털 및 상세 정보 (HTML 크롤링 - 상세함)
         try:
             url = f"https://finance.naver.com/item/main.naver?code={code}"
             self._wait_for_domain_delta(url)
-            res = requests.get(url, headers=self.headers, timeout=5)
+            res = self._session.get(url, timeout=5)
             if BeautifulSoup:
                 soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
                 
@@ -207,7 +213,7 @@ class NaverAPIClient(BaseAPI):
         except: return detail
 
     def get_naver_volume_stocks(self) -> List[dict]:
-        """네이버 금융 '거래량 급증 종목' 리스트를 수집합니다.
+        """네이버 금융 '거래량 상위 종목' 리스트를 수집합니다.
 
         Returns:
             List[dict]: 거래량 상위 종목 리스트 (코스피/코스닥 통합 최대 40개).
@@ -215,7 +221,8 @@ class NaverAPIClient(BaseAPI):
         results = []
         try:
             for sosok in ["0", "1"]:
-                url = f"https://finance.naver.com/sise/nxt_sise_quant.naver?sosok={sosok}"
+                # [v1.7.2] 안정성을 위해 PC 버전 sise_quant.naver URL 사용
+                url = f"https://finance.naver.com/sise/sise_quant.naver?sosok={sosok}"
                 self._wait_for_domain_delta(url)
                 res = requests.get(url, headers=self.headers, timeout=5)
                 if not BeautifulSoup: continue
@@ -232,7 +239,6 @@ class NaverAPIClient(BaseAPI):
                                 rate_txt = cols[4].text.strip().replace('%', '').replace('+', '')
                                 try:
                                     rate = float(rate_txt)
-                                    # [Fix] 부호 중복 적용 방지 및 아이콘 탐색 강화
                                     icon_img = cols[3].find('img') or cols[4].find('img')
                                     if icon_img:
                                         img_src = icon_img.get('src', '').lower()
@@ -244,6 +250,54 @@ class NaverAPIClient(BaseAPI):
                                 vol_txt = cols[5].text.replace(',', '').strip()
                                 vol = float(vol_txt) if vol_txt else 0.0
                                 results.append({"code": code, "name": name, "price": price, "rate": rate, "vol": vol, "mkt": "KSP" if sosok == "0" else "KDQ"})
+            # 거래량 기준으로 내림차순 정렬
+            results.sort(key=lambda x: x.get('vol', 0), reverse=True)
+            return results[:40]
+        except: return []
+
+    def get_naver_amount_stocks(self) -> List[dict]:
+        """네이버 금융 '거래대금 상위 종목' 리스트를 수집합니다.
+
+        Returns:
+            List[dict]: 거래대금 상위 종목 리스트 (코스피/코스닥 통합 최대 40개).
+        """
+        results = []
+        try:
+            for sosok in ["0", "1"]:
+                # [v1.7.2] sise_amount.naver 404 이슈 해결: sise_quant.naver에서 거래대금 컬럼 추출
+                url = f"https://finance.naver.com/sise/sise_quant.naver?sosok={sosok}"
+                self._wait_for_domain_delta(url)
+                res = requests.get(url, headers=self.headers, timeout=5)
+                if not BeautifulSoup: continue
+                soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+                table = soup.find('table', {'class': 'type_2'})
+                if table:
+                    for row in table.find_all('tr'):
+                        cols = row.find_all('td')
+                        # sise_quant.naver 기준: 0:No, 1:종목명, 2:현재가, 3:전일대비, 4:등락률, 5:거래량, 6:거래대금(백만)
+                        if len(cols) > 6:
+                            a = cols[1].find('a')
+                            if a:
+                                name, code = a.text.strip(), a['href'].split('=')[-1].strip()
+                                if not code.isdigit(): continue
+                                rate_txt = cols[4].text.strip().replace('%', '').replace('+', '')
+                                try:
+                                    rate = float(rate_txt)
+                                    icon_img = cols[3].find('img') or cols[4].find('img')
+                                    if icon_img:
+                                        img_src = icon_img.get('src', '').lower()
+                                        if 'down' in img_src: rate = -abs(rate)
+                                        elif 'up' in img_src: rate = abs(rate)
+                                except: rate = 0.0
+                                price_txt = cols[2].text.replace(',', '').strip()
+                                price = float(price_txt) if price_txt else 0.0
+                                # 거래대금 (6번째 TD, 백만원 단위)
+                                amt_txt = cols[6].text.replace(',', '').strip()
+                                amt = float(amt_txt) if amt_txt else 0.0
+                                results.append({"code": code, "name": name, "price": price, "rate": rate, "amt": amt, "mkt": "KSP" if sosok == "0" else "KDQ"})
+            
+            # 거래대금 기준으로 내림차순 정렬
+            results.sort(key=lambda x: x.get('amt', 0), reverse=True)
             return results[:40]
         except: return []
 
@@ -259,7 +313,7 @@ class NaverAPIClient(BaseAPI):
         try:
             url = f"https://finance.naver.com/item/news.naver?code={code}"
             self._wait_for_domain_delta(url)
-            res = requests.get(url, headers=self.headers, timeout=5)
+            res = self._session.get(url, timeout=5)
             if not BeautifulSoup: return []
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             news_list = []
@@ -292,8 +346,9 @@ class NaverAPIClient(BaseAPI):
                     if a and 'sise_group_detail.naver' in a['href']:
                         theme_name, theme_url = a.text.strip(), "https://finance.naver.com" + a['href']
                         try:
-                            self._wait_for_domain_delta(theme_url)
-                            res_d = requests.get(theme_url, headers=self.headers, timeout=5)
+                            # [v1.7.2] 테마 상세 수집 시 간격을 더 늘려 차단 방지 (1.0s)
+                            time.sleep(1.0)
+                            res_d = self._session.get(theme_url, timeout=5)
                             soup_d = BeautifulSoup(res_d.content, 'html.parser', from_encoding='cp949')
                             stocks = []
                             table_d = soup_d.find('table', {'class': 'type_5'})
@@ -322,7 +377,7 @@ class NaverAPIClient(BaseAPI):
         """
         try:
             url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=minute&count={count}&requestType=0"
-            res = requests.get(url, timeout=5)
+            res = self._session.get(url, timeout=5)
             if res.status_code != 200: return []
             
             import re
@@ -360,7 +415,7 @@ class NaverAPIClient(BaseAPI):
             
             # [수정] 웹페이지 크롤링 시에는 JSON 헤더가 오해를 살 수 있으므로 User-Agent만 포함된 클린 헤더 사용
             clean_headers = {"User-Agent": self.headers.get("User-Agent")}
-            res = requests.get(url, headers=clean_headers, timeout=5)
+            res = self._session.get(url, headers=clean_headers, timeout=5)
             if not BeautifulSoup: return None
             
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
@@ -420,7 +475,7 @@ class NaverAPIClient(BaseAPI):
         try:
             url = "https://m.stock.naver.com/api/index/KOSPI/basic"
             self._wait_for_domain_delta(url)
-            res = requests.get(url, headers=self.headers, timeout=5)
+            res = self._session.get(url, timeout=5)
             if res.status_code == 200:
                 status = res.json().get('marketStatus')
                 if status:

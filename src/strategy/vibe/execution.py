@@ -302,6 +302,25 @@ class ExecutionMixin:
             rt = safe_cast_float(item.get("evlu_pfls_rt"))
             action, sell_qty, action_reason = None, 0, ""
 
+            # [v2.1 조건3] 극단 상황(글로벌 패닉 또는 -10% 급락) 시 전략 미설정 종목에 강제 전략 할당
+            # TradeWorker에서 조건1(자동매매ON)·조건2(분석1회완료)는 이미 통과한 상태이므로,
+            # 여기서는 전략이 없는 종목이 극단 상황에 노출될 때 즉시 방어 전략을 수립하고 매매 진행
+            is_extreme_emergency = self.analyzer.is_panic or rt <= -10.0
+            if is_extreme_emergency:
+                has_strategy = (code in self.exit_mgr.manual_thresholds) or \
+                               (code in self.preset_strategies and self.preset_strategies[code].get('preset_id') != '00')
+                if not has_strategy:
+                    emergency_tp = self.exit_mgr.base_tp
+                    emergency_sl = self.exit_mgr.base_sl
+                    self.assign_preset(code, "05", tp=emergency_tp, sl=emergency_sl,
+                                       reason=f"🚨 긴급 강제 전략 ({'글로벌 패닉' if self.analyzer.is_panic else f'급락 {rt:+.1f}%'})",
+                                       name=name, lifetime_mins=60)
+                    logger.warning(f"🚨 [긴급] {name}({code}) 강제 전략 설정: TP {emergency_tp:+.1f}% / SL {emergency_sl:.1f}%")
+                    if self.state:
+                        self.state.add_trading_log(f"🚨 긴급 전략 설정: {name} (TP:{emergency_tp:+.1f}% SL:{emergency_sl:.1f}%)")
+                    # 강제 전략 설정 후 TP/SL 재계산하여 정상 매매 흐름으로 합류
+                    tp, sl, vol_spike = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
+
             if rt >= tp:
                 if not self._is_in_partial_sell_cooldown(code, curr_t): action, sell_qty = "익절", max(1, math.floor(int(item.get('hldg_qty', 0)) * 0.3))
                 else:
@@ -483,9 +502,6 @@ class ExecutionMixin:
                     # [Step 3] 최종 구매 컨펌 (Gemini) - 모든 품질 게이트 통과 후 마지막에 실행
                     is_ok, reason, wait_mins = self.confirm_buy_decision(code, name, score)
                     if not is_ok:
-                        if code in self.rejected_stocks:
-                            # AI가 거절한 경우, 로그에 대기 시간을 함께 표시
-                            trading_log.log_ai_activity("매수거절", f"[{code}] {name}", "REJECT", f"{reason} ({wait_mins}분 스킵)")
                         continue
                             
                     # [Step 3] 매수 집행 준비
@@ -611,7 +627,7 @@ class ExecutionMixin:
                     ma_info = f" [MA:{sig}]"
                     # trading_log.log_ai_activity("MA분석", f"[{code}] {name} 지표분석", "COMPLETED", f"Signal: {sig}")
                 except Exception as e:
-                    trading_log.log_ai_activity("MA분석", f"[{code}] {name} 분석실패", "FAIL", str(e)[:30])
+                    trading_log.log_ai_activity("MA분석", f"[{code}] {name} 분석실패", "FAIL", str(e))
                     logger.warning(f"물타기/불타기 MA분석 실패 ({name}): {e}")
 
             # 1. 물타기 체크
@@ -720,7 +736,7 @@ class ExecutionMixin:
                     score += 15.0
                 trading_log.log_ai_activity("MA분석", f"[{code}] {name} 매수검토용", "COMPLETED", f"Signal: {sig}")
         except Exception as e:
-            trading_log.log_ai_activity("MA분석", f"[{code}] {name} 매수검토실패", "FAIL", str(e)[:30])
+            trading_log.log_ai_activity("MA분석", f"[{code}] {name} 매수검토실패", "FAIL", str(e))
             logger.warning(f"지표 수급 및 분석 중 오류 (스킵): {e}")
 
         # [핵심 보완] MA 지표를 전혀 취득하지 못한 경우 → 과열 여부 불명이므로 score에 패널티 적용
@@ -742,7 +758,7 @@ class ExecutionMixin:
                 # 성공적으로 판단을 내렸다면 (승인이든 거절이든) 루프 종료
                 if "failed" not in reason.lower():
                     res_tag = "승인" if is_confirmed else "거절"
-                    trading_log.log_ai_activity("매수검토", f"[{code}] {name} 최종결과", res_tag, reason[:50])
+                    trading_log.log_ai_activity("매수검토", f"[{code}] {name} 최종결과", res_tag, reason)
                     break
                 logger.warning(f"⚠️ AI 호출 실패로 재시도 중 ({i+1}/3): {reason}")
             except Exception as e:

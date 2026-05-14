@@ -7,7 +7,6 @@ import re
 from src.utils import *
 from src.theme_engine import get_cached_themes, get_theme_for_stock
 from src.strategy import PRESET_STRATEGIES
-from src.ui.renderer import truncate_log_line
 from src.logger import trading_log
 
 def draw_performance_report(strategy, dm):

@@ -24,6 +24,8 @@ class YahooAPIClient(BaseAPI):
         self._index_cache = {}
         self._index_src = "yahoo"
         self._index_src_fail_counts = {"yahoo": 0, "naver_api": 0}
+        self._session = requests.Session()
+        self._session.headers.update(self.headers)
 
     def get_index_price(self, iscd: str) -> Optional[dict]:
         """특정 지수의 현재가와 등락률을 조회합니다.
@@ -71,11 +73,12 @@ class YahooAPIClient(BaseAPI):
         except requests.exceptions.Timeout:
             pass  # 타임아웃은 조용히 Naver로 폴백
         except Exception as e:
+            # ConnectionResetError 등 일시적 오류는 우선 Naver 시도 (로그는 워닝으로)
             if "timed out" in str(e).lower() or "timeout" in str(e).lower():
                 pass
             else:
-                from src.logger import log_error
-                log_error(f"⚠️ Yahoo 지수 수집 오류 ({iscd}): {e}")
+                from src.logger import logger
+                logger.warning(f"⚠️ Yahoo 지수 수집 1차 시도 실패 ({iscd}): {e}")
 
         # 2. Naver 시도 (Fallback)
         try:
@@ -110,10 +113,26 @@ class YahooAPIClient(BaseAPI):
         }
         target = symbol_map.get(iscd, iscd)
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{target}?interval=1m&range=1d"
-        res = requests.get(url, headers=self.headers, timeout=10)
-        if res.status_code != 200:
-            raise Exception(f"HTTP {res.status_code}")
-        data = res.json()
+        
+        max_retries = 2
+        last_err = None
+        for i in range(max_retries + 1):
+            try:
+                self._wait_for_domain_delta(url)
+                res = self._session.get(url, timeout=10)
+                if res.status_code != 200:
+                    raise Exception(f"HTTP {res.status_code}")
+                data = res.json()
+                break
+            except (requests.exceptions.ConnectionError, requests.exceptions.ChunkedEncodingError) as e:
+                last_err = e
+                if i < max_retries:
+                    time.sleep(1 * (i + 1))
+                    continue
+                raise e
+            except Exception as e:
+                raise e
+
         try:
             meta = data['chart']['result'][0]['meta']
             curr_p = meta.get('regularMarketPrice', 0)
@@ -172,7 +191,7 @@ class YahooAPIClient(BaseAPI):
                         return {"name": iscd, "price": price, "rate": rate, "source": "Naver Crawling"}
             except: pass
         
-        # 해외 지수: 모바일 API 지원 확대 (DOW, NAS, S&P)
+        # 해외 지수 및 환율: 모바일 API 지원 확대 (DOW, NAS, S&P, FX)
         world_map = {"NASDAQ": "NAS@IXIC", "DOW": "DJI@DJI", "S&P500": "SPI@SPX"}
         if iscd in world_map:
             try:
@@ -185,6 +204,21 @@ class YahooAPIClient(BaseAPI):
                         "price": float(d['closePrice'].replace(',', '')),
                         "rate": float(d['fluctuationsRatio']),
                         "source": "Naver API"
+                    }
+            except: pass
+
+        # 원/달러 환율 전용 API (Fallback)
+        if iscd == "FX_USDKRW":
+            try:
+                url = "https://api.stock.naver.com/marketindex/exchange/FX_USDKRW"
+                res = requests.get(url, headers=self.headers, timeout=5)
+                if res.status_code == 200:
+                    d = res.json()
+                    return {
+                        "name": iscd,
+                        "price": float(d['closePrice'].replace(',', '')),
+                        "rate": float(d['fluctuationsRatio']),
+                        "source": "Naver FX API"
                     }
             except: pass
 

@@ -8,8 +8,28 @@ from datetime import datetime
 from src.utils import *
 from src.theme_engine import get_cached_themes, get_theme_for_stock
 from src.strategy import PRESET_STRATEGIES
-from src.ui.renderer import truncate_log_line
 from src.logger import trading_log
+
+def wrap_text_kr(text, width):
+    """한글 시각 너비를 고려하여 텍스트를 지정된 너비로 래핑합니다."""
+    if not text: return [""]
+    lines = []
+    current_line = ""
+    current_width = 0
+    for char in text:
+        # 한글/전각 문자 여부 판별
+        import unicodedata
+        cw = 2 if unicodedata.east_asian_width(char) in ['W', 'F', 'A'] else 1
+        if current_width + cw > width:
+            lines.append(current_line)
+            current_line = char
+            current_width = cw
+        else:
+            current_line += char
+            current_width += cw
+    if current_line:
+        lines.append(current_line)
+    return lines
 
 def draw_ai_logs_report(strategy, dm):
     """AI 엔진의 백그라운드 활동 및 상세 의사결정 내역을 보여주는 TUI 리포트 화면을 렌더링합니다.
@@ -76,29 +96,45 @@ def draw_ai_logs_report(strategy, dm):
                 header = f" {align_kr('시간', 10)} | {align_kr('구분', 10)} | {align_kr('내용', 50)} | {align_kr('결과', 10)} | {align_kr('비고', avail_w)}"
                 buf.write("\033[1m" + header + "\033[0m\n")
                 buf.write("-" * tw + "\n")
+                # 가용 너비가 너무 적으면 최소값 보장
+                avail_w = max(20, tw - 93)
                 max_items = max(3, th - 13)
-                for item in today_activities[:max_items]:
+                item_count = 0
+                
+                for item in today_activities:
+                    if item_count >= max_items: break
+                    
                     t_str = item['time'].split(' ')[-1]
                     cat = item.get('category', '')
                     content = item.get('content', '')
                     res = item.get('result', '')
                     remarks = item.get('remarks', '')
-                    # 줄바꿈 제거 및 공백 정제 (한 줄로 연결)
-                    remarks = re.sub(r'\s+', ' ', remarks.replace('\n', ' ').replace('\r', ' ')).strip()
                     
-                    # 내용 컬럼 (50자) 내 넘침 처리 (.. 접미사 사용)
+                    # 1. 텍스트 정제 (개행 제거 및 마크다운 제거)
+                    remarks = clean_ai_text(remarks)
+                    remarks = re.sub(r'\s+', ' ', remarks.replace('\n', ' ').replace('\r', ' ')).strip()
                     content = truncate_log_line(content, 50, suffix='..')
                     
-                    # 비고(Remarks) 가용 너비만큼 넘침 처리
-                    remarks = truncate_log_line(remarks, avail_w, suffix='..')
-                    
-                    # 결과 색상 처리
+                    # 2. 결과 색상 처리
                     res_color = ""
                     if "SUCCESS" in res or "COMPLETED" in res or "승인" in res: res_color = "\033[92m"
                     elif "REJECTED" in res or "거절" in res or "FAIL" in res: res_color = "\033[91m"
                     elif "WAIT" in res or "진행" in res or "SKIP" in res: res_color = "\033[93m"
                     
-                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(cat, 10)} | {align_kr(content, 50)} | {res_color}{align_kr(res, 10)}\033[0m | {remarks}\n")
+                    # 3. 줄바꿈 처리
+                    r_lines = wrap_text_kr(remarks, avail_w)
+                    # 너무 길면 최대 3줄까지만 표시 (화면 부족 방지)
+                    display_lines = r_lines[:3]
+                    if len(r_lines) > 3: display_lines[-1] = truncate_log_line(display_lines[-1], avail_w - 2) + ".."
+                    
+                    for i, line in enumerate(display_lines):
+                        if i == 0:
+                            buf.write(f" {align_kr(t_str, 10)} | {align_kr(cat, 10)} | {align_kr(content, 50)} | {res_color}{align_kr(res, 10)}\033[0m | {line}\n")
+                        else:
+                            # 추가 줄은 앞 컬럼 비우기
+                            buf.write(f" {' ' * 10} | {' ' * 10} | {' ' * 50} | {' ' * 10} | {line}\n")
+                    
+                    item_count += 1
 
         elif current_tab == 2:
             buf.write("\033[1;91m" + " [AI 매수 거절 히스토리 (오늘)]" + "\033[0m\n")
@@ -113,11 +149,14 @@ def draw_ai_logs_report(strategy, dm):
                 buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('모델', 8)} | 거절 사유" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
                 max_items = max(3, th - 13)
-                for item in today_rejections[:max_items]:
+                item_count = 0
+                for item in today_rejections:
+                    if item_count >= max_items: break
+                    
                     t_str = item['time'].split(' ')[-1]
                     m_id = item.get('model_id', '')
                     m_name = trading_log._normalize_model_name(m_id)
-                    reason = item['reason']
+                    reason = clean_ai_text(item['reason'])
                     # 줄바꿈 제거 및 공백 정제
                     reason = re.sub(r'\s+', ' ', reason.replace('\n', ' ').replace('\r', ' ')).strip()
                     
@@ -126,14 +165,22 @@ def draw_ai_logs_report(strategy, dm):
                     if match:
                         extracted_model = match.group(1)
                         reason = match.group(2)
-                        # AI가 명시한 모델이 있으면 m_name(TP/SL) 대신 사용
                         if m_name == "TP/SL" or not m_name:
                             m_name = extracted_model
 
-                    # 가용 너비 계산 및 넘침 처리
-                    avail_w = max(10, tw - 55)
-                    reason = truncate_log_line(reason, avail_w, suffix='..')
-                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {reason}\n")
+                    # 가용 너비 계산 및 줄바꿈 처리
+                    avail_w = max(20, tw - 55)
+                    r_lines = wrap_text_kr(reason, avail_w)
+                    display_lines = r_lines[:3]
+                    if len(r_lines) > 3: display_lines[-1] = truncate_log_line(display_lines[-1], avail_w - 2) + ".."
+                    
+                    for i, line in enumerate(display_lines):
+                        if i == 0:
+                            buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {line}\n")
+                        else:
+                            buf.write(f" {' ' * 10} | {' ' * 8} | {' ' * 14} | {' ' * 8} | {line}\n")
+                    
+                    item_count += 1
 
         elif current_tab == 3:
             buf.write("\033[1;92m" + " [종목 한도(8개) 초과에 따른 당일 교체 히스토리]" + "\033[0m\n")
@@ -147,17 +194,30 @@ def draw_ai_logs_report(strategy, dm):
                 buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('OUT(매도)', 22)} | {align_kr('IN(매수)', 22)} | 교체 사유" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
                 max_items = max(3, th - 13)
-                for item in today_replacements[:max_items]:
+                item_count = 0
+                for item in today_replacements:
+                    if item_count >= max_items: break
+                    
                     t_str = item['time'].split(' ')[-1]
                     out_info = f"[{item.get('out_code','?')}] {item.get('out_name','?')[:12]}"
                     in_info = f"[{item.get('in_code','?')}] {item.get('in_name','?')[:12]}"
-                    reason = item['reason']
+                    reason = clean_ai_text(item['reason'])
                     # 줄바꿈 제거 및 공백 정제
                     reason = re.sub(r'\s+', ' ', reason.replace('\n', ' ').replace('\r', ' ')).strip()
-                    # 가용 너비 계산 및 넘침 처리
-                    avail_w = max(10, tw - 66)
-                    reason = truncate_log_line(reason, avail_w, suffix='..')
-                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(out_info, 22)} | {align_kr(in_info, 22)} | {reason}\n")
+                    
+                    # 가용 너비 계산 및 줄바꿈 처리
+                    avail_w = max(20, tw - 66)
+                    r_lines = wrap_text_kr(reason, avail_w)
+                    display_lines = r_lines[:3]
+                    if len(r_lines) > 3: display_lines[-1] = truncate_log_line(display_lines[-1], avail_w - 2) + ".."
+                    
+                    for i, line in enumerate(display_lines):
+                        if i == 0:
+                            buf.write(f" {align_kr(t_str, 10)} | {align_kr(out_info, 22)} | {align_kr(in_info, 22)} | {line}\n")
+                        else:
+                            buf.write(f" {' ' * 10} | {' ' * 22} | {' ' * 22} | {line}\n")
+                    
+                    item_count += 1
 
         elif current_tab == 4:
             buf.write("\033[1;93m" + " [AI 당일 매수 승인 및 진입 근거]" + "\033[0m\n")
@@ -172,27 +232,37 @@ def draw_ai_logs_report(strategy, dm):
                 buf.write("\033[1m" + f" {align_kr('시간', 10)} | {align_kr('코드', 8)} | {align_kr('종목명', 14)} | {align_kr('모델', 8)} | 매수 승인 사유" + "\033[0m\n")
                 buf.write("-" * tw + "\n")
                 max_items = max(3, th - 13)
-                for item in today_reasons[:max_items]:
+                item_count = 0
+                for item in today_reasons:
+                    if item_count >= max_items: break
+                    
                     t_str = item['time'].split(' ')[-1]
                     m_id = item.get('model_id', '')
                     m_name = trading_log._normalize_model_name(m_id)
-                    reason = item['reason']
+                    reason = clean_ai_text(item['reason'])
                     # 줄바꿈 제거 및 공백 정제
                     reason = re.sub(r'\s+', ' ', reason.replace('\n', ' ').replace('\r', ' ')).strip()
                     
-                    # [Architect 개선] 사유 내 모델 식별자([...]) 추출 및 모델 컬럼 이동
                     match = re.match(r'^\[([^\]]+)\]\s*(.*)', reason)
                     if match:
                         extracted_model = match.group(1)
                         reason = match.group(2)
-                        # AI가 명시한 모델이 있으면 m_name(TP/SL) 대신 사용
                         if m_name == "TP/SL" or not m_name:
                             m_name = extracted_model
 
-                    # 가용 너비 계산 및 넘침 처리
-                    avail_w = max(10, tw - 55)
-                    reason = truncate_log_line(reason, avail_w, suffix='..')
-                    buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {reason}\n")
+                    # 가용 너비 계산 및 줄바꿈 처리
+                    avail_w = max(20, tw - 55)
+                    r_lines = wrap_text_kr(reason, avail_w)
+                    display_lines = r_lines[:3]
+                    if len(r_lines) > 3: display_lines[-1] = truncate_log_line(display_lines[-1], avail_w - 2) + ".."
+                    
+                    for i, line in enumerate(display_lines):
+                        if i == 0:
+                            buf.write(f" {align_kr(t_str, 10)} | {align_kr(item['code'], 8)} | {align_kr(item['name'], 14)} | {align_kr(m_name, 8)} | {line}\n")
+                        else:
+                            buf.write(f" {' ' * 10} | {' ' * 8} | {' ' * 14} | {' ' * 8} | {line}\n")
+                    
+                    item_count += 1
 
         elif current_tab == 5:
             buf.write("\033[1;96m" + " [현재 보유 종목별 AI 전략 수립 근거]" + "\033[0m\n")
@@ -218,19 +288,32 @@ def draw_ai_logs_report(strategy, dm):
                 p_list.sort(key=lambda x: x['buy_time'] if x['buy_time'] else '0000', reverse=True)
                 
                 max_items = max(3, th - 13)
-                for item in p_list[:max_items]:
+                item_count = 0
+                for item in p_list:
+                    if item_count >= max_items: break
+                    
                     code = item["code"]
                     p = item["p"]
                     b_time_str = p.get('buy_time', '??').split(' ')[-1] if p.get('buy_time') else '??'
                     detail = strategy.api.get_naver_stock_detail(code)
                     name = detail.get('name', code)
-                    reason = p.get('reason', '')
+                    reason = clean_ai_text(p.get('reason', ''))
                     # 줄바꿈 제거 및 공백 정제
                     reason = re.sub(r'\s+', ' ', reason.replace('\n', ' ').replace('\r', ' ')).strip()
-                    # 가용 너비 계산 및 넘침 처리
-                    avail_w = max(10, tw - 60)
-                    reason = truncate_log_line(reason, avail_w, suffix='..')
-                    buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {reason}\n")
+                    
+                    # 가용 너비 계산 및 줄바꿈 처리
+                    avail_w = max(20, tw - 60)
+                    r_lines = wrap_text_kr(reason, avail_w)
+                    display_lines = r_lines[:3]
+                    if len(r_lines) > 3: display_lines[-1] = truncate_log_line(display_lines[-1], avail_w - 2) + ".."
+                    
+                    for i, line in enumerate(display_lines):
+                        if i == 0:
+                            buf.write(f" {align_kr(b_time_str, 10)} | {align_kr(code, 8)} | {align_kr(name, 14)} | {align_kr(p['name'], 12)} | {line}\n")
+                        else:
+                            buf.write(f" {' ' * 10} | {' ' * 8} | {' ' * 14} | {' ' * 12} | {line}\n")
+                    
+                    item_count += 1
 
         buf.write("\n" + "-" * tw + "\n")
         buf.write(align_kr(" [1, 2, 3, 4, 5]: 탭 전환 | Q, ESC, SPACE: 종료 ", tw, 'center') + "\n")

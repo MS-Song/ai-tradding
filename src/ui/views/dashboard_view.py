@@ -10,7 +10,7 @@ from src.utils import *
 from src.theme_engine import get_cached_themes, get_theme_for_stock
 from src.strategy import PRESET_STRATEGIES
 from src.logger import trading_log
-from src.ui.renderer import VERSION_CACHE, truncate_log_line
+from src.ui.renderer import VERSION_CACHE
 
 def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
     """시스템의 메인 제어 센터이자 실시간 모니터링 대시보드를 렌더링합니다.
@@ -356,8 +356,8 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         ai_costs = dm.cached_ai_costs
         total_ai_cost = sum(ai_costs.values())
         
-        d0_c = asset.get('d0_cash', 0)
-        cash_info = f"가용: {d0_c:,.0f}"
+        avail_cash = asset.get('cash', 0)
+        cash_info = f"가용: {avail_cash:,.0f}"
         stk_info = f"주식: {stk_eval:,.0f}"
         daily_info = f"일일: {pnl_color}{pnl_amt:+,.0f} ({pnl_rate:+.2f}%)\033[0m"
         realized_info = f"실현: {real_color}{realized_p:+,.0f}\033[0m"
@@ -425,7 +425,12 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                         supply_tag = f" [{f_tag}{'/' if f_tag and p_tag else ''}{p_tag}]"
 
                 name_area = f"[{code}] {name[:(w[2]-15)//2*2]}" + ("*" if info['spike'] else "") + supply_tag
-                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(name_area, w[2]) + align_kr(f"{int(p_cu):,}", w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw-1) + "\n")
+                # [신규] 동시호가(예상체결가) 표시
+                p_cu_txt = f"{int(p_cu):,}"
+                if info.get('is_antc'):
+                    p_cu_txt += "(예)"
+                
+                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(name_area, w[2]) + align_kr(p_cu_txt, w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw-1) + "\n")
             if len(f_h) > max_h_display: buf.write(align_kr(f"... 외 {len(f_h) - max_h_display}종목 생략됨 ...", tw, 'center') + "\n")
         
         buf.write("-" * tw + "\n"); themes = get_cached_themes()
@@ -480,7 +485,9 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         col_w4 = max(15, eff_w - col_w1 - col_w2 - col_w3)
         
         full_hot = [g for g in dm.cached_hot_raw if str(g.get('mkt','')).strip().upper() == dm.ranking_filter or dm.ranking_filter == "ALL"]
-        full_vol = [l for l in dm.cached_vol_raw if str(l.get('mkt','')).strip().upper() == dm.ranking_filter or dm.ranking_filter == "ALL"]
+        # [v1.7.1] 현재 상태(ranking_type)에 따라 거래량 또는 거래대금 데이터를 선택
+        raw_source = dm.cached_amt_raw if dm.state.ranking_type == "거래대금" else dm.cached_vol_raw
+        full_vol = [l for l in raw_source if str(l.get('mkt','')).strip().upper() == dm.ranking_filter or dm.ranking_filter == "ALL"]
         hot_list = full_hot[:ranking_items_count]
         vol_list = full_vol[:ranking_items_count]
         
@@ -583,8 +590,14 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             # 조립 (이름은 왼쪽, 가격은 오른쪽, 남는 공간은 가운데 띄어쓰기로 채움)
             # [Fix] 우측 끝 1칸 여백 고정 확보
             prefix = f"[{theme_fmt}][{item['code']}]"
-            spaces = max(0, width - 16 - get_visual_width(d_name) - price_vw)
-            price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
+            
+            # [신규] 동시호가 표시 (중앙 상태에서 확인)
+            p_txt = f"{p:,}"
+            if dm.state.stock_info.get(item['code'], {}).get('is_antc'):
+                p_txt += "(예)"
+            
+            spaces = max(0, width - 16 - get_visual_width(d_name) - get_visual_width(f"({p_txt}/{rate_str})"))
+            price_txt = f"({p_txt}/{c}{rate_str}\033[0m)"
             
             return f"{prefix}{d_name}{' ' * spaces}{price_txt}"
 
@@ -627,8 +640,13 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
             # 조립 (가운데 여백 채우기)
             # [Fix] 우측 끝 1칸 여백 고정 확보
             prefix = f"[{theme_fmt}][{item['code']}]{auto_tag_color}{auto_tag_text}\033[0m"
-            spaces = max(0, width - base_w - get_visual_width(d_name) - price_vw)
-            price_txt = f"({p:,}/{c}{rate_str}\033[0m)"
+            
+            p_txt = f"{p:,}"
+            if dm.state.stock_info.get(item['code'], {}).get('is_antc'):
+                p_txt += "(예)"
+            
+            spaces = max(0, width - base_w - get_visual_width(d_name) - get_visual_width(f"({p_txt}/{rate_str})"))
+            price_txt = f"({p_txt}/{c}{rate_str}\033[0m)"
             
             return f"{prefix}{d_name}{' ' * spaces}{price_txt}"
 
@@ -637,7 +655,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         ai_mode_label = f"매수:{b_st}|매도:{s_st}"
         buf.write(
             f"\033[1;93m{align_kr('🔥 실시간 인기 종목', col_w1)}\033[0m | "
-            f"\033[1;96m{align_kr('📊 거래량 상위 종목', col_w2)}\033[0m | "
+            f"\033[1;96m{align_kr(f'📊 {dm.state.ranking_type} 상위 종목', col_w2)}\033[0m | "
             f"\033[1;95m{align_kr('💡 테마 종목', col_w3)}\033[0m | "
             f"\033[1;92m{align_kr(f'✨ AI 추천 [{ai_mode_label}]', col_w4)}\033[0m\n"
         )
