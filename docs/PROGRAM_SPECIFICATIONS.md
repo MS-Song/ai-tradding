@@ -1,7 +1,7 @@
-# 📄 AI-Vibe-Trader Program Specifications (v2.0.260513)
-
+# 📄 AI-Vibe-Trader Program Specifications (v2.0.260515)
+...
 ## 1. 개요 (Overview)
-본 시스템은 국내 주요 증권사(KIS/Kiwoom) API와 네이버 금융 데이터를 결합하여, 시장의 분위기(VIBE)를 진단하고 AI 기반의 자율 트레이딩을 수행하는 엔진입니다. 본 명세서는 시스템의 모든 물리적 구성 파일(Total 60 Files)과 각 파일의 상세 역할을 전수 기술합니다. v2.0에서는 멀티 브로커(KIS/Kiwoom) 통합 지원, 중앙 집중식 API 속도 제한(Rate Limiting), 그리고 강화된 자율 매매 로직이 적용되었습니다.
+본 시스템은 국내 주요 증권사(KIS/Kiwoom) API와 네이버 금융 데이터를 결합하여, 시장의 분위기(VIBE)를 진단하고 AI 기반의 자율 트레이딩을 수행하는 엔진입니다. 본 명세서는 시스템의 모든 물리적 구성 파일(Total 64 Files)과 각 파일의 상세 역할을 전수 기술합니다. v2.0에서는 멀티 브로커(KIS/Kiwoom) 통합 지원, 중앙 집중식 API 속도 제한(Rate Limiting), 그리고 강화된 자율 매매 로직이 적용되었습니다.
 
 ---
 
@@ -27,8 +27,11 @@ AI-Vibe-Trader/
 
 ## 3. 파일별 상세 명세 (Exhaustive File List)
 
-### 📂 Root Files (`src/`)
+### 📂 Root Files
 - **`main.py`**: 프로그램 진입점. 시스템 초기화 및 모든 백그라운드 워커를 가동합니다.
+- **`run_all_tests.py`**: 프로젝트 내 모든 `pytest` 기반 테스트를 일괄 실행하는 파이썬 스크립트.
+- **`run_tests.bat`**: Windows CMD 환경에서 테스트를 간편하게 실행하기 위한 배치 파일.
+- **`run_tests.ps1`**: Windows PowerShell 환경에서 테스트를 간편하게 실행하기 위한 스크립트.
 - **`src/auth.py`**: KIS API 인증 토큰 관리 및 보안 헤더 생성을 담당합니다.
 - **`src/config_init.py`**: `.env` 설정 로드 및 시스템 환경 변수 초기화를 수행합니다.
 - **`src/data_manager.py`**: 메모리 상의 전역 데이터를 관리하며, 영속성 저장소와 실시간 동기화합니다.
@@ -100,6 +103,7 @@ AI-Vibe-Trader/
 
 ### 📂 `src/workers/` (Background Process)
 - **`base.py`**: 모든 비동기 워커의 베이스 클래스 정의.
+- **`kis_ws_worker.py`**: 한국투자증권 WebSocket 기반 실시간 호가/체결 데이터 수신 워커.
 - **`kiwoom_ws_worker.py`**: 키움증권 WebSocket 기반 실시간 호가/체결 데이터 수신 워커.
 - **`market_worker.py`**: 시황 분석 및 테마 갱신을 담당하는 주기적 워커.
 - **`report_worker.py`**: 주기적 상태 보고 및 텔레그램 전송 워커.
@@ -130,4 +134,4 @@ AI-Vibe-Trader/
 
 ---
 > [!IMPORTANT]
-> 본 명세서는 v2.0.260513 기준으로 작성되었으며, 모든 수정 사항은 `GEMINI.md`의 문서 관리 정책을 따릅니다.
+> 본 명세서는 v2.0.260515 기준으로 작성되었으며, 모든 수정 사항은 `GEMINI.md`의 문서 관리 정책을 따릅니다.

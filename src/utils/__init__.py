@@ -76,7 +76,11 @@ def set_terminal_raw():
     try:
         fd = sys.stdin.fileno()
         new = termios.tcgetattr(fd)
+        # ECHO: 입력 문자 화면 출력 끔, ICANON: 엔터 대기(Line Buffering) 끔
         new[3] = new[3] & ~termios.ECHO & ~termios.ICANON
+        # VMIN=1: 최소 1바이트 읽을 때까지 대기, VTIME=0: 타임아웃 없음
+        new[6][termios.VMIN] = 1
+        new[6][termios.VTIME] = 0
         termios.tcsetattr(fd, termios.TCSANOW, new)
     except: pass
 
@@ -96,7 +100,12 @@ def flush_input():
         while msvcrt.kbhit():
             msvcrt.getch()
     else:
-        try: termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        try: 
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+            # Python 내부 버퍼에 남은 데이터도 소진 시도
+            import select
+            while select.select([sys.stdin.fileno()], [], [], 0)[0]:
+                os.read(sys.stdin.fileno(), 1024)
         except: pass
 
 def get_key_immediate():
@@ -129,15 +138,37 @@ def get_key_immediate():
         return None
     else:
         import select
-        if select.select([sys.stdin], [], [], 0)[0]:
-            c = sys.stdin.read(1)  # text-mode: 이미 완성된 유니코드 문자
-            if c == '\x1b':
-                if select.select([sys.stdin], [], [], 0.05)[0]:
-                    sys.stdin.read(1)
-                    return None
-                return 'esc'
-            result = normalize_key(c)
-            return result.lower() if result else None
+        import os
+        fd = sys.stdin.fileno()
+        if select.select([fd], [], [], 0)[0]:
+            try:
+                # [중요] sys.stdin.read(1)은 Python의 TextIOWrapper에 의해 버퍼링(Line Buffering)될 수 있음.
+                # 리눅스에서 엔터를 쳐야만 입력이 전달되는 문제를 해결하기 위해 os.read로 직접 읽음.
+                b = os.read(fd, 1)
+                if not b: return None
+                
+                # ESC 및 시퀀스 처리
+                if b == b'\x1b':
+                    # 추가 데이터가 있는지 아주 짧게 확인하여 시퀀스(방향키 등)면 버림
+                    if select.select([fd], [], [], 0.01)[0]:
+                        os.read(fd, 8) 
+                        return None
+                    return 'esc'
+                
+                # UTF-8 멀티바이트 조립 (한글 자모 등 대응)
+                if b[0] & 0x80:
+                    if (b[0] & 0xE0) == 0xC0: # 2 bytes
+                        b += os.read(fd, 1)
+                    elif (b[0] & 0xE0) == 0xE0: # 3 bytes (한글 등)
+                        b += os.read(fd, 2)
+                    elif (b[0] & 0xF0) == 0xF0: # 4 bytes
+                        b += os.read(fd, 3)
+                
+                decoded = b.decode('utf-8', errors='ignore')
+                result = normalize_key(decoded)
+                return result.lower() if result else None
+            except:
+                return None
     return None
 
 def input_with_esc(prompt, tw, callback=None):

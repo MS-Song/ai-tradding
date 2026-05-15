@@ -133,7 +133,7 @@ def main():
                     # TUI 정지 및 화면 청소 후 종료 알림
                     sys.stdout = _safe_real_stdout
                     restore_terminal_settings(); exit_alt_screen()
-                    sys.stdout.write("\033[H\033[2J" + align_kr(" 시스템을 안전하게 종료합니다. 잠시만 기다려주세요... ", tw, 'center') + "\n")
+                    sys.stdout.write("\033[H\033[2J" + align_kr(" AI-VIBE-TRADER를 안전하게 종료합니다. 잠시만 기다려주세요... ", tw, 'center') + "\n")
                     sys.stdout.flush()
                     time.sleep(1)
                     os._exit(0)

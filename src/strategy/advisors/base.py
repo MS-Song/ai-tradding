@@ -263,10 +263,11 @@ class BaseLLMAdvisor(BaseAdvisor):
             return f"- {r['name']}({r['code']}) | 현재가: {int(float(r.get('price',0))):,}원 | PER {detail.get('per')}, PBR {detail.get('pbr')}{supply_info} | 뉴스: {', '.join(news[:2])}"
         with ThreadPoolExecutor(max_workers=5) as executor:
             enriched_recs = list(executor.map(fetch_enriched_data, recs))
+        recs_summary = chr(10).join(enriched_recs)
         prompt = f"""
         수석 투자 전략가로서 아래 종목들에 대해 [초압축] 입체 분석 리포트를 작성하세요.
         [시장 장세] {vibe}
-        {"\n".join(enriched_recs)}
+        {recs_summary}
         [가이드라인]
         1. 종목당 반드시 '한 줄'로만 요약. (예: [종목명] 호재성 뉴스 포착, 추세 상승 중이므로 적극 매수 권장)
         2. '사야 하는지(Buy)', '팔아야 하는지(Sell)' 결론을 명확히 포함할 것.
@@ -307,12 +308,13 @@ class BaseLLMAdvisor(BaseAdvisor):
             return f"- {h['prdt_name']}({h['pdno']}): 수익률 {float(h.get('evlu_pfls_rt', 0)):+.2f}% (목표 {h.get('tp', 0.0):+.1f}%, 손절 {h.get('sl', 0.0):.1f}%) | 현재가 {int(float(h.get('prpr', 0))):,}원 | 뉴스 {', '.join(news[:2])}"
         with ThreadPoolExecutor(max_workers=5) as executor:
             enriched_holdings = list(executor.map(fetch_enriched_holding, holdings))
+        holdings_summary = chr(10).join(enriched_holdings)
         prompt = f"""
         [수석 포트폴리오 매니저 진단 리포트]
         현재 시황: {vibe} | 주요 지수: {json.dumps(market_data, ensure_ascii=False)}
 
         아래 보유 종목들을 TUI(Terminal UI)에서 보기 좋은 리스트 형식으로 진단하십시오.
-        {chr(10).join(enriched_holdings)}
+        {holdings_summary}
 
         [출력 규칙]
         1. 종목마다 명확한 헤더(예: ■ 종목명 (코드) [의견])를 사용하십시오.
@@ -364,10 +366,11 @@ class BaseLLMAdvisor(BaseAdvisor):
             return f"- {item.get('name','')}: {float(item.get('rate',0)):+.2f}% | PER {detail.get('per')}, PBR {detail.get('pbr')} | 뉴스 {', '.join(news[:2])}"
         with ThreadPoolExecutor(max_workers=5) as executor:
             enriched = list(executor.map(fetch_enriched_hot, hot_stocks[:10]))
+        hot_summary = chr(10).join(enriched)
         prompt = f"""
         수석 트렌드 분석가로서 당일 인기 검색 종목에 대한 [초압축] 진단을 수행하세요.
         테마: {", ".join([f"{t['name']}" for t in themes[:5]])}
-        {"\n".join(enriched)}
+        {hot_summary}
         [가이드라인]
         1. 종목당 반드시 '한 줄'로만 요약하여 Buy/Sell 의견을 제시할 것. 
         2. 해당 테마의 지속성 여부와 현재가 기준 진입/관망 여부를 명확히 할 것.

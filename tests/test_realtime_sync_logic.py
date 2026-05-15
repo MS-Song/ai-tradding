@@ -118,7 +118,7 @@ class TestRealtimeSyncLogic(unittest.TestCase):
             }]
         }
         
-        ws_worker._handle_real_data(sample_data)
+        ws_worker._handle_real_data(sample_data['data'][0])
         
         info = self.state.stock_info.get("005930", {})
         self.assertEqual(info.get("price"), 70500.0)

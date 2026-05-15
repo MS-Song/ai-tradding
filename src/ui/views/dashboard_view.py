@@ -77,7 +77,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         update_tag = ""
     # 브로커 정보 확인 (키움 또는 KIS)
     broker_name = "키움" if "kiwoom" in strategy.api.auth.__class__.__name__.lower() else "KIS"
-    version_text = f"[AI TRADING SYSTEM ver {VERSION_CACHE}] [{broker_name}]{mode_tag}{update_tag}"
+    version_text = f"[AI-VIBE-TRADER ver {VERSION_CACHE}] [{broker_name}]{mode_tag}{update_tag}"
     market_text = f"KR:{k_st} | US:{u_st}"
     status_active = dm.status_msg and (time.time() - dm.status_time < 10)
     busy_msg = dm.global_busy_msg
@@ -426,11 +426,11 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 supply_tag = ""
                 inv = info.get('investor')
                 if inv:
-                    f_net, p_net = inv.get('frgn_net_buy', 0), inv.get('pnsn_net_buy', 0)
+                    f_net, i_net = inv.get('frgn_net_buy', 0), inv.get('inst_net_buy', 0)
                     f_tag = "\033[91mF↑\033[0m" if f_net > 0 else ("\033[94mF↓\033[0m" if f_net < 0 else "")
-                    p_tag = "\033[91mP↑\033[0m" if p_net > 0 else ("\033[94mP↓\033[0m" if p_net < 0 else "")
-                    if f_tag or p_tag:
-                        supply_tag = f" [{f_tag}{'/' if f_tag and p_tag else ''}{p_tag}]"
+                    i_tag = "\033[91mI↑\033[0m" if i_net > 0 else ("\033[94mI↓\033[0m" if i_net < 0 else "")
+                    if f_tag or i_tag:
+                        supply_tag = f" [{f_tag}{'/' if f_tag and i_tag else ''}{i_tag}]"
 
                 name_area = f"[{code}] {name[:(w[2]-15)//2*2]}" + ("*" if info['spike'] else "") + supply_tag
                 # [신규] 동시호가(예상체결가) 표시 - (예) 제거 요청 반영

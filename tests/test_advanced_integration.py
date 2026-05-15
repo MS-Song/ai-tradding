@@ -341,7 +341,7 @@ class TestRealtimeSyncScenarios:
             "trnm": "REAL",
             "data": [{"type": "0B", "item": "005930", "values": {"10": "70500", "13": "100"}}]
         }
-        ws._handle_real_data(msg)
+        ws._handle_real_data(msg['data'][0])
         assert state.stock_info["005930"]["price"] == 70500.0
         assert state.stock_info["005930"]["is_socket"] is True
 

@@ -96,8 +96,8 @@ def draw_holdings_detail(strategy, dm):
         if not dm.cached_holdings:
             buf.write(align_kr("현재 보유 중인 종목이 없습니다.", tw, 'center') + "\n")
         else:
-            # 보유 리포트 전용 컬럼: 수익률, 평가손액
-            extra_h = [('수익률', 10, 'right'), ('평가손액', 12, 'right')]
+            # 보유 리포트 전용 컬럼: 평단, 수익률, 평가손액
+            extra_h = [('평단', 10, 'right'), ('수익률', 10, 'right'), ('평가손액', 12, 'right')]
             header_str = render_core_header(extra_headers=extra_h)
             buf.write("\033[1m" + header_str + "\033[0m\n")
             buf.write("-" * tw + "\n")
@@ -108,13 +108,17 @@ def draw_holdings_detail(strategy, dm):
                 pnl_amt = int(float(h.get('evlu_pfls_amt', 0)))
                 pnl_color = "\033[91m" if pnl_amt > 0 else "\033[94m" if pnl_amt < 0 else "\033[0m"
                 
+                # 평균단가 (계산 없이 직접 사용)
+                pchs_avg = int(float(h.get('pchs_avg_pric', 0)))
+                
                 detail = strategy.api.get_naver_stock_detail(code, force=False)
                 inv = _investor_cache.get(code, {})
                 
                 # 전용 컬럼 값
+                pchs_str = f"{pchs_avg:,.0f}"
                 rt_str = f"{pnl_color}{pnl_rt:+.2f}%\033[0m"
                 amt_str = f"{pnl_color}{pnl_amt:+,}\033[0m"
-                extra_cols = [(rt_str, 10, 'right'), (amt_str, 12, 'right')]
+                extra_cols = [(pchs_str, 10, 'right'), (rt_str, 10, 'right'), (amt_str, 12, 'right')]
                 
                 row = render_core_row(
                     code=code,

@@ -100,7 +100,7 @@ class TelegramCommandListener:
             self.app.add_handler(CommandHandler("panic", self._cmd_panic))
             
             # 폴링 시작 (Blocking in this thread)
-            self.app.run_polling(close_loop=False, drop_pending_updates=True)
+            self.app.run_polling(close_loop=False, drop_pending_updates=True, stop_signals=False)
         except Exception as e:
             log_error(f"TelegramCommandListener Polling Error: {e}")
 

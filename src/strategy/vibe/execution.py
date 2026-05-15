@@ -897,6 +897,10 @@ class ExecutionMixin:
                 reason = opinion.get("reason", "AI 분석 결과")
                 
                 if action == "SELL":
+                    # [Fix] is_manual 및 holding_sec 정의 (NameError 해결)
+                    is_manual = self.preset_strategies.get(code, {}).get('is_manual', False)
+                    holding_sec = time.time() - self.last_buy_times.get(code, 0)
+
                     # [교체 보호 로직] AI 판단에 위임 (유저 요청 반영: 보호 시간은 AI 판단에 맡김)
                     # 수동 매수는 여전히 20분간 자율 매도로부터 보호하여 사용자 통제권 유지
                     if is_manual and holding_sec < 1200:

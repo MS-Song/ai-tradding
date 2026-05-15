@@ -54,10 +54,13 @@ class DataSyncWorker(BaseWorker):
                 self.force_sync = False # 플래그 초기화
                 
                 if h or a.get('total_asset', 0) > 0:
-                    # [개선] 주식 평가금은 보유 종목 합산으로 직접 보정 (KIS API 지연 대응)
+                    # [수정] 주식 평가금 및 미실현 손익은 보유 종목 합산으로 직접 보정 (KIS API 요약 데이터 지연/불일치 대응)
                     actual_stock_eval = sum(float(item.get('evlu_amt', 0)) for item in h)
+                    actual_pnl = sum(float(item.get('evlu_pfls_amt', 0)) for item in h)
+                    
                     api_stock_eval = a.get('stock_eval', 0)
                     a['stock_eval'] = actual_stock_eval
+                    a['pnl'] = actual_pnl # 요약 pnl도 보유 종목 합산으로 동기화
                     
                     # [수정] 총자산 재계산: KIS API 원본 총자산(tot_evlu_amt)을 기반으로 주식 평가금만 보정
                     # cash(D+2 정산예수금)로 총자산을 재계산하면 D+0 예수금과의 차이로 자산이 누락됨
@@ -343,7 +346,7 @@ class DataSyncWorker(BaseWorker):
                 "day_val": day_val, "day_rate": day_rate,
                 "ma_20": ma_20, "price": curr_p, "prev_vol": p_vol, "name": s_name, "ma_source": ma_source,
                 "is_antc": is_antc,
-                "investor": investor_data if is_holding else old_info.get("investor")
+                "investor": investor_data if investor_data is not None else old_info.get("investor")
             }, task_id, ma_20, is_holding, ma_source
 
         # [최적화] 실거래에서는 큐의 동시성을 늘려 병렬 처리 가속
@@ -417,6 +420,7 @@ class DataSyncWorker(BaseWorker):
             if eval_delta != 0 and self.state.asset:
                 self.state.asset['total_asset'] = float(self.state.asset.get('total_asset', 0)) + eval_delta
                 self.state.asset['stock_eval'] = float(self.state.asset.get('stock_eval', 0)) + eval_delta
+                self.state.asset['pnl'] = float(self.state.asset.get('pnl', 0)) + eval_delta # 미실현 손익도 함께 업데이트
                 self._update_asset_metrics(self.state.asset)
 
             self.state.stock_info.update(temp_info)

@@ -112,7 +112,7 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
         
         if mode == 'q':
             restore_terminal_settings(); exit_alt_screen()
-            print("\n[AI TRADING SYSTEM] 사용자에 의해 안전하게 종료되었습니다."); os._exit(0)
+            print("\n[AI-VIBE-TRADER] 사용자에 의해 안전하게 종료되었습니다."); os._exit(0)
         
         if mode in ['m', 'l', 'b', 'd', 'h', 'a', 'p', 'k']:
             def run_display_task():
@@ -223,8 +223,15 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                 if inp and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
                     h = f_h[int(inp[0])-1]; code, name = h['pdno'], h['prdt_name']
                     max_qty = int(float(h['hldg_qty']))
-                    user_qty = int(float(inp[1])) if len(inp) > 1 and inp[1].replace('.','',1).isdigit() else max_qty
-                    
+                    if len(inp) < 2:
+                        dm.show_status("⚠️ [번호 수량]을 입력해야 합니다. (예: 1 10)", True)
+                        return
+                        
+                    if not inp[1].replace('.','',1).isdigit():
+                        dm.show_status("⚠️ 수량은 숫자여야 합니다.", True)
+                        return
+
+                    user_qty = int(float(inp[1]))
                     qty = min(user_qty, max_qty)
                     price = int(float(inp[2])) if len(inp) > 2 and inp[2].replace('.','',1).isdigit() else 0
                     
@@ -299,7 +306,11 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
             if res:
                 inp = res.strip().split()
                 if len(inp) >= 2:
-                    code, qty = inp[0], int(inp[1]); price = int(inp[2]) if len(inp) > 2 and inp[2].isdigit() else 0
+                    if not inp[1].isdigit():
+                        dm.show_status("⚠️ 수량은 숫자여야 합니다.", True)
+                        return
+                    code, qty = inp[0], int(inp[1])
+                    price = int(inp[2]) if len(inp) > 2 and inp[2].isdigit() else 0
                     def task_buy():
                         dm.set_busy("매수 처리", "MANUAL_TRADE")
                         try:
@@ -346,8 +357,14 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
             if res:
                 inp = res.strip().split()
                 if len(inp) >= 3:
-                    try: strategy.ai_config.update({"amount_per_trade": int(inp[0]), "max_investment_per_stock": int(inp[1]), "auto_mode": inp[2].lower() == 'y'}); strategy._save_all_states(); dm.show_status(f"✨ 설정 완료")
-                    except: dm.show_status("❌ 입력 오류", True)
+                    try:
+                        amt = int(inp[0].replace(',',''))
+                        lim = int(inp[1].replace(',',''))
+                        auto = inp[2].lower() == 'y'
+                        strategy.ai_config.update({"amount_per_trade": amt, "max_investment_per_stock": lim, "auto_mode": auto})
+                        strategy._save_all_states()
+                        dm.show_status(f"✨ AI 추천 설정 완료")
+                    except: dm.show_status("❌ 입력 오류 (숫자 형식을 확인하세요)", True)
 
         elif mode == '8':
             if strategy.is_analyzing:
@@ -388,11 +405,13 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                 inp = res.strip().split()
                 if len(inp) >= 4:
                     try:
-                        trig, amt, lim = float(inp[0]), int(inp[1]), int(inp[2])
-                        if amt < 1000: amt *= 10000
-                        if lim < 1000: lim *= 10000
-                        strategy.bear_config.update({"min_loss_to_buy": trig, "average_down_amount": amt, "max_investment_per_stock": lim, "auto_mode": inp[3].lower() == 'y'}); strategy._save_all_states(); dm.show_status(f"✅ 물타기 설정 완료")
-                    except: dm.show_status("❌ 입력 오류", True)
+                        trig, amt, lim = float(inp[0]), int(inp[1].replace(',','')), int(inp[2].replace(',',''))
+                        if amt < 1000 and amt > 0: amt *= 10000
+                        if lim < 1000 and lim > 0: lim *= 10000
+                        strategy.bear_config.update({"min_loss_to_buy": trig, "average_down_amount": amt, "max_investment_per_stock": lim, "auto_mode": inp[3].lower() == 'y'})
+                        strategy._save_all_states()
+                        dm.show_status(f"✅ 물타기 설정 완료")
+                    except: dm.show_status("❌ 입력 오류 (숫자 형식을 확인하세요)", True)
 
         elif mode == '6':
             res = get_input(dm, "> 불타기설정 [트리거% 금액 한도 자동(y/n)]: ", tw)

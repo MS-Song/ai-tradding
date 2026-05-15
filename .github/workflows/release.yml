@@ -129,10 +129,10 @@ jobs:
       - name: Prepare Release Files
         run: |
           mkdir -p final-assets
-          cp release-artifacts/windows-artifact/KIS-Vibe-Trader.exe final-assets/KIS-Vibe-Trader.exe
+          cp release-artifacts/windows-artifact/AI-Vibe-Trader.exe final-assets/AI-Vibe-Trader.exe
           cp release-artifacts/windows-artifact/USER_MANUAL.pdf final-assets/USER_MANUAL.pdf
           cp release-artifacts/windows-artifact/D2Coding.ttf final-assets/D2Coding.ttf
-          cp release-artifacts/linux-artifact/KIS-Vibe-Trader-Linux final-assets/KIS-Vibe-Trader-Linux
+          cp release-artifacts/linux-artifact/AI-Vibe-Trader-Linux final-assets/AI-Vibe-Trader-Linux
           cp release-artifacts/test-report/TEST_REPORT.md final-assets/TEST_REPORT.md
           
       - name: Create Release
@@ -141,7 +141,7 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag_name }}
           name: Release ${{ steps.version.outputs.version }}
           body: |
-            ## KIS-Vibe-Trader 자동 빌드 및 검증 완료 릴리즈
+            ## AI-Vibe-Trader 자동 빌드 및 검증 완료 릴리즈
             - **버전**: ${{ steps.version.outputs.version }}
             - **빌드 시각**: ${{ github.event.head_commit.timestamp }}
             - **테스트 상태**: ✅ PASS (100% 검증 통과)
@@ -152,16 +152,16 @@ jobs:
             - 상세 테스트 결과는 첨부된 `TEST_REPORT.md` 참조
             
             ### 📂 첨부 파일 설명
-            1. **KIS-Vibe-Trader.exe**: 윈도우용 실행 파일
-            2. **KIS-Vibe-Trader-Linux**: 리눅스용 실행 파일
+            1. **AI-Vibe-Trader.exe**: 윈도우용 실행 파일
+            2. **AI-Vibe-Trader-Linux**: 리눅스용 실행 파일
             3. **TEST_REPORT.md**: 빌드 검증 상세 리포트 (통합 테스트 11종 성공)
             4. **USER_MANUAL.pdf**: PDF 사용자 매뉴얼
             5. **D2Coding.ttf**: 권장 폰트
           draft: false
           prerelease: false
           files: |
-            final-assets/KIS-Vibe-Trader.exe
-            final-assets/KIS-Vibe-Trader-Linux
+            final-assets/AI-Vibe-Trader.exe
+            final-assets/AI-Vibe-Trader-Linux
             final-assets/USER_MANUAL.pdf
             final-assets/D2Coding.ttf
             final-assets/TEST_REPORT.md

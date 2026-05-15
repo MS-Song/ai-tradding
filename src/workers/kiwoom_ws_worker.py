@@ -68,10 +68,8 @@ class KiwoomWSWorker(BaseWorker):
         ws_domain = getattr(self.api.auth, "ws_domain", "wss://api.kiwoom.com:10000")
         url = f"{ws_domain}/api/dostk/websocket"
         
-        # 키움 REST API 웹소켓은 Authorization 헤더로 인증
-        headers = {
-            "authorization": f"Bearer {self.api.auth.access_token}"
-        }
+        # 키움 REST API 웹소켓은 Authorization 헤더로 인증 (auth 객체에서 통합 관리되는 헤더 사용)
+        headers = self.api.auth.get_auth_headers()
         
         def on_open(ws):
             logger.info("✅ 키움증권 실시간 웹소켓 연결 성공")
@@ -101,7 +99,7 @@ class KiwoomWSWorker(BaseWorker):
                         elif d.get("type") == "1B":
                             self._handle_auction_data(d)
                 elif trnm == "PINGPONG":
-                    # 서버 측 PINGPONG 메시지에 응답
+                    # 서버 측 PINGPONG 메시지에 응답 (JSON 형태)
                     try:
                         ws.send(json.dumps({"trnm": "PINGPONG"}))
                     except:
@@ -110,9 +108,9 @@ class KiwoomWSWorker(BaseWorker):
                     # 구독 응답 확인
                     ret_code = data.get("return_code", "")
                     if str(ret_code) != "0":
-                        logger.warning(f"WS 구독 응답: code={ret_code}, msg={data.get('return_msg', '')}")
+                        logger.warning(f"WS 구독 응답 오류: code={ret_code}, msg={data.get('return_msg', '')}")
                 else:
-                    # 알 수 없는 메시지 타입 디버깅 (최초 1회만)
+                    # 기타 메시지 (디버그 로그)
                     logger.debug(f"WS 수신 (trnm={trnm}): {str(message)[:200]}")
             except json.JSONDecodeError:
                 # 비-JSON 메시지(바이너리 등) 무시
@@ -123,7 +121,7 @@ class KiwoomWSWorker(BaseWorker):
         def on_error(ws, error):
             err_str = str(error)
             # 정상적인 종료 관련 에러는 무시
-            if any(k in err_str for k in ["opcode=8", "Bye", "Connection to remote host was lost", "Connection is already closed"]):
+            if any(k in err_str for k in ["opcode=8", "Bye", "Connection to remote host was lost", "Connection is already closed", "socket is already closed"]):
                 return
             log_error(f"Kiwoom WS Error: {err_str}")
             with self.state.lock:
@@ -138,6 +136,9 @@ class KiwoomWSWorker(BaseWorker):
             # 의도적 종료가 아닌 경우에만 로깅
             if not self._intentional_close:
                 logger.info(f"키움증권 웹소켓 연결 종료 (code={close_status_code}, msg={close_msg})")
+                # 비정상 종료 시 원인 파악을 위한 추가 로그 (DEBUG)
+                if close_status_code is None:
+                    logger.debug("WS 연결이 서버에 의해 강제 종료되었거나 네트워크 타임아웃이 발생했을 수 있습니다.")
                 self._reconnect_count += 1
             self.is_connected = False
 
@@ -152,9 +153,9 @@ class KiwoomWSWorker(BaseWorker):
         self.ws_thread = threading.Thread(
             target=self.ws.run_forever, 
             kwargs={
-                "ping_interval": 30,   # 30초마다 ping (키움 서버 권장)
-                "ping_timeout": 10,    # 10초 안에 pong 응답 대기
-                "reconnect": 0,        # websocket-client 내장 재연결 비활성화 (자체 관리)
+                "ping_interval": 0,    # 클라이언트 측 자동 핑 비활성화 (서버 핑 대응으로 충분)
+                "reconnect": 0,        # 자체 워커 루프에서 재연결 관리
+                "skip_utf8_validation": True
             },
             daemon=True
         )
@@ -181,7 +182,7 @@ class KiwoomWSWorker(BaseWorker):
         # 3. 실시간 랭킹 종목 (인기, 거래량, 거래대금)
         # rankings 리스트에서 상위 종목들을 추출하여 실시간 시세 보장
         for item_list in [self.state.hot_raw, self.state.vol_raw, self.state.amt_raw]:
-            for item in (item_list or [])[:20]: # 각 리스트 상위 20개
+            for item in (item_list or [])[:10]: # 각 리스트 상위 10개 (기존 20개에서 축소)
                 code = item.get("code", "").strip().replace("A", "")
                 if code: current_codes.add(code)
             
