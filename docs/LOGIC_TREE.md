@@ -1,4 +1,4 @@
-# 🌲 AI-Vibe-Trader Logic Tree & Checklist (v2.0.260513)
+# 🌲 AI-Vibe-Trader Logic Tree & Checklist (v2.0.260515)
 
 이 문서는 시스템의 모든 기능 단위(자동/수동)를 정의하고, Docstring 기반의 표준 명세와 테스트 코드가 커버해야 할 특정 조건을 기술합니다.
 
@@ -39,6 +39,7 @@ graph TD
     Main --> Infra[5. 인프라 및 로깅]
     Infra --> RateLimiter[BaseAPI: 중앙 집중식 Token Bucket Rate Limiting]
     Infra --> StateSync[DataManager: trading_state.json 실시간 동기화]
+    Infra --> PnLSync[SyncWorker: 보유 종목 전수 합산 기반 일일 평가액 보정]
     Infra --> Logger[TradingLogManager: JSON/텍스트 로그 및 텔레그램 알림]
 ```
 
@@ -69,7 +70,7 @@ graph TD
 
 ---
 
-## 3. Test Coverage (v2.0.260513)
+## 3. Test Coverage (v2.0.260515)
 
 ### ✅ [T-01] 인프라 및 연결성 테스트
 - [x] **`tests/test_kis_price.py`**: KIS 시세 조회 API 응답성 및 도메인 정합성 확인.
