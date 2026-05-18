@@ -1,6 +1,7 @@
 import threading
 import time
 from datetime import datetime
+from src.utils import get_now
 from typing import Dict, List, Optional, Any
 
 class TradingState:
@@ -155,7 +156,7 @@ class TradingState:
             bool: 대기 상태면 True.
         """
         if not status: return True
-        return status in ["대기중", "대기 중 (IDLE)"]
+        return status in ["대기중", "대기 중", "대기 중 (IDLE)"]
 
     def is_worker_busy(self, worker: str = None) -> bool:
         """워커가 현재 작업 중(대기중 아님)인지 확인합니다.
@@ -200,7 +201,7 @@ class TradingState:
             msg (str): 추가할 로그 메시지 내용.
         """
         with self.lock:
-            t_str = datetime.now().strftime('%H:%M:%S')
+            t_str = get_now().strftime('%H:%M:%S')
             self.trading_logs.append(f"\033[95m[TRADING] [{t_str}] {msg}\033[0m")
             if len(self.trading_logs) > 10:
                 self.trading_logs.pop(0)

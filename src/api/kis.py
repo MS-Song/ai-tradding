@@ -4,7 +4,7 @@ import requests
 import random
 from typing import List, Tuple, Optional, Dict, Any
 from src.api.base import BaseAPI, BrokerRateLimiter
-from src.utils import retry_api
+from src.utils import retry_api, get_now
 
 class KISAPIClient(BaseAPI):
     """한국투자증권(KIS) API 연동 클라이언트.
@@ -186,8 +186,7 @@ class KISAPIClient(BaseAPI):
         url = f"{self.domain}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
         headers = self.auth.get_auth_headers(); headers.update({"tr_id": "FHKST03010200"})
         if not target_time:
-            from datetime import datetime
-            target_time = datetime.now().strftime('%H%M%S')
+            target_time = get_now().strftime('%H%M%S')
             if target_time > "153000": target_time = "153000"
         params = {"FID_ETC_CLS_CODE": "", "FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_TM_1": target_time, "FID_PW_RES_PRC": "0"}
         try:
@@ -210,9 +209,9 @@ class KISAPIClient(BaseAPI):
 
     def calculate_atr(self, code: str, period: int = 14) -> float:
         """종목의 변동성 지표인 ATR(Average True Range)을 계산합니다."""
-        from datetime import datetime, timedelta
-        end_date = datetime.now().strftime('%Y%m%d')
-        start_date = (datetime.now() - timedelta(days=period + 10)).strftime('%Y%m%d')
+        from datetime import timedelta
+        end_date = get_now().strftime('%Y%m%d')
+        start_date = (get_now() - timedelta(days=period + 10)).strftime('%Y%m%d')
         candles = self.get_daily_chart_price(code, start_date, end_date)
         if len(candles) < period: return 0.0
         tr_list = []
@@ -287,6 +286,7 @@ class KISAPIClient(BaseAPI):
                 "inst_net_buy": self._safe_float(d.get("prdy_inst_ntby_qty")), # 기관 합계
                 "pnsn_net_buy": self._safe_float(d.get("pnsn_net_buy_qty")),   # 연기금
                 "thst_net_buy": self._safe_float(d.get("thst_net_buy_qty")),   # 투신
+                "pgm_net_buy": self._safe_float(d.get("pgm_ntby_qty")),      # 프로그램
                 "frgn_hold_rt": self._safe_float(d.get("frgn_lhld_rate"))      # 외인 보유율
             }
         except: return None

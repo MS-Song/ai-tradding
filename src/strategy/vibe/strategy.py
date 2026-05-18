@@ -153,6 +153,7 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
         
         self.is_ready = not self.ai_config.get("auto_mode", False)
         self.first_analysis_attempted = False # [추가] 최초 분석 시도 완료 여부
+        self.boot_time = time.time()          # [추가] 시스템 구동 시작 시간 (초기 보호용)
         self.is_analyzing = False
         self.last_market_analysis_time = 0.0
         self.analysis_interval = 20
@@ -265,15 +266,16 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             return float(vals[0]), float(vals[1]), False
         ps = self.preset_eng.preset_strategies.get(code)
         
-        # [개선] 프리셋 전략(평균회귀 등)인 경우에도 시장 VIBE 및 페이즈(P1 등) 보정을 적용하도록 변경
-        # 이를 통해 장세가 좋을 때는 프리셋의 기본 익절가에 보너스(예: +2.0% 등)를 더하여 수익을 극대화함
+        # [개선] 프리셋 전략(평균회귀 등)인 경우에도 시장 VIBE 및 페이즈(P1 등) 보정을 적용할지 결정
+        # v1.6.0 고정 임계치 정책에 따라 기본적으로는 보정을 생략(Fixed Target)하나,
+        # ExitManager 내부에서 최종적으로 SL Guard(-1.0% 상한)를 적용하여 안정성을 확보함
         if ps and ps.get("preset_id") != "00":
             tp, sl = ps.get("tp", 0.0), ps.get("sl", 0.0)
             if tp == 0 or sl == 0:
                 # 수치가 0인 경우(설정 누락 등) 시스템 기본값으로 Fallback
                 return self.exit_mgr.get_thresholds(code, vibe, p_data, self.get_market_phase())
             
-            # 프리셋 수치를 베이스로 하여 실시간 보정치 적용
+            # 프리셋 수치를 베이스로 하여 전달 (ExitManager에서 Fixed 정책 및 Guard 적용)
             return self.exit_mgr.get_thresholds(code, vibe, p_data, self.get_market_phase(), base_tp=tp, base_sl=sl)
             
         return self.exit_mgr.get_thresholds(code, vibe, p_data, self.get_market_phase())

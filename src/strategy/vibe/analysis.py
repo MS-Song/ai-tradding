@@ -87,10 +87,62 @@ class AnalysisMixin:
 
     def update_ai_recommendations(self, themes: List[dict], hot_raw: List[dict], vol_raw: List[dict], amt_raw: List[dict] = None, progress_cb: Optional[Callable] = None, on_item_found: Optional[Callable] = None):
         try: 
-            if on_item_found: self.ai_recommendations = []
+            # [수정] 분석 중 기존 리스트가 사라지지 않도록 명시적 초기화 제거. analyze() 완료 후 원자적으로 교체됨.
             self.ai_recommendations = self.alpha_eng.analyze(themes, hot_raw, vol_raw, amt_raw, self.ai_config.get("min_score", 60.0), progress_cb=progress_cb, kr_vibe=self.current_market_vibe, market_data=self.current_market_data, on_item_found=on_item_found)
             self._save_all_states()
         except Exception as e: log_error(f"AI 추천 업데이트 오류: {e}")
+
+    def reevaluate_manual_recommendations(self, dm=None):
+        """[신규] 수동 전용(auto_eligible=False)으로 분류된 추천 종목들을 대상으로 
+        추세 데이터를 재수집하여 자동 매수 모드 복구 가능성을 진단합니다. (1분 주기 권장)
+        """
+        manual_recs = [r for r in self.ai_recommendations if not r.get('auto_eligible', True)]
+        if not manual_recs: return
+
+        v = self.analyzer.kr_vibe.upper()
+        # 하락장이 아닐 때는 하락장 필터 자체가 의미 없으므로 모두 복구 시도 가능하나,
+        # 사용자의 명시적 요청에 따라 '추세 부족으로 수동된 종목'의 추세 확인에 집중함.
+        
+        recovered_count = 0
+        for rec in manual_recs:
+            code = rec['code']
+            try:
+                # 1. 최신 시세 및 등락률 확인 (벌크 데이터 활용)
+                curr_rate = float(rec.get('rate', 0))
+                # 기본 필터: 등락률 ±8% 이탈 시 자동 진입 원천 차단 (GEMINI.md 준수)
+                if not (-8.0 <= curr_rate <= 8.0):
+                    continue
+
+                # 2. 이중 이평선 분석 재수집 (데이터 누락 복구 시도)
+                ma_res = self.indicator_eng.get_dual_timeframe_analysis(self.api, code, name=rec.get('name', ''))
+                if not ma_res or 'daily' not in ma_res:
+                    continue
+
+                sig = ma_res.get('signal', 'NEUTRAL')
+                trend = ma_res.get('daily', {}).get('trend', 'UNKNOWN')
+
+                # [조건] 하락장 필터를 통과할 수 있는 상태인지 검증
+                is_safe = True
+                if v in ["BEAR", "DEFENSIVE"]:
+                    if not (trend == "UP" and sig != "CAUTION"):
+                        is_safe = False
+                
+                # 추가 검증: 추세가 여전히 UNKNOWN이면 복구 불가
+                if trend == "UNKNOWN":
+                    is_safe = False
+
+                if is_safe:
+                    rec['auto_eligible'] = True
+                    rec.pop('filter_reason', None)
+                    recovered_count += 1
+                    logger.info(f"✅ [추세 회복] {rec['name']} 자동 매수 모드로 복구 완료 (추세:{trend}, 시그널:{sig})")
+                    if dm: dm.add_log(f"✅ [추세 회복] {rec['name']} 자동 전환")
+
+            except Exception as e:
+                logger.debug(f"추천 종목 재진단 중 오류 ({code}): {e}")
+
+        if recovered_count > 0:
+            self._save_all_states()
 
     def get_ai_advice(self, progress_cb: Optional[Callable] = None):
         holdings = self.api.get_balance()
@@ -159,16 +211,21 @@ class AnalysisMixin:
                     sig = ma_res.get('signal', 'NEUTRAL')
                     trend = ma_res.get('daily', {}).get('trend', 'UNKNOWN')
                     
-                    # 하락장에서는 일봉 추세가 UP이고 분봉 시그널이 CAUTION이 아닌 경우만 추천 유지
+                    # 하락장 필터링: 추세가 불안정하면 '자동 매수'에서만 제외하고 리스트에는 유지 (유저 요청)
                     if trend == "UP" and sig != "CAUTION":
-                        filtered_recs.append(rec)
+                        rec['auto_eligible'] = True
                     else:
-                        logger.info(f"🚫 [하락장 필터] {rec['name']} 제외 (추세:{trend}, 시그널:{sig})")
+                        rec['auto_eligible'] = False
+                        rec['filter_reason'] = f"추세:{trend}, 시그널:{sig}"
+                        logger.info(f"⚠️ [하락장 필터] {rec['name']} 수동 전환 (추세:{trend}, 시그널:{sig})")
+                    
+                    filtered_recs.append(rec)
                 else:
+                    # 지표가 없는 경우도 일단 리스트에는 유지하되 수동으로 전환
+                    rec['auto_eligible'] = False
                     filtered_recs.append(rec)
             
-            if len(filtered_recs) < len(self.ai_recommendations):
-                logger.info(f"📉 하락장 필터링 완료: {len(self.ai_recommendations)} -> {len(filtered_recs)} 종목 압축")
+            if len(filtered_recs) > 0:
                 self.ai_recommendations = filtered_recs
 
         # [복구] AI 컨텍스트 구성

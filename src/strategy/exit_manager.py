@@ -71,40 +71,47 @@ class ExitManager:
         target_tp = base_tp if base_tp is not None else self.base_tp
         target_sl = base_sl if base_sl is not None else self.base_sl
         
+        # [v2.1 추가] 0 설정 시 비활성화 (보정 생략)
+        # 사용자가 명시적으로 0으로 설정한 경우 장세 보정을 받지 않도록 함
+        keep_tp_zero = (target_tp == 0.0)
+        keep_sl_zero = (target_sl == 0.0)
+        
         # 3. 시장 분위기(Vibe) 및 페이즈 보정 적용
-        # AI가 할당한 개별 전략이나 수동 설정값이 있으면 중복 보정 생략
-        if base_tp is not None or base_sl is not None:
-            return round(target_tp, 1), round(target_sl, 1), False
-
-        tp_mod, sl_mod = self.get_vibe_modifiers(kr_vibe)
+        # AI가 할당한 개별 전략이나 수동 설정값이 있으면 중복 보정 생략 (Fixed Target Policy v1.6.0)
+        is_fixed_target = (base_tp is not None or base_sl is not None)
         
-        # 시간 페이즈 보정 합산
-        if phase_cfg:
-            # 하락장/방어모드에서 P2 등에 의한 추가 익절가 하향 방지
-            if not (kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg.get('tp_delta', 0) < 0):
-                tp_mod += phase_cfg.get('tp_delta', 0)
-                
-            # 하락장 예외: Bear/Defensive일 때는 P1의 SL 완화 적용 안 함
-            if not (kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg['id'] == "P1"):
-                sl_mod += phase_cfg.get('sl_delta', 0)
-        
-        target_tp += tp_mod
-        target_sl += sl_mod
-            
-        # 4. 개별 종목 변동성(거래량 등)에 따른 추가 보정
         is_vol_spike = False
-        if price_data and price_data.get('prev_vol', 0) > 0:
-            if price_data['vol'] / price_data['prev_vol'] >= 1.5:
-                target_tp += 2.0; is_vol_spike = True # 거래량 폭발 시 익절가 상향
+        if not is_fixed_target:
+            tp_mod, sl_mod = self.get_vibe_modifiers(kr_vibe)
+            
+            # 시간 페이즈 보정 합산
+            if phase_cfg:
+                # 하락장/방어모드에서 P2 등에 의한 추가 익절가 하향 방지
+                if not (kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg.get('tp_delta', 0) < 0):
+                    tp_mod += phase_cfg.get('tp_delta', 0)
+                    
+                # 하락장 예외: Bear/Defensive일 때는 P1의 SL 완화 적용 안 함
+                if not (kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg['id'] == "P1"):
+                    sl_mod += phase_cfg.get('sl_delta', 0)
+            
+            if not keep_tp_zero: target_tp += tp_mod
+            if not keep_sl_zero: target_sl += sl_mod
                 
+            # 4. 개별 종목 변동성(거래량 등)에 따른 추가 보정
+            if price_data and price_data.get('prev_vol', 0) > 0:
+                if price_data['vol'] / price_data['prev_vol'] >= 1.5:
+                    target_tp += 2.0; is_vol_spike = True # 거래량 폭발 시 익절가 상향
+                    
         # 5. 수수료 및 최소 수익 방어 (Fee Guard)
-        if target_tp < 1.0:
+        # 익절이 0이면 비활성으로 간주하여 보정 생략
+        if target_tp > 0 and target_tp < 1.0:
             target_tp = 1.0
             
         # 6. 손절선 상한 방어 (SL Guard)
+        # 손절이 0이면 비활성으로 간주하여 보정 생략
         # 방어모드(Defensive)나 특정 페이즈(P2) 보정치가 가산되어 손절선이 양수(수익권)로 올라가는 것을 방지
         # 아무리 타이트한 장세라도 수수료와 호가 스프레드를 고려하여 최소 -1.0%의 공간은 확보함
-        if target_sl > -1.0:
+        if target_sl != 0 and target_sl > -1.0:
             target_sl = -1.0
 
         return round(target_tp, 1), round(target_sl, 1), is_vol_spike

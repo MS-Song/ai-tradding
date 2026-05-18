@@ -377,14 +377,9 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                     def prog_cb(c, t, m="AI분석"): 
                         if "분석 중:" in m: m = "AI추천"
                         dm.set_busy(f"{m}({c}/{t})", "AI_ENGINE")
-                    def item_cb(i): 
-                        with dm.data_lock: 
-                            if not any(r['code'] == i['code'] for r in strategy.ai_recommendations):
-                                strategy.ai_recommendations.append(i)
-                                strategy.ai_recommendations.sort(key=lambda x: x['score'], reverse=True)
-                    with dm.data_lock: strategy.ai_recommendations = []
+                    # [수정] 분석 중 기존 리스트가 사라지지 않도록 명시적 초기화 제거 및 콜백 제외 (한번에 교체)
                     strategy.determine_market_trend(force_ai=True)
-                    strategy.update_ai_recommendations(get_cached_themes(), dm.cached_hot_raw, dm.cached_vol_raw, progress_cb=prog_cb, on_item_found=item_cb)
+                    strategy.update_ai_recommendations(get_cached_themes(), dm.cached_hot_raw, dm.cached_vol_raw, progress_cb=prog_cb)
                     advice = strategy.get_ai_advice(progress_cb=lambda c, t: prog_cb(c, t, "심층분석"))
                     if advice and "⚠️" not in advice:
                         dm.show_status("✅ AI 분석 완료")

@@ -1,4 +1,4 @@
-# 🌲 AI-Vibe-Trader Logic Tree & Checklist (v2.0.260515)
+# 🌲 AI-Vibe-Trader Logic Tree & Checklist (v2.0.260518)
 
 이 문서는 시스템의 모든 기능 단위(자동/수동)를 정의하고, Docstring 기반의 표준 명세와 테스트 코드가 커버해야 할 특정 조건을 기술합니다.
 
@@ -56,6 +56,8 @@ graph TD
 ### 🛡️ Exit Manager (Exit Strategy)
 - **가변 임계치**: Vibe와 Phase(P1~P4)를 결합하여 실시간 TP/SL 보정.
 - **수동 매수 보호 [v1.6.8]**: 사용자가 직접 매수한 종목은 20분 동안 AI 자율 분석에 의한 청산에서 보호됨. (단, 손절선 돌파 시에는 즉시 매도)
+- **시스템 시작 보호 [v2.1]**: 프로그램 시작 후 10~20분 동안 기존 보유 종목에 대한 자동 손절/익절 유예 (Startup Grace Period).
+- **0 설정 비활성화 [v2.1]**: TP/SL이 0.0으로 설정된 경우 모든 보정을 중단하고 매매 대상에서 제외.
 - **쿨다운 관리**: 익절 후 1시간 동안 재익절 제한 (불타기 시 리셋).
 - **긴급 청산**: 수익률이 보정된 TP보다 3% 이상 높거나 거래량 폭발 시 즉시 탈출.
 
@@ -70,7 +72,7 @@ graph TD
 
 ---
 
-## 3. Test Coverage (v2.0.260515)
+## 3. Test Coverage (v2.0.260518)
 
 ### ✅ [T-01] 인프라 및 연결성 테스트
 - [x] **`tests/test_kis_price.py`**: KIS 시세 조회 API 응답성 및 도메인 정합성 확인.
@@ -96,6 +98,9 @@ graph TD
 - **테스트**: KIS 랭킹 테스트를 시세 조회(`test_kis_price.py`)로 명확히 분리 및 통합 완료.
 - **로직 강화 [2026-05-08]**: Defensive/BEAR 장세에서 손절선이 양수로 전환되어 조기 청산되는 버그를 방지하기 위한 **SL Guard (-1.0% 상한선)** 도입.
 - **UI 최적화 [2026-05-08]**: AI 로그 및 추천 탭의 컬럼 너비 동적 확장 및 텍스트 생략(...) 로직 적용으로 시인성 개선.
+- **UI 가시성 개선 [2026-05-15]**: AI 분석 중 추천 종목 리스트 및 시황 브리핑이 사라지는 'Flicker' 현상 해결. 분석 완료 전까지 기존 데이터를 유지하고 완료 후 Atomic Swap으로 교체하는 로직 적용.
+- **Python 3.14+ 로깅 호환성 대응 [2026-05-18]**: Python 3.14+ 버전에서 `logging.Formatter.converter`가 bound method 형태로 호출될 때 발생하는 `TypeError: kst_converter() takes 1 positional argument but 2 were given` 오류를 가변 인자(*args) 지원 방식으로 대응 및 수정 완료.
+- **통합 테스트 견고화 [2026-05-18]**: `MockStrategy` 가 부팅될 때 시스템 초기 보호(Startup Grace Period)에 의해 익절/손절 테스트가 유예되는 이슈를 해결하기 위해 `boot_time`을 충분한 과거 시간으로 수정하여 `test_tc_a02_pyramiding_trigger` 및 `test_tc_a05_emergency_bypass` 테스트가 정상 통과하도록 복구.
 
 ---
 

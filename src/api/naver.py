@@ -409,6 +409,43 @@ class NaverAPIClient(BaseAPI):
         except:
             return []
 
+    def get_naver_daily_chart(self, code: str, count: int = 100) -> List[dict]:
+        """네이버 F-Chart XML API를 통해 일봉 데이터를 가져옵니다.
+
+        한국투자증권 API 장애 시 지표 분석을 위한 Fallback용으로 사용됩니다.
+
+        Args:
+            code (str): 종목 코드.
+            count (int): 가져올 봉 개수 (기본 100개).
+
+        Returns:
+            List[dict]: 일봉 캔들 리스트.
+        """
+        try:
+            url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
+            res = self._session.get(url, timeout=5)
+            if res.status_code != 200: return []
+            
+            import re
+            pattern = re.compile(r'<item data="([^"]+)" />')
+            items = pattern.findall(res.text)
+            
+            candles = []
+            for item in items:
+                parts = item.split('|')
+                if len(parts) >= 6:
+                    candles.append({
+                        "stck_bsop_date": parts[0],
+                        "stck_oprc": parts[1],
+                        "stck_hgpr": parts[2],
+                        "stck_lwpr": parts[3],
+                        "stck_clpr": parts[4],
+                        "stck_prpr": parts[4]
+                    })
+            return list(reversed(candles))
+        except:
+            return []
+
     @retry_api(max_retries=2, delay=1.0)
     def get_investor_trading_trend(self, code: str) -> Optional[dict]:
         """네이버 금융에서 특정 종목의 투자자별 매매동향(외인, 기관)을 수집합니다.

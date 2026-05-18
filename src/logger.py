@@ -6,7 +6,21 @@ import json
 import threading
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime
-from src.utils import get_now
+from src.utils import get_now, KST
+
+def kst_converter(*args):
+    """표준 로깅 시스템의 타임스탬프를 KST(GMT+9)로 변환합니다."""
+    timestamp = None
+    for arg in reversed(args):
+        if isinstance(arg, (int, float)):
+            timestamp = arg
+            break
+    if timestamp is None:
+        timestamp = get_now().timestamp()
+    return datetime.fromtimestamp(timestamp, tz=KST).timetuple()
+
+# 전역 Formatter 컨버터 교체
+logging.Formatter.converter = kst_converter
 
 
 # --- 1. 기본 로깅 설정 ---

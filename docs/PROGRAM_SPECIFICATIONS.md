@@ -1,4 +1,4 @@
-# 📄 AI-Vibe-Trader Program Specifications (v2.0.260515)
+# 📄 AI-Vibe-Trader Program Specifications (v2.0.260518)
 ...
 ## 1. 개요 (Overview)
 본 시스템은 국내 주요 증권사(KIS/Kiwoom) API와 네이버 금융 데이터를 결합하여, 시장의 분위기(VIBE)를 진단하고 AI 기반의 자율 트레이딩을 수행하는 엔진입니다. 본 명세서는 시스템의 모든 물리적 구성 파일(Total 64 Files)과 각 파일의 상세 역할을 전수 기술합니다. v2.0에서는 멀티 브로커(KIS/Kiwoom) 통합 지원, 중앙 집중식 API 속도 제한(Rate Limiting), 그리고 강화된 자율 매매 로직이 적용되었습니다.
@@ -55,7 +55,7 @@ AI-Vibe-Trader/
 - **`alpha_engine.py`**: AI 추천 점수와 퀀트 지표를 결합한 최종 매수 점수 산출. 시총 1000억 미만 및 ETF를 원천 제외하는 필터링 로직 포함.
 - **`chart_renderer.py`**: TUI 내에서 간단한 텍스트 기반 차트 렌더링 지원.
 - **`constants.py`**: 전략 전반에서 사용하는 고정 상수(타임아웃, 임계치 등) 정의.
-- **`exit_manager.py`**: Vibe와 Phase에 따른 실시간 TP/SL 보정 로직 총괄.
+- **`exit_manager.py`**: Vibe와 Phase에 따른 실시간 TP/SL 보정 로직 총괄. 사용자가 0으로 설정한 경우 보정 및 Guard를 생략하는 'Zero Threshold' 정책 적용.
 - **`indicator_engine.py`**: RSI, BB, MA 등 기술적 지표 계산 전문 엔진.
 - **`market_analyzer.py`**: 지수 DEMA 분석 및 장세(Vibe) 판정 로직.
 - **`preset_engine.py`**: 종목별 전략 프리셋(01~09) 관리 및 자동 할당.
@@ -76,7 +76,7 @@ AI-Vibe-Trader/
 
 ### 📂 `src/strategy/vibe/` (Vibe Framework)
 - **`analysis.py`**: Vibe 기반의 시장 시황 분석 보조 로직.
-- **`execution.py`**: `ExecutionMixin` 클래스. 7단계 매매 사이클의 상세 실행 흐름.
+- **`execution.py`**: `ExecutionMixin` 클래스. 7단계 매매 사이클의 상세 실행 흐름. 시스템 시작 초기 보호(Startup Protection) 및 비활성(0) 처리 로직 포함.
 - **`mock_tester.py`**: 테스트 환경을 위한 가상 시간 및 가상 주문 인터셉터.
 - **`strategy.py`**: `VibeStrategy` 메인 클래스. 모든 로직을 통합하는 전략 오케스트레이터.
 - **`__init__.py`**: Vibe 프레임워크 초기화.
@@ -106,6 +106,7 @@ AI-Vibe-Trader/
 - **`kis_ws_worker.py`**: 한국투자증권 WebSocket 기반 실시간 호가/체결 데이터 수신 워커.
 - **`kiwoom_ws_worker.py`**: 키움증권 WebSocket 기반 실시간 호가/체결 데이터 수신 워커.
 - **`market_worker.py`**: 시황 분석 및 테마 갱신을 담당하는 주기적 워커.
+- **`recommendation_worker.py`**: 수동 전환된 추천 종목을 감시하여 자동 모드로 복구하는 워커.
 - **`report_worker.py`**: 주기적 상태 보고 및 텔레그램 전송 워커.
 - **`retrospective_worker.py`**: 장 마감 후 성과 복기 및 자동 분석 워커.
 - **`sync_worker.py`**: 시세 데이터 및 잔고를 실시간으로 동기화하는 핵심 워커.
@@ -134,4 +135,4 @@ AI-Vibe-Trader/
 
 ---
 > [!IMPORTANT]
-> 본 명세서는 v2.0.260515 기준으로 작성되었으며, 모든 수정 사항은 `GEMINI.md`의 문서 관리 정책을 따릅니다.
+> 본 명세서는 v2.0.260518 기준으로 작성되었으며, 모든 수정 사항은 `GEMINI.md`의 문서 관리 정책을 따릅니다.

@@ -15,8 +15,8 @@ class KiwoomWSWorker(BaseWorker):
     """
     
     def __init__(self, state, api, strategy):
-        # BaseWorker 초기화: 간격을 10초로 설정 (연결 상태 모니터링 주기)
-        super().__init__("WS_KIWOOM", state, 10.0)
+        # BaseWorker 초기화: 간격을 20초로 설정 (키움 권장 하트비트 주기)
+        super().__init__("WS_KIWOOM", state, 20.0)
         self.api = api
         self.strategy = strategy
         self.ws = None
@@ -48,6 +48,20 @@ class KiwoomWSWorker(BaseWorker):
             self._connect()
         else:
             self._reconnect_count = 0  # 연결 유지 중이면 카운터 리셋
+            
+            # 주기적인 PINGPONG 전송 (연결 유지용 하트비트)
+            # 서버 측에서 10~20초 내 데이터가 없으면 연결을 끊을 수 있으므로 명시적으로 전송
+            try:
+                if self.ws and self.is_connected:
+                    # 키움 REST API 하트비트 규격: header/body 구조
+                    ping_msg = {
+                        "header": {"tr_id": "PINGPONG", "tr_key": "PING"},
+                        "body": {}
+                    }
+                    self.ws.send(json.dumps(ping_msg))
+            except Exception as e:
+                logger.debug(f"WS 하트비트 전송 실패: {e}")
+                
             self.set_result("수신 중", last_task="실시간 시세 수신 대기", friendly_name="웹소켓")
             self._check_and_subscribe()
 
@@ -89,29 +103,38 @@ class KiwoomWSWorker(BaseWorker):
         def on_message(ws, message):
             try:
                 data = json.loads(message)
-                trnm = data.get("trnm", "")
+                header = data.get("header", {})
+                trnm = data.get("trnm", header.get("tr_id", ""))
                 
-                if trnm == "REAL":
+                # 실시간 데이터는 trnm/header가 없거나 "REAL"로 올 수 있음
+                real_data = data.get("data")
+                if trnm == "REAL" or (real_data and isinstance(real_data, list)):
                     # REG 요청 시 보낸 type에 따라 0B(체결) 또는 1B(예상체결)가 옴
-                    for d in data.get("data", []):
+                    for d in (real_data if isinstance(real_data, list) else []):
                         if d.get("type") == "0B":
                             self._handle_real_data(d)
                         elif d.get("type") == "1B":
                             self._handle_auction_data(d)
                 elif trnm == "PINGPONG":
-                    # 서버 측 PINGPONG 메시지에 응답 (JSON 형태)
-                    try:
-                        ws.send(json.dumps({"trnm": "PINGPONG"}))
-                    except:
-                        pass
+                    # 서버 측 PINGPONG 메시지에 응답 (tr_key가 PING인 경우에만 응답)
+                    if header.get("tr_key") == "PING":
+                        try:
+                            pong_msg = {
+                                "header": {"tr_id": "PINGPONG", "tr_key": "PONG"},
+                                "body": {}
+                            }
+                            ws.send(json.dumps(pong_msg))
+                        except:
+                            pass
                 elif trnm == "REG":
                     # 구독 응답 확인
-                    ret_code = data.get("return_code", "")
-                    if str(ret_code) != "0":
-                        logger.warning(f"WS 구독 응답 오류: code={ret_code}, msg={data.get('return_msg', '')}")
+                    ret_code = data.get("return_code", header.get("ret_code", ""))
+                    if str(ret_code) not in ["0", "0000", ""]:
+                        logger.warning(f"WS 구독 응답 오류: code={ret_code}, msg={data.get('return_msg', header.get('ret_msg', ''))}")
                 else:
                     # 기타 메시지 (디버그 로그)
-                    logger.debug(f"WS 수신 (trnm={trnm}): {str(message)[:200]}")
+                    if trnm:
+                        logger.debug(f"WS 수신 (trnm={trnm}): {str(message)[:200]}")
             except json.JSONDecodeError:
                 # 비-JSON 메시지(바이너리 등) 무시
                 pass
@@ -131,6 +154,7 @@ class KiwoomWSWorker(BaseWorker):
                     "value": "에러",
                     "remark": err_str[:100]
                 }
+            self.is_connected = False
 
         def on_close(ws, close_status_code, close_msg):
             # 의도적 종료가 아닌 경우에만 로깅
@@ -153,7 +177,8 @@ class KiwoomWSWorker(BaseWorker):
         self.ws_thread = threading.Thread(
             target=self.ws.run_forever, 
             kwargs={
-                "ping_interval": 0,    # 클라이언트 측 자동 핑 비활성화 (서버 핑 대응으로 충분)
+                "ping_interval": 0,    # 프로토콜 레벨 자동 핑 비활성화 (JSON 하트비트와 충돌 방지)
+                "ping_timeout": 10,
                 "reconnect": 0,        # 자체 워커 루프에서 재연결 관리
                 "skip_utf8_validation": True
             },
@@ -197,24 +222,24 @@ class KiwoomWSWorker(BaseWorker):
         """특정 종목들에 대해 실시간 체결(0B) 데이터를 구독합니다."""
         if not self.ws or not codes: return
         try:
-            # 키움 REST API 웹소켓 REG 요청 형식
-            # item은 세미콜론(;) 구분 문자열로 전달
-            req = {
-                "trnm": "REG",
-                "grp_no": "1",
-                "refresh": "1",  # 1:기존 등록 유지 후 추가
-                "data": [
-                    {
-                        "item": ";".join(codes),
-                        "type": "0B" # 주식체결
+            # 키움 REST API 웹소켓 REG 요청 형식 (header/body 구조)
+            # 주식체결(0B)과 예상체결(1B)을 각각 구독
+            for tr_type in ["0B", "1B"]:
+                req = {
+                    "header": {
+                        "tr_id": "REG",
+                        "tr_key": "0"
                     },
-                    {
-                        "item": ";".join(codes),
-                        "type": "1B" # 주식예상체결
+                    "body": {
+                        "input": {
+                            "tr_id": tr_type,
+                            "tr_key": ";".join(codes)
+                        }
                     }
-                ]
-            }
-            self.ws.send(json.dumps(req))
+                }
+                self.ws.send(json.dumps(req))
+                time.sleep(0.1) # 메시지 간 간격
+            
             logger.info(f"✅ [WS_KIWOOM] {len(codes)}종목 구독 추가 (총 {len(self.subscribed_codes) + len(codes)}종목)")
         except Exception as e:
             log_error(f"Kiwoom WS 구독 실패: {e}")

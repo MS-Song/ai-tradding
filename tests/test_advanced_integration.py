@@ -28,6 +28,8 @@ class DummyAdvisor(BaseLLMAdvisor):
 
 class MockStrategy(ExecutionMixin):
     def __init__(self):
+        import time as pytime
+        self.boot_time = pytime.time() - 3600
         self.api = MagicMock()
         self.api.get_full_balance.return_value = [None, {"total_asset": 10000000, "cash": 5000000, "pnl": 0}]
         self.api.get_balance.return_value = []

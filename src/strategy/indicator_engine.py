@@ -1,4 +1,6 @@
 import math
+from datetime import datetime, timedelta
+from src.utils import get_now
 from typing import List, Dict, Optional
 
 class IndicatorEngine:
@@ -255,7 +257,10 @@ class IndicatorEngine:
             # ── 1. 일봉 분석 (KIS 우선) ──────────────────────────────────
             daily_candles = []
             try:
-                daily_candles = api.get_daily_chart_price(code)
+                # KIS API는 기간을 지정하지 않으면 데이터를 주지 않을 수 있으므로 최근 100일 지정
+                end_date = get_now().strftime('%Y%m%d')
+                start_date = (get_now() - timedelta(days=100)).strftime('%Y%m%d')
+                daily_candles = api.get_daily_chart_price(code, start_date, end_date)
             except Exception as e:
                 from src.logger import logger
                 logger.warning(f"[MA폴백] {display_name} KIS 일봉 실패: {e}")
@@ -323,9 +328,12 @@ class IndicatorEngine:
                         else:
                             analysis["signal"] = "NEUTRAL"
                             analysis["reason"] = f"일봉 상승추세, 분봉 중립 [{minute_source}]"
+                elif daily_trend == "UNKNOWN":
+                    analysis["signal"] = "CAUTION"
+                    analysis["reason"] = f"일봉 추세 확인 불가 (데이터 부족) [{minute_source}]"
                 else:
                     analysis["signal"] = "CAUTION"
-                    analysis["reason"] = "일봉 하락추세 (역배열 주의)"
+                    analysis["reason"] = f"일봉 하락추세 (역배열 주의) [{minute_source}]"
             else:
                 # 분봉 데이터를 어디서도 가져오지 못한 경우 → UNKNOWN 으로 명시
                 analysis["signal"] = "UNKNOWN"

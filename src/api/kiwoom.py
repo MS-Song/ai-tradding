@@ -3,7 +3,7 @@ import requests
 import threading
 from typing import List, Tuple, Optional, Dict, Any
 from src.api.base import BaseAPI, BrokerRateLimiter
-from src.utils import retry_api
+from src.utils import retry_api, get_now
 
 class KiwoomAPIClient(BaseAPI):
     """키움증권 REST API 연동 클라이언트.
@@ -165,6 +165,14 @@ class KiwoomAPIClient(BaseAPI):
     @retry_api(max_retries=2, delay=2.0)
     def get_daily_chart_price(self, code: str, start_date: str = "", end_date: str = "") -> List[dict]:
         """특정 기간의 일봉 차트 데이터를 가져옵니다. (ka10081)"""
+        # [보강] 날짜가 비어있으면 최근 100일로 자동 채움
+        if not end_date:
+            from datetime import datetime
+            end_date = get_now().strftime('%Y%m%d')
+        if not start_date:
+            from datetime import datetime, timedelta
+            start_date = (get_now() - timedelta(days=100)).strftime('%Y%m%d')
+            
         url = f"{self.domain}/api/dostk/chart"
         headers = self.auth.get_auth_headers()
         headers["api-id"] = "ka10081"
@@ -218,6 +226,15 @@ class KiwoomAPIClient(BaseAPI):
 
     @retry_api(max_retries=2, delay=1.2)
     def get_index_chart_price(self, code: str, period_div: str = "D", start_date: str = "", end_date: str = "") -> List[dict]:
+        """국내 지수(코스피, 코스닥 등)의 차트 데이터를 가져옵니다. (ka20006)"""
+        # [보강] 날짜가 비어있으면 최근 100일로 자동 채움
+        if not end_date:
+            from datetime import datetime
+            end_date = get_now().strftime('%Y%m%d')
+        if not start_date:
+            from datetime import datetime, timedelta
+            start_date = (get_now() - timedelta(days=100)).strftime('%Y%m%d')
+            
         url = f"{self.domain}/api/dostk/chart"
         headers = self.auth.get_auth_headers()
         headers["api-id"] = "ka20006" # 업종일봉
@@ -232,15 +249,16 @@ class KiwoomAPIClient(BaseAPI):
             for item in output:
                 converted.append({
                     "stck_bsop_date": item.get("bsns_dt"),
-                    "bstp_nmix_prpr": item.get("close_prc")
+                    "stck_clpr": item.get("close_prc"), # KIS 호환용 (stck_clpr)
+                    "bstp_nmix_prpr": item.get("close_prc") # 기존 필드 유지
                 })
             return converted
         except: return []
 
     def calculate_atr(self, code: str, period: int = 14) -> float:
-        from datetime import datetime, timedelta
-        end_date = datetime.now().strftime('%Y%m%d')
-        start_date = (datetime.now() - timedelta(days=period + 10)).strftime('%Y%m%d')
+        from datetime import timedelta
+        end_date = get_now().strftime('%Y%m%d')
+        start_date = (get_now() - timedelta(days=period + 10)).strftime('%Y%m%d')
         candles = self.get_daily_chart_price(code, start_date, end_date)
         if len(candles) < period: return 0.0
         tr_list = []
@@ -307,6 +325,7 @@ class KiwoomAPIClient(BaseAPI):
                 "inst_net_buy": self._safe_float(d.get("istt_ntby_qty", 0)),
                 "pnsn_net_buy": self._safe_float(d.get("pnsn_ntby_qty", 0)),
                 "thst_net_buy": self._safe_float(d.get("ivtr_ntby_qty", 0)),
+                "pgm_net_buy": self._safe_float(d.get("pgm_ntby_qty", 0)),
                 "frgn_hold_rt": self._safe_float(d.get("frgn_rt", 0))
             }
         except: return None

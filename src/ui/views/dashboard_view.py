@@ -294,7 +294,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 buf.write("\033[91m" + align_kr("  [!] 시황 정보 갱신 실패 (Gemini API 오류 또는 네트워크 지연)", tw) + "\033[0m\n")
                 buf.write("\033[90m" + align_kr("  └ 시스템 기본 전략 및 TP/SL 감시는 정상 작동 중입니다.", tw) + "\033[0m\n")
                 buf.write("\n")
-            elif dm.market_info_status == "대기" or strategy.is_analyzing:
+            elif dm.market_info_status == "대기" or (strategy.is_analyzing and not strategy.ai_briefing):
                 buf.write("\n")
                 status_text = "최초 시황 분석 및 AI 전략 수립 중입니다..." if not strategy.first_analysis_attempted else "실시간 시황 및 추천 종목을 심층 분석 중입니다..."
                 buf.write("\033[93m" + align_kr(f"  [...] {status_text}", tw) + "\033[0m\n")
@@ -397,8 +397,8 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         buf.write(align_kr(line_setup, tw-1) + "\n")
         buf.write("-" * tw + "\n")
 
-        eff_w = tw - 10; w = [max(4, int(eff_w * 0.03)), max(5, int(eff_w * 0.04)), max(15, int(eff_w * 0.15)), max(10, int(eff_w * 0.09)), max(14, int(eff_w * 0.12)), max(10, int(eff_w * 0.08)), max(8, int(eff_w * 0.07)), max(10, int(eff_w * 0.08)), max(18, int(eff_w * 0.12)), max(10, int(eff_w * 0.07)), max(12, int(eff_w * 0.10)), max(6, int(eff_w * 0.05))]
-        buf.write("\033[1m" + align_kr(align_kr("NO",w[0])+align_kr("시장",w[1])+align_kr("종목코드/명",w[2])+align_kr("현재가",w[3],'right')+align_kr("전일대비",w[4],'right')+align_kr("평단가",w[5],'right')+align_kr("수량",w[6],'right')+align_kr("평가금액",w[7],'right')+align_kr("수익금(수익률)",w[8],'right')+"  "+align_kr("TP/SL",w[9],'right')+"  "+align_kr("전략",w[10],'center')+align_kr("잔여",w[11],'right'), tw-1) + "\033[0m\n")
+        eff_w = tw - 10; w = [max(4, int(eff_w * 0.03)), max(5, int(eff_w * 0.04)), max(15, int(eff_w * 0.13)), max(8, int(eff_w * 0.06)), max(10, int(eff_w * 0.08)), max(12, int(eff_w * 0.10)), max(10, int(eff_w * 0.08)), max(8, int(eff_w * 0.06)), max(10, int(eff_w * 0.08)), max(18, int(eff_w * 0.12)), max(10, int(eff_w * 0.07)), max(12, int(eff_w * 0.10)), max(6, int(eff_w * 0.05))]
+        buf.write("\033[1m" + align_kr(align_kr("NO",w[0])+align_kr("시장",w[1])+align_kr("종목코드/명",w[2])+align_kr("추세",w[3],'center')+align_kr("현재가",w[4],'right')+align_kr("전일대비",w[5],'right')+align_kr("평단가",w[6],'right')+align_kr("수량",w[7],'right')+align_kr("평가금액",w[8],'right')+align_kr("수익금(수익률)",w[9],'right')+"  "+align_kr("TP/SL",w[10],'right')+"  "+align_kr("전략",w[11],'center')+align_kr("잔여",w[12],'right'), tw-1) + "\033[0m\n")
         
         f_h = dm.cached_holdings if dm.ranking_filter == "ALL" else [h for h in dm.cached_holdings if get_market_name(h.get('pdno','')) == dm.ranking_filter]
         base_fixed = 23; ranking_target = 10; asset_count = len(f_h); max_h_display = max(1, th - base_fixed - ranking_target)
@@ -422,23 +422,24 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 tp_txt = f"\033[91m{info['tp']:+.1f}\033[0m"
                 sl_txt = f"\033[94m{info['sl']:+.1f}\033[0m"
                 
-                # [신규] 수급 시그널 생성 (외인/연기금)
-                supply_tag = ""
+                # [신규] 수급 시그널 생성 (외인/기관/프로그램) - 별도 '추세' 컬럼용
+                trend_txt = "-"
                 inv = info.get('investor')
                 if inv:
-                    f_net, i_net = inv.get('frgn_net_buy', 0), inv.get('inst_net_buy', 0)
+                    f_net, i_net, p_net = inv.get('frgn_net_buy', 0), inv.get('inst_net_buy', 0), inv.get('pgm_net_buy', 0)
                     f_tag = "\033[91mF↑\033[0m" if f_net > 0 else ("\033[94mF↓\033[0m" if f_net < 0 else "")
                     i_tag = "\033[91mI↑\033[0m" if i_net > 0 else ("\033[94mI↓\033[0m" if i_net < 0 else "")
-                    if f_tag or i_tag:
-                        supply_tag = f" [{f_tag}{'/' if f_tag and i_tag else ''}{i_tag}]"
+                    p_tag = "\033[91mP↑\033[0m" if p_net > 0 else ("\033[94mP↓\033[0m" if p_net < 0 else "")
+                    
+                    tags = [t for t in [f_tag, i_tag, p_tag] if t]
+                    if tags:
+                        trend_txt = "/".join(tags)
 
-                name_area = f"[{code}] {name[:(w[2]-15)//2*2]}" + ("*" if info['spike'] else "") + supply_tag
+                name_area = f"[{code}] {name[:(w[2]-10)//2*2]}" + ("*" if info['spike'] else "")
                 # [신규] 동시호가(예상체결가) 표시 - (예) 제거 요청 반영
                 p_cu_txt = f"{int(p_cu):,}"
-                # if info.get('is_antc'):
-                #     p_cu_txt += "(예)"
                 
-                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(name_area, w[2]) + align_kr(p_cu_txt, w[3], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[4], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[5], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[6], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[7], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[8], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[9], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[10], 'center') + "\033[0m" + align_kr(rem_txt, w[11], 'right'), tw-1) + "\n")
+                buf.write(align_kr(align_kr(str(idx), w[0]) + align_kr(get_market_name(code), w[1]) + align_kr(name_area, w[2]) + align_kr(trend_txt, w[3], 'center') + align_kr(p_cu_txt, w[4], 'right') + ("\033[91m" if d_v > 0 else "\033[94m" if d_v < 0 else "") + align_kr(f"{int(d_v):+,}({abs(d_r):.1f}%)" if d_v != 0 else "-", w[5], 'right') + "\033[0m" + align_kr(f"{int(p_a):,}", w[6], 'right') + align_kr(f"{int(float(h.get('hldg_qty', 0))):,}", w[7], 'right') + align_kr(f"{int(float(h.get('evlu_amt', 0))):,}", w[8], 'right') + ("\033[91m" if pnl_amt >= 0 else "\033[94m") + align_kr(pnl_txt, w[9], 'right') + "\033[0m  " + align_kr(f"{tp_txt}/{sl_txt}", w[10], 'right') + "  " + ("\033[96m" if preset_label else "\033[90m") + align_kr(preset_label if preset_label else "표준", w[11], 'center') + "\033[0m" + align_kr(rem_txt, w[12], 'right'), tw-1) + "\n")
             if len(f_h) > max_h_display: buf.write(align_kr(f"... 외 {len(f_h) - max_h_display}종목 생략됨 ...", tw, 'center') + "\n")
         
         buf.write("-" * tw + "\n"); themes = get_cached_themes()

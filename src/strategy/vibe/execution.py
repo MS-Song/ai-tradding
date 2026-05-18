@@ -128,10 +128,10 @@ class ExecutionMixin:
                             results.append(msg_fail)
                             if self.state: self.state.add_trading_log(msg_fail)
 
-        # [Phase 4] 통합 배치 리뷰 트리거 (종목이 많은 경우 개별 AI 호출은 너무 느리므로 한 번에 처리)
         if phase['id'] == "P4" and getattr(self, "_last_p4_batch_date", None) != today and not skip_trade:
             self._last_p4_batch_date = today
             logger.info("🚀 P4 진입: 보유 종목 전체 AI 통합 진단 시작 (Batch Review)")
+            if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="P4 배치리뷰", last_task="보유 종목 AI 통합 진단 중", friendly_name="매매 분석")
             batch_results = self.perform_portfolio_batch_review(skip_trade=False)
             for br in batch_results:
                 results.append(f"🏁 {br}")
@@ -140,6 +140,9 @@ class ExecutionMixin:
         for item in holdings:
             code, name = item['pdno'], item['prdt_name']
             m_id = "" # 초기화 추가
+            
+            rt = safe_cast_float(item.get("evlu_pfls_rt"))
+            if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="검토 중", last_task=f"검토: {name} ({rt:+.1f}%)", friendly_name="매매 분석")
 
             p_strat = self.preset_strategies.get(code)
             
@@ -302,9 +305,20 @@ class ExecutionMixin:
             rt = safe_cast_float(item.get("evlu_pfls_rt"))
             action, sell_qty, action_reason = None, 0, ""
 
+            # [v2.1 추가] 시스템 구동 초기 보호 (Startup Grace Period)
+            # 프로그램 시작 후 일정 시간 동안은 기존 보유 종목에 대한 자동 손절/익절을 유예함
+            # 장 초반(09:00~09:20)에는 20분(1200초), 그 외 시간에는 10분(600초) 적용
+            boot_elapsed = time.time() - getattr(self, 'boot_time', time.time())
+            grace_period = 1200 if phase.get('is_stabilizing') else 600
+            is_boot_protected = boot_elapsed < grace_period
+            
+            # [v2.1 추가] 0 설정 시 비활성화 체크
+            # TP 또는 SL이 0.0으로 산출된 경우 (사용자 설정 0 또는 보정 결과 0) 해당 동작을 수행하지 않음
+            is_tp_disabled = (tp == 0.0)
+            is_sl_disabled = (sl == 0.0)
+
             # [v2.1 조건3] 극단 상황(글로벌 패닉 또는 -10% 급락) 시 전략 미설정 종목에 강제 전략 할당
-            # TradeWorker에서 조건1(자동매매ON)·조건2(분석1회완료)는 이미 통과한 상태이므로,
-            # 여기서는 전략이 없는 종목이 극단 상황에 노출될 때 즉시 방어 전략을 수립하고 매매 진행
+            # ... (중략: 기존 긴급 전략 할당 로직 유지) ...
             is_extreme_emergency = self.analyzer.is_panic or rt <= -10.0
             if is_extreme_emergency:
                 has_strategy = (code in self.exit_mgr.manual_thresholds) or \
@@ -318,17 +332,29 @@ class ExecutionMixin:
                     logger.warning(f"🚨 [긴급] {name}({code}) 강제 전략 설정: TP {emergency_tp:+.1f}% / SL {emergency_sl:.1f}%")
                     if self.state:
                         self.state.add_trading_log(f"🚨 긴급 전략 설정: {name} (TP:{emergency_tp:+.1f}% SL:{emergency_sl:.1f}%)")
-                    # 강제 전략 설정 후 TP/SL 재계산하여 정상 매매 흐름으로 합류
                     tp, sl, vol_spike = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
+                    is_tp_disabled, is_sl_disabled = (tp == 0.0), (sl == 0.0)
 
-            if rt >= tp:
-                if not self._is_in_partial_sell_cooldown(code, curr_t): action, sell_qty = "익절", max(1, math.floor(int(item.get('hldg_qty', 0)) * 0.3))
+            # --- 실제 매매 판정부 ---
+            if rt >= tp and not is_tp_disabled:
+                if is_boot_protected:
+                    if not hasattr(self, '_boot_log_sent'): self._boot_log_sent = {}
+                    if code not in self._boot_log_sent:
+                        msg = f"🛡️ 시스템 시작 초기 보호 (익절 유예): {name} ({int(grace_period - boot_elapsed)}초 남음)"
+                        logger.info(msg); results.append(msg); self._boot_log_sent[code] = time.time()
+                elif not self._is_in_partial_sell_cooldown(code, curr_t): 
+                    action, sell_qty = "익절", max(1, math.floor(int(item.get('hldg_qty', 0)) * 0.3))
                 else:
                     is_emg, emg_reason = self._is_emergency_exit(rt, tp, vol_spike, phase, self.last_buy_times.get(code, 0) > self.last_sell_times.get(code, 0))
                     if is_emg: action, action_reason, sell_qty = "긴급익절", emg_reason, max(1, math.floor(int(item.get('hldg_qty', 0)) * 0.3))
-            elif rt <= sl:
-                # [복기반영 #1] Defensive 장세에서는 손절선 돌파 즉시 기계적 청산 (물타기 유예 30분 포함, 예외 없음)
-                if self.analyzer.kr_vibe.upper() == "DEFENSIVE":
+            
+            elif rt <= sl and not is_sl_disabled:
+                if is_boot_protected:
+                    if not hasattr(self, '_boot_log_sent'): self._boot_log_sent = {}
+                    if code not in self._boot_log_sent:
+                        msg = f"🛡️ 시스템 시작 초기 보호 (손절 유예): {name} ({int(grace_period - boot_elapsed)}초 남음)"
+                        logger.info(msg); results.append(msg); self._boot_log_sent[code] = time.time()
+                elif self.analyzer.kr_vibe.upper() == "DEFENSIVE":
                     action, action_reason, sell_qty = "긴급손절", "Defensive장세_SL즉시", int(item.get('hldg_qty', 0))
                 elif (curr_t - self.last_buy_times.get(code, 0)) < 1800 and self.last_buy_times.get(code, 0) > self.last_sell_times.get(code, 0):
                     is_emg, emg_reason = self._is_emergency_sl(rt, sl, self.analyzer.is_panic, self.analyzer.kr_vibe, phase, True)
@@ -337,6 +363,7 @@ class ExecutionMixin:
 
             if action and not skip_trade and sell_qty > 0:
                 self.current_action = f"{action}실행"
+                if self.state: self.state.update_worker_status("TRADE_EXECUTION", status=f"{action} 실행", last_task=f"{action} 주문: {name} {sell_qty}주", friendly_name="매매 분석")
                 try:
                     logger.info(f"🚀 {action} 주문 시작: {item.get('prdt_name')}({code}) {sell_qty}주")
                     dry_res = self.mock_tester.intercept_order(code, sell_qty, False)
@@ -357,6 +384,7 @@ class ExecutionMixin:
                         self._save_all_states()
                     else:
                         logger.error(f"❌ {action} 주문 실패: {msg}")
+                        if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="실패", last_task=f"❌ {action} 실패: {name}", friendly_name="매매 분석")
                 except Exception as e:
                     logger.error(f"⚠️ {action} 실행 중 예외 발생: {e}")
                 finally:
@@ -372,11 +400,13 @@ class ExecutionMixin:
                 cash_ratio = (cash / total_asset * 100) if total_asset > 0 else 0
                 
                 buy_recs = self.get_buy_recommendations(market_trend, holdings=holdings)
+                if buy_recs and self.state: self.state.update_worker_status("TRADE_EXECUTION", status="추가매수 검토", last_task=f"물/불타기 {len(buy_recs)}건 분석 중", friendly_name="매매 분석")
                 for rec in buy_recs:
                     # [Safety] 루프당 최대 1종목 제한
                     if any(x for x in results if "매수" in x or "익절" in x or "손절" in x): break
                     
                     code, name, amt, b_type = rec['code'], rec['name'], rec['suggested_amt'], rec['type']
+                    if self.state: self.state.update_worker_status("TRADE_EXECUTION", status=f"{b_type} 검토", last_task=f"{b_type} 분석: {name}", friendly_name="매매 분석")
                     
                     # [Cooldown] 익절/손절 후 2시간 이내 재진입 금지 (핑퐁 방지)
                     if (curr_t - self.last_sell_times.get(code, 0)) < 7200: continue
@@ -398,6 +428,7 @@ class ExecutionMixin:
                         price = safe_cast_float(h_item.get('prpr'))
                         qty = math.floor(amt / price) if price > 0 else 0
                         if qty > 0:
+                            if self.state: self.state.update_worker_status("TRADE_EXECUTION", status=f"{b_type} 실행", last_task=f"{b_type} 주문: {name} {qty}주", friendly_name="매매 분석")
                             dry_res = self.mock_tester.intercept_order(code, qty, True)
                             success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
                             if success:
@@ -412,6 +443,7 @@ class ExecutionMixin:
                                 # [Fix] 물타기/불타기 매수 실패 시 사유 로깅
                                 log_error(f"{b_type} 매수 실패: [{code}]{name} | {qty}주 | 사유: {msg}")
                                 results.append(f"❌ {b_type} 실패: {name} | 사유: {msg}")
+                                if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="실패", last_task=f"❌ {b_type} 실패: {name}", friendly_name="매매 분석")
 
             # (B) AI 자율 매수 집행 (신규 종목 진입)
             if self.auto_ai_trade and self.ai_recommendations:
@@ -423,12 +455,17 @@ class ExecutionMixin:
                 cash = asset_info.get('cash', 0)
                 cash_ratio = (cash / total_asset * 100) if total_asset > 0 else 0
                 
+                if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="AI 매수 검토", last_task=f"AI 추천 {len(self.ai_recommendations)}건 분석 중", friendly_name="매매 분석")
                 for rec in self.ai_recommendations:
                     # [Safety] 루프당 최대 1종목 제한
                     if any(x for x in results if "매수" in x or "익절" in x or "손절" in x): break
                     
                     code, name, score = rec['code'], rec['name'], rec.get('score', 0.0)
+                    if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="AI 매수 분석", last_task=f"분석: {name} ({score:.1f}점)", friendly_name="매매 분석")
                     if any(h.get('pdno') == code for h in holdings): continue
+                    
+                    # [하락장 필터 대응] 자동 매수 비대상 종목(수동 전용)은 AI 자율 매수 루프에서 스킵
+                    if not rec.get('auto_eligible', True): continue
                     
                     # [Safety] 이미 거절되거나 대기 중인 종목은 루프 최상단에서 스킵하여 중복 로깅 방지 (유저 요청)
                     if code in self.rejected_stocks: continue

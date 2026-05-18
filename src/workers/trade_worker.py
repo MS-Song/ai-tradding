@@ -60,7 +60,7 @@ class TradeWorker(BaseWorker):
             if not self._auto_off_logged:
                 logger.info("🔒 [자동매매 OFF] 자동 매매 비활성 상태 - 수동 모드로 대기 중")
                 self._auto_off_logged = True
-            self.set_result("대기", last_task="🔒 자동매매 OFF (수동 모드)", friendly_name="TRADE_EXECUTION")
+            self.set_result("대기", last_task="🔒 자동매매 OFF (수동 모드)", friendly_name="매매 분석")
             return
         
         # 자동매매가 ON으로 전환되면 로그 플래그 리셋
@@ -82,7 +82,7 @@ class TradeWorker(BaseWorker):
                 logger.info("⏳ [워밍업] 최초 시황 분석 완료 대기 중... (매매 보류)")
                 self._warmup_logged = True
             remaining = int(self.WARMUP_TIMEOUT_SEC - warmup_elapsed)
-            self.set_result("대기", last_task=f"⏳ 워밍업 대기 중 (시장 분석 미완료, 잔여 {remaining}초)", friendly_name="TRADE_EXECUTION")
+            self.set_result("대기", last_task=f"⏳ 워밍업 대기 중 (시장 분석 미완료, 잔여 {remaining}초)", friendly_name="매매 분석")
             return
         
         # ──────────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ class TradeWorker(BaseWorker):
         # 모든 전제조건 충족 → 매매 사이클 실행
         # ──────────────────────────────────────────────────────────
         try:
-            self.set_busy("매매 검토", friendly_name="TRADE_EXECUTION")
+            self.set_busy("매매 검토", friendly_name="매매 분석")
             
             # strategy.run_cycle은 내부적으로 log_trade()를 호출하여 TUI에 실시간 반영함
             self.strategy.run_cycle(
@@ -108,9 +108,9 @@ class TradeWorker(BaseWorker):
                 asset_info=self.state.asset
             )
             
-            self.set_result("성공", last_task="전략 매매 사이클 수행 완료", friendly_name="TRADE_EXECUTION")
+            self.set_result("성공", friendly_name="매매 분석")
         except Exception as e:
-            self.set_result("실패", last_task=f"매매 엔진 오류: {e}", friendly_name="TRADE_EXECUTION")
+            self.set_result("실패", last_task=f"매매 엔진 오류: {e}", friendly_name="매매 분석")
 
         # 2. 거래량 폭발/스파이크 감지 (추가 로직)
         # ...

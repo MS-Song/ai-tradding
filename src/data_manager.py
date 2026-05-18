@@ -11,6 +11,7 @@ from src.workers.sync_worker import DataSyncWorker
 from src.workers.trade_worker import TradeWorker
 from src.workers.report_worker import ReportWorker
 from src.workers.retrospective_worker import RetrospectiveWorker
+from src.workers.recommendation_worker import RecommendationRecoveryWorker
 from src.utils.notifier import TelegramNotifier
 from src.logger import log_error, cleanup_text_log, trading_log, logger
 
@@ -60,7 +61,8 @@ class DataManager:
             "DATA": DataSyncWorker(self.state, api, strategy),
             "TRADE": TradeWorker(self.state, api, strategy),
             "REPORT": ReportWorker(self.state, strategy, self.notifier),
-            "RETRO": RetrospectiveWorker(self.state, strategy, self.notifier)
+            "RETRO": RetrospectiveWorker(self.state, strategy, self.notifier),
+            "REC_RECOVERY": RecommendationRecoveryWorker(self.state, self.api, self.strategy, dm=self)
         }
         
         # 증권사 타입에 따른 웹소켓 워커 추가

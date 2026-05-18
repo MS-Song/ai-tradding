@@ -184,7 +184,7 @@ def draw_trading_logs(strategy, dm):
                 "DATA": "데이터 동기화", "ASSET": "계좌 정보 수집", "BILLING": "API 비용 정산", 
                 "UPDATE": "최신 버전 확인", "GLOBAL": "사용자 명령 처리", "TELEGRAM": "텔레그램 발신", "TG_RECEIVE": "텔레그램 수신",
                 "AI_ENGINE": "AI 전략 엔진", "CLEANUP": "로그 자동 정리", "RETRO": "투자 복기 엔진",
-                "TRADE": "실시간 매매", "TRADE_EXECUTION": "실시간 매매", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링",
+                "TRADE": "매매 분석", "TRADE_EXECUTION": "매매 분석", "RECOMMENDATION": "AI 추천 수집", "UI": "실시간 모니터링",
                 "REPORT": "정기 리포트 발송",
                 "WS_KIWOOM": "실시간 웹소켓",
                 "WS_KIS": "실시간 웹소켓",

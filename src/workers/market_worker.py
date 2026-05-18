@@ -179,14 +179,14 @@ class MarketWorker(BaseWorker):
                         save_theme_data(theme_map)
                         self._last_theme_sync_time = time.time()
                         logger.info(f"✅ 테마 동기화 완료: {len(theme_map)}개 테마 저장됨.")
-                        self.state.update_worker_status("THEME_SYNC", status="대기 중", result="성공", last_task="테마 DB 갱신 완료")
+                        self.state.update_worker_status("THEME_SYNC", status="대기 중 (IDLE)", result="성공", last_task="테마 DB 갱신 완료")
                     else:
                         logger.warning("⚠️ 테마 데이터를 수집하지 못했습니다.")
-                        self.state.update_worker_status("THEME_SYNC", status="대기 중", result="실패", last_task="데이터 없음")
+                        self.state.update_worker_status("THEME_SYNC", status="대기 중 (IDLE)", result="실패", last_task="데이터 없음")
                 except Exception as ex:
                     from src.logger import log_error
                     log_error(f"테마 동기화 중 오류: {ex}")
-                    self.state.update_worker_status("THEME_SYNC", status="대기 중", result="실패", last_task=f"오류: {ex}")
+                    self.state.update_worker_status("THEME_SYNC", status="대기 중 (IDLE)", result="실패", last_task=f"오류: {ex}")
                 finally:
                     self._is_syncing_themes = False
 
@@ -212,17 +212,17 @@ class MarketWorker(BaseWorker):
                 h_raw = self.api.get_naver_hot_stocks()
                 # 인기 검색은 그대로 두거나 필터링 (사용자 요청은 거래량 위주였으나 일관성을 위해 필터링 적용 가능)
                 h_raw = [item for item in h_raw if not is_etf(item.get('name', ''))]
-                self.state.update_worker_status("HOT_RANKING", status="대기 중", result="성공", last_task=f"인기 {len(h_raw)}개 수집")
+                self.state.update_worker_status("HOT_RANKING", status="대기 중 (IDLE)", result="성공", last_task=f"인기 {len(h_raw)}개 수집")
                 
                 self.state.update_worker_status("VOL_RANKING", status="수집 중", friendly_name="RANK_VOL")
                 v_raw_all = self.api.get_naver_volume_stocks()
                 v_raw = [item for item in v_raw_all if not is_etf(item.get('name', ''))]
-                self.state.update_worker_status("VOL_RANKING", status="대기 중", result="성공", last_task=f"거래량 {len(v_raw)}개 수집")
+                self.state.update_worker_status("VOL_RANKING", status="대기 중 (IDLE)", result="성공", last_task=f"거래량 {len(v_raw)}개 수집")
                 
                 self.state.update_worker_status("AMT_RANKING", status="수집 중", friendly_name="RANK_AMT")
                 a_raw_all = self.api.get_naver_amount_stocks()
                 a_raw = [item for item in a_raw_all if not is_etf(item.get('name', ''))]
-                self.state.update_worker_status("AMT_RANKING", status="대기 중", result="성공", last_task=f"거래대금 {len(a_raw)}개 수집")
+                self.state.update_worker_status("AMT_RANKING", status="대기 중 (IDLE)", result="성공", last_task=f"거래대금 {len(a_raw)}개 수집")
                 
                 # [v1.7.1] 랭킹 노출 우선순위 로직 (장외: 거래량, 장내: 거래대금)
                 from src.utils import is_market_open
@@ -235,6 +235,7 @@ class MarketWorker(BaseWorker):
                 # 테마 분석은 모든 수집 데이터를 통합 활용
                 self.state.update_worker_status("RANKING", status="테마분석")
                 self.themes = analyze_popular_themes(h_raw, v_raw + a_raw)
+                self.state.update_worker_status("RANKING", status="대기 중 (IDLE)")
                 
                 from src.logger import logger
                 logger.info(f"📊 [RANKING] 시장 랭킹 데이터 수집 완료 ({r_type}) | 인기:{len(h_raw)} 거래량:{len(v_raw)} 거래대금:{len(a_raw)}")
