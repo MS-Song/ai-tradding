@@ -122,7 +122,10 @@
     *   `/status`, `/panic`, `/pause`, `/resume`, `/diagnosis` 등 다양한 명령어를 통해 외부에서 시스템 상태 확인 및 긴급 제어 가능.
     *   매매 발생 시 상세 내역(종목명, 수익률, AI 사유)을 실시간으로 텔레그램으로 전송.
 *   **성과 복기 엔진 (Retrospective Engine)**:
-    *   장 마감 후 당일 매매 내역을 AI가 분석하여 성공/실패 요인을 도출하고 `trade_retrospective.json`에 영속 저장.
+    *   장 마감 후 당일 매매 내역을 AI가 분석하여 성공/실패 요인을 도출하고 `trade_retrospective.json`에 영속 저장.
+*   **[신규] 시장 VIBE 대소문자 표준화 (Casing Standardization)**:
+    *   시장 장세(Vibe)를 판정할 때 발생하는 대소문자 불일치(`DEFENSIVE` ↔ `Defensive`)로 인한 중복 텔레그램 알림 및 가짜 Vibe 변화 감지 로그의 발생을 원천 차단함.
+    *   `MarketAnalyzer`에서 판정 및 AI 검증 시 결과값을 무조건 첫 글자 대문자 포맷(`capitalize()`)으로 강제 통일하고, `MarketWorker`의 Vibe 변화 판단 비교 로직에서도 대소문자를 무시하도록 개선하여 시스템의 상태 안정성과 알림 무결성을 보장함.
 
 ### F. 리포트 시스템 (Report Engine)
 *   **보유 종목 리포트 (`B` 키)**: 현재 포트폴리오의 종목별 PER/PBR/뉴스 데이터를 수집하여 Gemini에게 종합 진단 요청.

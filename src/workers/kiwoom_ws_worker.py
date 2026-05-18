@@ -15,8 +15,8 @@ class KiwoomWSWorker(BaseWorker):
     """
     
     def __init__(self, state, api, strategy):
-        # BaseWorker 초기화: 간격을 20초로 설정 (키움 권장 하트비트 주기)
-        super().__init__("WS_KIWOOM", state, 20.0)
+        # BaseWorker 초기화: 간격을 5초로 설정 (10초 아이들 타임아웃 방지용 하트비트 주기)
+        super().__init__("WS_KIWOOM", state, 5.0)
         self.api = api
         self.strategy = strategy
         self.ws = None
@@ -178,7 +178,7 @@ class KiwoomWSWorker(BaseWorker):
             target=self.ws.run_forever, 
             kwargs={
                 "ping_interval": 0,    # 프로토콜 레벨 자동 핑 비활성화 (JSON 하트비트와 충돌 방지)
-                "ping_timeout": 10,
+                "ping_timeout": None,  # ping_interval이 0이므로 타임아웃을 비활성화
                 "reconnect": 0,        # 자체 워커 루프에서 재연결 관리
                 "skip_utf8_validation": True
             },

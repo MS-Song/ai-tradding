@@ -44,6 +44,7 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-I07** | 수급 사이클 분석 | 매집 가속화(최근 2일 > 3일 평균) | AI 스코어링 단계 | 사이클 가점(+5~15pt) 반영 및 상승 사이클 초입 판정 확인 |
 | **TC-I08** | 수급 데이터 2중화 | Naver 수집 성공 / KIS 실패 | `get_investor_trading_trend` | Naver 데이터 우선 채택 및 KIS 보완 데이터(연기금 등) 통합 확인 |
 | **TC-I09** | AI 추천 필터링 | 시총 500억 또는 ETF 후보군 포함 | `VibeAlphaEngine.analyze` | 해당 종목 분석 단계에서 즉시 스킵(Return) 및 추천 리스트 제외 확인 |
+| **TC-I10** | Vibe 대소문자 정규화 | Vibe 값으로 소문자/대문자(DEFENSIVE/Defensive) 혼용 주입 | `determine_market_trend` 및 `run_cycle` 실행 | 모든 출력 및 상태값이 첫글자 대문자(Defensive)로 정규화되어 중복 로그/알림 발생 안 함 확인 |
 
 ## 4. 인프라 및 워커 안정성 테스트 (Infrastructure)
 백그라운드 워커와 데이터 소스의 신뢰성을 검증합니다.
@@ -102,6 +103,7 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-I03** | `tests/test_advanced_integration.py` | `test_tc_i03_replacement_logic` | 종목 교체 매매 |
 | **TC-I04** | `tests/test_ai_parsers.py` | `test_parse_portfolio_review_json` | 배치 리뷰 파싱 |
 | **TC-I05** | `tests/test_advanced_integration.py` | `test_tc_i05_zero_price_protection` | 데이터 무결성 |
+| **TC-I10** | `tests/test_advanced_integration.py` | `test_tc_i01_market_vibe_logic` | Vibe 대소문자 정규화 검증 |
 | **TC-F01** | `tests/test_fallback.py` | `test_fallback` | AI 장애 대응 로직 |
 | **TC-F04** | `tests/test_advanced_integration.py` | `test_tc_f04_state_persistence` | 상태 영속성 (Save/Load) |
 | **TC-B01** | `tests/test_exit_manager.py` | `test_exit_manager_vibe_modifiers` | VIBE별 TP/SL 보정 |

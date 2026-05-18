@@ -102,6 +102,9 @@ class MarketAnalyzer:
         Returns:
             str: AI가 검증 및 보정한 최종 Vibe.
         """
+        # 대소문자 일관성을 위해 heuristic_vibe를 첫글자 대문자로 변환
+        heuristic_vibe = heuristic_vibe.capitalize()
+
         # 기본적으로 알고리즘 결과를 디폴트로 세팅
         if not self.ai_advisor:
             self.ai_override_msg = ""
@@ -144,6 +147,8 @@ class MarketAnalyzer:
             }
             ai_result = self.ai_advisor.verify_market_vibe(ai_context, heuristic_vibe)
             if ai_result:
+                # 대소문자 일관성을 위해 capitalize() 적용
+                ai_result = ai_result.capitalize()
                 self.finalized_ai_vibe = ai_result
                 if ai_result.upper() != heuristic_vibe.upper():
                     self.ai_override_msg = f" [AI 교정: {ai_result} (기존: {heuristic_vibe})]"
@@ -170,18 +175,18 @@ class MarketAnalyzer:
         """변동성 지수 및 환율 등을 통해 방어모드(Defensive) 여부를 판단합니다.
 
         Returns:
-            str: "DEFENSIVE" 또는 "Neutral".
+            str: "Defensive" 또는 "Neutral".
         """
         vix = self.current_data.get("VOSPI")
-        if vix and (vix['price'] >= 25.0 or vix['rate'] >= 5.0): return "DEFENSIVE"
+        if vix and (vix['price'] >= 25.0 or vix['rate'] >= 5.0): return "Defensive"
         usd_krw = self.current_data.get("FX_USDKRW")
         nas = self.current_data.get("NASDAQ")
         btc = self.current_data.get("BTC_USD")
         
         # 비트코인 5% 이상 폭락 시 방어모드 전환
-        if btc and btc['rate'] <= -5.0: return "DEFENSIVE"
+        if btc and btc['rate'] <= -5.0: return "Defensive"
         
-        if usd_krw and nas and usd_krw['price'] >= 1500.0 and nas['rate'] <= -1.0: return "DEFENSIVE"
+        if usd_krw and nas and usd_krw['price'] >= 1500.0 and nas['rate'] <= -1.0: return "Defensive"
         return "Neutral"
 
     def _check_global_panic(self) -> bool:

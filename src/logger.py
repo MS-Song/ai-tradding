@@ -17,7 +17,8 @@ def kst_converter(*args):
             break
     if timestamp is None:
         timestamp = get_now().timestamp()
-    return datetime.fromtimestamp(timestamp, tz=KST).timetuple()
+    kst_dt = datetime.fromtimestamp(timestamp, tz=KST)
+    return kst_dt.replace(tzinfo=None).timetuple()
 
 # 전역 Formatter 컨버터 교체
 logging.Formatter.converter = kst_converter

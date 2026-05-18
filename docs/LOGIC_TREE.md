@@ -101,6 +101,7 @@ graph TD
 - **UI 가시성 개선 [2026-05-15]**: AI 분석 중 추천 종목 리스트 및 시황 브리핑이 사라지는 'Flicker' 현상 해결. 분석 완료 전까지 기존 데이터를 유지하고 완료 후 Atomic Swap으로 교체하는 로직 적용.
 - **Python 3.14+ 로깅 호환성 대응 [2026-05-18]**: Python 3.14+ 버전에서 `logging.Formatter.converter`가 bound method 형태로 호출될 때 발생하는 `TypeError: kst_converter() takes 1 positional argument but 2 were given` 오류를 가변 인자(*args) 지원 방식으로 대응 및 수정 완료.
 - **통합 테스트 견고화 [2026-05-18]**: `MockStrategy` 가 부팅될 때 시스템 초기 보호(Startup Grace Period)에 의해 익절/손절 테스트가 유예되는 이슈를 해결하기 위해 `boot_time`을 충분한 과거 시간으로 수정하여 `test_tc_a02_pyramiding_trigger` 및 `test_tc_a05_emergency_bypass` 테스트가 정상 통과하도록 복구.
+- **키움증권 웹소켓 안정화 [2026-05-18]**: 키움 OpenAPI 웹소켓 서버가 데이터 송수신이 없거나 하트비트가 없을 때 10초 만에 연결을 강제 종료하는 Idle Timeout 현상을 해결하기 위해 `WS_KIWOOM` 워커의 주기(interval)를 기존 20.0초에서 **5.0초**로 대폭 단축하여 5초마다 JSON PINGPONG 하트비트 메시지를 강제 전송하도록 개선하고, 프로토콜 레벨의 불필요한 타임아웃 오작동을 차단하기 위해 `ping_timeout`을 `None`으로 설정함.
 
 ---
 

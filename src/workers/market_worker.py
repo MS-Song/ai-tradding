@@ -148,7 +148,8 @@ class MarketWorker(BaseWorker):
                     self.strategy.analyzer.last_analyzed_rates[k] = batch_data.get(k, {}).get('rate', 0.0)
                 
                 with self.state.lock:
-                    self.state.vibe = getattr(self.state, "force_vibe", None) or self.strategy.current_market_vibe
+                    v_raw = getattr(self.state, "force_vibe", None) or self.strategy.current_market_vibe
+                    self.state.vibe = v_raw.capitalize() if v_raw else "Neutral"
                     if getattr(self.state, "manual_panic", False):
                         self.state.is_panic = True
                     else:
@@ -306,11 +307,13 @@ class MarketWorker(BaseWorker):
             today_str = get_now().strftime('%Y-%m-%d')
             
             # 1. VIBE 변화 알림
-            if curr_vibe != self.state.last_notified_vibe:
+            v_curr = curr_vibe.capitalize() if curr_vibe else "Neutral"
+            v_last = self.state.last_notified_vibe.capitalize() if self.state.last_notified_vibe else "Neutral"
+            if v_curr != v_last:
                 if self.notifier:
-                    self.notifier.notify_alert("시장 VIBE 변화", f"🔄 `{self.state.last_notified_vibe}` → `{curr_vibe}`")
-                self.state.add_trading_log(f"🌍 시장 VIBE 변화: {self.state.last_notified_vibe} → {curr_vibe}")
-                self.state.last_notified_vibe = curr_vibe
+                    self.notifier.notify_alert("시장 VIBE 변화", f"🔄 `{v_last}` → `{v_curr}`")
+                self.state.add_trading_log(f"🌍 시장 VIBE 변화: {v_last} → {v_curr}")
+                self.state.last_notified_vibe = v_curr
             
             # 2. 장 개시 알림
             if "09:00" <= curr_time_str <= "09:05" and self.state.notified_dates.get("market_start") != today_str:
