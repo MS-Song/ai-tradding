@@ -214,9 +214,9 @@ def draw_trading_logs(strategy, dm):
             
             # [수정] 워커명 너비 확장 (15 -> 20) 및 경과 시간 너비 동기화 (12)
             h_name = align_kr('워커명', 20); h_desc = align_kr('설명(Task)', 18)
-            h_time = align_kr('시간', 8); h_elap = align_kr('경과', 12, 'right')
+            h_time = align_kr('시간', 8); h_cycle = align_kr('주기', 8, 'center'); h_elap = align_kr('경과', 12, 'right')
             h_stat = align_kr('상태', 14); h_res  = align_kr('결과', 4, 'center')
-            header = f"  {h_name} | {h_desc} | {h_time} | {h_elap} | {h_stat} | {h_res} | 마지막 행동"
+            header = f"  {h_name} | {h_desc} | {h_time} | {h_cycle} | {h_elap} | {h_stat} | {h_res} | 마지막 행동"
             buf.write("\033[1m" + header + "\033[0m\n" + "  " + "-" * (tw - 6) + "\n")
             
             sort_order = {"MARKET": 0, "VIBE": 1, "RANKING": 2, "AI_ENGINE": 3, "DATA": 4, "GLOBAL": 5, "TELEGRAM": 6, "TG_RECEIVE": 7, "ASSET": 8}
@@ -237,6 +237,46 @@ def draw_trading_logs(strategy, dm):
                 t_fmt = align_kr(t_str, 8, 'center'); e_fmt = align_kr(e_str, 12, 'right')
                 if ts: e_fmt = f"\033[96m{e_fmt}\033[0m"
                 else: t_fmt = f"\033[90m{t_fmt}\033[0m"
+
+                # 워커의 주기(interval) 확인
+                interval_str = "-"
+                worker_inst = None
+                for key in [w, w.upper(), w.lower()]:
+                    if key in dm.workers:
+                        worker_inst = dm.workers[key]
+                        break
+
+                if worker_inst and hasattr(worker_inst, 'interval'):
+                    ival = worker_inst.interval
+                    if ival >= 60:
+                        if ival % 60 == 0:
+                            interval_str = f"{int(ival//60)}분"
+                        else:
+                            interval_str = f"{ival/60:.1f}분"
+                    else:
+                        if ival == int(ival):
+                            interval_str = f"{int(ival)}초"
+                        else:
+                            interval_str = f"{ival:.1f}초"
+                
+                # [예외 케이스 처리] dm.workers에 없는 임시/특수 작업의 하드코딩된 대략적 주기 매핑
+                if interval_str == "-":
+                    if w == "AI_ENGINE":
+                        # AI 전략 엔진은 20분(모의 60분) 스케줄
+                        is_virtual = getattr(strategy.api.auth, 'is_virtual', True)
+                        interval_str = "60분" if is_virtual else "20분"
+                    elif w in ["RANKING", "THEME_ANAL", "HOT_RANKING", "VOL_RANKING", "AMT_RANKING"]:
+                        interval_str = "2분"
+                    elif w == "VIBE":
+                        interval_str = "2분"
+                    elif w == "MARKET":
+                        interval_str = "5초"
+                    elif w == "CLEANUP":
+                        interval_str = "1시간"
+                    elif w == "UPDATE":
+                        interval_str = "6시간"
+
+                c_fmt = align_kr(interval_str, 8, 'center')
 
                 desc = worker_desc.get(w, "종목 상세" if w.startswith("STOCK_") else "배경 작업")
                 name_col = f"[{dm.worker_names.get(w, w)}]"
@@ -262,8 +302,8 @@ def draw_trading_logs(strategy, dm):
                 # [수정] 실패 시 마지막 행동을 빨간색으로 강조
                 last_task_fmt = f"\033[91m{last_task}\033[0m" if res == "실패" else last_task
                 
-                # [수정] 데이터 행 컬럼 너비 동기화 (Name: 20, Desc: 18, Elap: 12) 및 가용 너비 재계산 (tw-101)
-                buf.write(f"  \033[1;94m{align_kr(name_col, 20)}\033[0m | {align_kr(desc, 18)} | {t_fmt} | {e_fmt} | {status_fmt} | {res_color}{align_kr(res, 4, 'center')}\033[0m | {truncate_log_line(last_task_fmt, max(20, tw-101))}\n")
+                # [수정] 데이터 행 컬럼 너비 동기화 (Name: 20, Desc: 18, Elap: 12) 및 가용 너비 재계산 (tw-112)
+                buf.write(f"  \033[1;94m{align_kr(name_col, 20)}\033[0m | {align_kr(desc, 18)} | {t_fmt} | {c_fmt} | {e_fmt} | {status_fmt} | {res_color}{align_kr(res, 4, 'center')}\033[0m | {truncate_log_line(last_task_fmt, max(20, tw-112))}\n")
             
             skipped = len(sorted_workers) - display_limit
             if skipped > 0: buf.write(f"  \033[90m... 외 {skipped}건 생략됨 (터미널 높이 부족)\033[0m\n")
