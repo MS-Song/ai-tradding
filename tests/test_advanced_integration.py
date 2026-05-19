@@ -283,8 +283,8 @@ class TestInfraScenarios:
         strategy._save_all_states()
         strategy.state_mgr.save_all_states.assert_called()
 
-    def test_tc_f05_recommendation_recovery_worker_no_clear_busy_error(self, strategy):
-        """[TC-F05] RecommendationRecoveryWorker가 clear_busy() AttributeError 없이 정상 작동하는지 검증"""
+    def test_tc_f08_recommendation_recovery_worker_no_clear_busy_error(self, strategy):
+        """[TC-F08] RecommendationRecoveryWorker가 clear_busy() AttributeError 없이 정상 작동하는지 검증"""
         from src.workers.recommendation_worker import RecommendationRecoveryWorker
         from src.data.state import TradingState
         

@@ -58,6 +58,7 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-F05** | API 속도 제한 (Rate Limit) | 초당 20회 이상 API 요청 | `BaseAPI.request` 호출 | Token Bucket에 의해 속도 제어 및 안정적 응답 수신 확인 |
 | **TC-F06** | 브로커 전환 (Multi-Broker) | KIS -> Kiwoom 설정 변경 | 시스템 재시작 | Kiwoom API 인증 및 실시간 시세 수집 확인 |
 | **TC-F07** | Docker 자동 업데이트 트리거 | Docker 환경, `update_trigger` 파일 존재 | TUI 'U' 단축키 또는 텔레그램 /update 입력 | `update_trigger`에 시간 기록 후 sys.exit(0) 정상 종료 및 호스트 모니터 헬퍼에 의해 자동 재빌드/재가동 완료 확인 |
+| **TC-F08** | 추천 복구 워커 예외 방지 | `RecommendationRecoveryWorker` 실행 | `run()` 메서드 실행 | `clear_busy()` 호출 관련 AttributeError 없이 정상 성공/실패 상태 갱신 완료 확인 |
 
 ## 5. 스케줄러 및 자동 실행 사이클 테스트 (Scheduled Automation)
 사용자의 개입 없이 시간/주기에 의해 자동으로 실행되는 워커 로직을 검증합니다.
@@ -108,6 +109,7 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-I10** | `tests/test_advanced_integration.py` | `test_tc_i01_market_vibe_logic` | Vibe 대소문자 정규화 검증 |
 | **TC-F01** | `tests/test_fallback.py` | `test_fallback` | AI 장애 대응 로직 |
 | **TC-F04** | `tests/test_advanced_integration.py` | `test_tc_f04_state_persistence` | 상태 영속성 (Save/Load) |
+| **TC-F08** | `tests/test_advanced_integration.py` | `test_tc_f08_recommendation_recovery_worker_no_clear_busy_error` | 추천 복구 워커 예외 방지 |
 | **TC-B01** | `tests/test_exit_manager.py` | `test_exit_manager_vibe_modifiers` | VIBE별 TP/SL 보정 |
 | **TC-B02** | `tests/test_exit_manager.py` | `test_exit_manager_phase_adjustment` | 페이즈별 보정 |
 
