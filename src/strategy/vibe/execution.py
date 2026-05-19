@@ -712,6 +712,12 @@ class ExecutionMixin:
             if score < strict_min:
                 msg = f"장 초반 안정화 대기 (지수 BULL 미달, 현재 점수 {score:.1f} < 기준 {strict_min:.1f})"
                 logger.info(f"⏳ [{name}] {msg}")
+                self.rejected_stocks[code] = {
+                    "reason": msg,
+                    "time": time.time(),
+                    "expiry": time.time() + (10 * 60)
+                }
+                self._save_all_states()
                 return False, msg, 10
         
         # [Safety] indicators 초기화 위치를 함수 최상단으로 이동 (UnboundLocalError 방지)
@@ -725,9 +731,23 @@ class ExecutionMixin:
         
         # [CRITICAL] 당일 등락률 하드 필터 (-8.0% ~ +8.0% 범위만 진입 허용 - GEMINI.md 준수)
         if rate > 8.0:
-            return False, f"진입 제한: 과열 종목 (+{rate:.1f}%)", 60
+            msg = f"진입 제한: 과열 종목 (+{rate:.1f}%)"
+            self.rejected_stocks[code] = {
+                "reason": msg,
+                "time": time.time(),
+                "expiry": time.time() + (60 * 60)
+            }
+            self._save_all_states()
+            return False, msg, 60
         if rate < -8.0:
-            return False, f"진입 제한: 과매도/급락 ({rate:.1f}%)", 60
+            msg = f"진입 제한: 과매도/급락 ({rate:.1f}%)"
+            self.rejected_stocks[code] = {
+                "reason": msg,
+                "time": time.time(),
+                "expiry": time.time() + (60 * 60)
+            }
+            self._save_all_states()
+            return False, msg, 60
             
         news = self.api.get_naver_stock_news(code)
         
@@ -736,14 +756,20 @@ class ExecutionMixin:
         try:
             ma_20 = self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0
             if ma_20 == 0:
-                logger.info(f"🔍 {name}({code}) 지표 캐시 누락 - 실시간 동기화 중...")
-                candles = self.api.get_minute_chart_price(code)
-                if candles:
-                    indicators = self.indicator_eng.get_all_indicators(candles)
-                    ma_20 = indicators.get("sma", {}).get("sma_20", 0.0)
-                    if ma_20 > 0 and self.state:
-                        with self.state.lock:
-                            self.state.ma_20_cache[code] = ma_20
+                now_time = time.time()
+                if not hasattr(self, '_last_ma_sync_try'):
+                    self._last_ma_sync_try = {}
+                last_try = self._last_ma_sync_try.get(code, 0.0)
+                if (now_time - last_try) >= 300:  # 5분(300초) 쿨다운
+                    self._last_ma_sync_try[code] = now_time
+                    logger.info(f"🔍 {name}({code}) 지표 캐시 누락 - 실시간 동기화 중...")
+                    candles = self.api.get_minute_chart_price(code)
+                    if candles:
+                        indicators = self.indicator_eng.get_all_indicators(candles)
+                        ma_20 = indicators.get("sma", {}).get("sma_20", 0.0)
+                        if ma_20 > 0 and self.state:
+                            with self.state.lock:
+                                self.state.ma_20_cache[code] = ma_20
             else:
                 # 캐시 데이터가 있으면 indicators 구조에 맞춰 주입
                 indicators['sma'] = {'sma_20': ma_20}
@@ -760,14 +786,28 @@ class ExecutionMixin:
                 if sig == "CAUTION":
                     if vibe_upper in ["BEAR", "DEFENSIVE"]:
                         logger.info(f"🚫 [MA필터] {name} 분봉20MA 이탈(CAUTION) - {vibe_upper} 장세 진입 차단")
-                        return False, f"분봉20MA 이탈 확인 중 진입 차단 ({vibe_upper} 장세)", 30
+                        msg = f"분봉20MA 이탈 확인 중 진입 차단 ({vibe_upper} 장세)"
+                        self.rejected_stocks[code] = {
+                            "reason": msg,
+                            "time": time.time(),
+                            "expiry": time.time() + (30 * 60)
+                        }
+                        self._save_all_states()
+                        return False, msg, 30
                     else:
                         score *= 0.8  # Bull/Neutral: 감점만 적용
                 elif sig == "OVERBOUGHT":
                     # [핵심] 모든 장세에서 단기 과열(분봉 20MA 이격도 3% 초과)은 Python 코드에서 직접 차단
                     # → Gemini의 '공격적 페르소나'가 우회하지 못하도록 AI 호출 이전에 하드 리턴
                     logger.info(f"🚫 [MA필터] {name} 단기 과열(OVERBOUGHT) - 상투 추격 매수 차단")
-                    return False, "분봉 이평선 단기 과열 구간 진입 차단 (상투 매수 방지)", 60
+                    msg = "분봉 이평선 단기 과열 구간 진입 차단 (상투 매수 방지)"
+                    self.rejected_stocks[code] = {
+                        "reason": msg,
+                        "time": time.time(),
+                        "expiry": time.time() + (60 * 60)
+                    }
+                    self._save_all_states()
+                    return False, msg, 60
                 elif sig == "BUY_ZONE":
                     # 최적의 매수 타점 (분봉 20MA 지지선 근접) 시 AI 승인 확률 상향을 위해 가점
                     score += 15.0
@@ -783,7 +823,14 @@ class ExecutionMixin:
             logger.info(f"⚠️ [{name}] MA지표 취득 실패 → score 패널티 -30pt (현재: {score:.1f}pt)")
             # 패널티 후 최소 기준(60점) 미달이면 AI 호출 없이 즉시 거절
             if score < self.ai_config.get('min_score', 60.0):
-                return False, f"MA지표 없음 + 점수 미달 ({score:.1f}pt < {self.ai_config.get('min_score', 60.0):.1f}pt) - 데이터 충분 후 재시도", 10
+                msg = f"MA지표 없음 + 점수 미달 ({score:.1f}pt < {self.ai_config.get('min_score', 60.0):.1f}pt) - 데이터 충분 후 재시도"
+                self.rejected_stocks[code] = {
+                    "reason": msg,
+                    "time": time.time(),
+                    "expiry": time.time() + (10 * 60)
+                }
+                self._save_all_states()
+                return False, msg, 10
 
         phase = self.get_market_phase()
         # [개선] AI 호출 실패 시 자동 재시도 로직 추가 (최대 3회)

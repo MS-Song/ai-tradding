@@ -79,3 +79,8 @@ class BaseWorker:
             friendly_name (str, optional): UI에 표시될 워커의 한글 이름.
         """
         self.state.update_worker_status(self.name, status="대기중", result=result, last_task=last_task, friendly_name=friendly_name)
+
+    def clear_busy(self):
+        """워커의 현재 '작업 중' 상태를 해제하고 대기 상태로 전환합니다."""
+        self.state.clear_worker_status(self.name)
+
