@@ -14,6 +14,8 @@
 
 * **Documentation Policy**: 
 
+    *   **[신규] 명령어 실행 전 OS/Shell 환경 확인 정책**: 터미널 명령어(Command) 실행 전 반드시 사용자 운영 체제(Windows/Linux)와 쉘 환경(PowerShell/CMD/Bash)을 먼저 확인하여 각 환경에 호환되는 올바른 문법(예: PowerShell에서 `&&` 사용 금지 및 분리 실행)을 사용함으로써 구문 오류로 인한 불필요한 재실행을 원천 차단함.
+
     *   모든 주요 기능 변경 및 추가 시 `gemini.md`, `LOGIC_TREE.md`, `TEST_SCENARIOS.md`, `PROGRAM_SPECIFICATIONS.md` 및 관련 **테스트 코드**와 설계서(`specs/`)를 통합 최신화하여 시스템 정합성을 유지함.
 
     *   **[필수] 파일 목록 동기화**: `src/` 내 파일이 추가, 삭제 또는 이동될 경우 반드시 아래 명령어를 통해 `PROGRAM_SPECIFICATIONS.md`를 최신화함.

@@ -286,6 +286,12 @@ class KiwoomAPIClient(BaseAPI):
             vrss = cur_prc - pred_close
             ctrt = (vrss / pred_close * 100) if pred_close else 0.0
 
+            base_pric = self._safe_float(data.get("base_pric", 0))
+            exp_cntr_pric = self._safe_float(data.get("exp_cntr_pric", 0))
+            antc_rate = 0.0
+            if exp_cntr_pric > 0 and base_pric > 0:
+                antc_rate = (exp_cntr_pric - base_pric) / base_pric * 100
+
             return {
                 "price": cur_prc,
                 "vrss": vrss,
@@ -298,8 +304,8 @@ class KiwoomAPIClient(BaseAPI):
                 "pbr": data.get("pbr"),
                 "eps": data.get("eps"),
                 "bps": data.get("bps"),
-                "antc_price": self._safe_float(data.get("antc_cntg_prc", 0)),
-                "antc_rate": self._safe_float(data.get("antc_cntg_prdy_ctrt", 0)),
+                "antc_price": exp_cntr_pric,
+                "antc_rate": antc_rate,
                 "market_cap": self._safe_float(data.get("total_eval_pric", 0)) * 1000000 
             }
         except: return None
