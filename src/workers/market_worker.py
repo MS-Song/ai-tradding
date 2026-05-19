@@ -234,9 +234,9 @@ class MarketWorker(BaseWorker):
                     r_type = "거래량"
                 
                 # 테마 분석은 모든 수집 데이터를 통합 활용
-                self.state.update_worker_status("RANKING", status="테마분석")
+                self.state.update_worker_status("RANKING", status="테마 분석 중", friendly_name="RANKING")
                 self.themes = analyze_popular_themes(h_raw, v_raw + a_raw)
-                self.state.update_worker_status("RANKING", status="대기 중 (IDLE)")
+                self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="성공", last_task=f"테마 분석 완료 ({r_type})", friendly_name="RANKING")
                 
                 from src.logger import logger
                 logger.info(f"📊 [RANKING] 시장 랭킹 데이터 수집 완료 ({r_type}) | 인기:{len(h_raw)} 거래량:{len(v_raw)} 거래대금:{len(a_raw)}")
@@ -275,11 +275,13 @@ class MarketWorker(BaseWorker):
                 
                 self._last_ranking_time = curr_t
                 self.strategy.refresh_yesterday_recs_performance(h_raw, v_raw + a_raw)
+                self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="성공", last_task=f"랭킹/테마 갱신 완료 ({r_type})", friendly_name="RANKING")
                 self.state.update_worker_status("THEME_ANAL", status="대기 중 (IDLE)", result="성공", last_task=f"랭킹/테마 갱신 완료 ({r_type})", friendly_name="RANK_THEME")
             except Exception as e:
                 from src.logger import log_error
                 log_error(f"MarketWorker Ranking Error: {e}")
-                self.state.update_worker_status("THEME_ANAL", status="대기 중 (IDLE)", result="실패", last_task=f"수집 오류: {e}")
+                self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="실패", last_task=f"수집 오류: {e}", friendly_name="RANKING")
+                self.state.update_worker_status("THEME_ANAL", status="대기 중 (IDLE)", result="실패", last_task=f"수집 오류: {e}", friendly_name="RANK_THEME")
 
         # 4. 공통 기능 (5초)
         self._handle_notifications()

@@ -107,7 +107,7 @@ def draw_trading_logs(strategy, dm):
                 sorted_inds = sorted(indicator_updates.items(), key=get_sort_key)
                 for name, data in sorted_inds[:available_h-2]:
                     desc = desc_map.get(name, '-')
-                    t_str = datetime.fromtimestamp(data.get('time', 0)).strftime('%H:%M:%S')
+                    t_str = datetime.fromtimestamp(data.get('time', 0), tz=KST).strftime('%H:%M:%S')
                     stat = data.get('status', '-')
                     stat_color = "\033[92m" if stat == "성공" else "\033[91m" if stat == "실패" else ""
                     
@@ -232,7 +232,7 @@ def draw_trading_logs(strategy, dm):
                 
                 if not ts: t_str, e_str = "미갱신", "-"
                 else:
-                    dt = datetime.fromtimestamp(ts); t_str = dt.strftime('%H:%M:%S')
+                    dt = datetime.fromtimestamp(ts, tz=KST); t_str = dt.strftime('%H:%M:%S')
                     diff = int(curr_time - ts); e_str = f"{diff}초 전" if diff < 60 else f"{diff//60}분 {diff%60}초 전"
                 
                 t_fmt = align_kr(t_str, 8, 'center'); e_fmt = align_kr(e_str, 12, 'right')
