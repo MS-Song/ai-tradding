@@ -96,8 +96,8 @@ def draw_hot_stocks_detail(strategy, dm, tw, th):
         if not hot:
             buf.write(align_kr("인기 검색 데이터가 없습니다.", tw, 'center') + "\n")
         else:
-            # 인기 리포트 전용 컬럼: NO, 업종PER
-            extra_h = [('업종PER', 8, 'right')]
+            # 인기 리포트 전용 컬럼: NO, 배당%
+            extra_h = [('배당%', 8, 'right')]
             # NO 컬럼은 Core 앞에 수동 추가
             no_header = align_kr('NO', 4)
             header_str = no_header + CORE_SEPARATOR + render_core_header(extra_headers=extra_h)
@@ -115,9 +115,9 @@ def draw_hot_stocks_detail(strategy, dm, tw, th):
                 name = info.get('name') or item.get('name', '')
                 inv = _investor_cache.get(code, {})
                 
-                # 전용 컬럼: 업종PER
-                sector_per_str = detail.get('sector_per', 'N/A')
-                extra_cols = [(sector_per_str, 8, 'right')]
+                # 전용 컬럼: 배당%
+                yield_str = detail.get('yield', 'N/A')
+                extra_cols = [(yield_str, 8, 'right')]
                 
                 no_col = align_kr(str(idx), 4)
                 core_row = render_core_row(

@@ -188,7 +188,8 @@ def draw_trading_logs(strategy, dm):
                 "REPORT": "정기 리포트 발송",
                 "WS_KIWOOM": "실시간 웹소켓",
                 "WS_KIS": "실시간 웹소켓",
-                "THEME_SYNC": "테마 DB 갱신"
+                "THEME_SYNC": "테마 DB 갱신",
+                "REC_RECOVERY": "추천 종목 복구"
             }
             # [수정] 현재 구동 중인 워커(dm.workers) 또는 실제 실행 이력(last_times)이 있는 워커만 필터링하여 표시
             # 무분별하게 모든 정의된 워커(worker_desc)를 노출하지 않음

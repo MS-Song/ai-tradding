@@ -57,6 +57,7 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-F04** | 상태 영속성 | 강제 종료 후 재시작 | 시스템 초기화 단계 | 이전의 `rejected_stocks`, `strategies` 로드 확인 |
 | **TC-F05** | API 속도 제한 (Rate Limit) | 초당 20회 이상 API 요청 | `BaseAPI.request` 호출 | Token Bucket에 의해 속도 제어 및 안정적 응답 수신 확인 |
 | **TC-F06** | 브로커 전환 (Multi-Broker) | KIS -> Kiwoom 설정 변경 | 시스템 재시작 | Kiwoom API 인증 및 실시간 시세 수집 확인 |
+| **TC-F07** | Docker 자동 업데이트 트리거 | Docker 환경, `update_trigger` 파일 존재 | TUI 'U' 단축키 또는 텔레그램 /update 입력 | `update_trigger`에 시간 기록 후 sys.exit(0) 정상 종료 및 호스트 모니터 헬퍼에 의해 자동 재빌드/재가동 완료 확인 |
 
 ## 5. 스케줄러 및 자동 실행 사이클 테스트 (Scheduled Automation)
 사용자의 개입 없이 시간/주기에 의해 자동으로 실행되는 워커 로직을 검증합니다.
@@ -66,6 +67,7 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-W01** | 자동 시황/전략 업데이트 | 프로그램 실행 중 | 설정 주기(20분) 도래 | 백그라운드 AI 분석 실행 및 `auto_apply` 전략 반영 확인 |
 | **TC-W02** | 매매 사이클 (run_cycle) | 장중 실시간 루프 | 1초 주기로 반복 호출 | [매도 감시 -> 매수 엔진 -> AI 컨펌] 순차 실행 확인 |
 | **TC-W03** | 자산 정보 동기화 | 장중 자산 변동 발생 | 1분 주기로 반복 호출 | `start_day_asset` 기준 당일 PnL% 및 총 자산 갱신 확인 |
+| **TC-W04** | Watchtower 새벽 업데이트 | watchtower 컨테이너 백그라운드 구동 | 매일 새벽 03:30 크론 스케줄 도달 | Registry에 최신 버전 감지 시 다운타임을 최소화하며 최신 컨테이너로 무중단 재생성 확인 |
 
 ---
 

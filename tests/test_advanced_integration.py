@@ -283,6 +283,35 @@ class TestInfraScenarios:
         strategy._save_all_states()
         strategy.state_mgr.save_all_states.assert_called()
 
+    def test_tc_f05_recommendation_recovery_worker_no_clear_busy_error(self, strategy):
+        """[TC-F05] RecommendationRecoveryWorker가 clear_busy() AttributeError 없이 정상 작동하는지 검증"""
+        from src.workers.recommendation_worker import RecommendationRecoveryWorker
+        from src.data.state import TradingState
+        
+        # 1. 상태 객체 생성
+        state = TradingState()
+        state.is_kr_market_active = True
+        
+        # 2. Strategy 모킹
+        mock_strategy = MagicMock()
+        mock_strategy.auto_ai_trade = True
+        mock_strategy.debug_mode = False
+        
+        # 3. 워커 생성
+        worker = RecommendationRecoveryWorker(state, MagicMock(), mock_strategy, dm=MagicMock())
+        
+        # 4. run 실행 시 예외가 발생하지 않아야 함 (AttributeError 차단 검증)
+        try:
+            worker.run()
+        except AttributeError as e:
+            pytest.fail(f"AttributeError 발생: {e} - clear_busy() 관련 버그가 수정되지 않음")
+        except Exception as e:
+            # 기타 비즈니스 로직 예외는 테스트 목적상 무시 가능
+            pass
+            
+        # 5. 상태가 정상적으로 갱신되었는지 검증 (성공 또는 실패로 상태 갱신이 되어야 함)
+        assert state.worker_results.get("REC_RECOVERY") in ["성공", "실패"]
+
 class TestRealtimeSyncScenarios:
     """[NEW] 실시간 시세 동기화 및 동시호가 세션 로직 검증"""
     

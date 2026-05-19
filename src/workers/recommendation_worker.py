@@ -31,5 +31,3 @@ class RecommendationRecoveryWorker(BaseWorker):
         except Exception as e:
             logger.error(f"RecommendationRecoveryWorker Error: {e}")
             self.set_result("실패", last_task=f"재검토 오류: {e}")
-        finally:
-            self.clear_busy()

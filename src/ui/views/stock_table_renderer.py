@@ -7,12 +7,12 @@ from src.utils import align_kr, get_visual_width
 
 # ── 공통 Core 컬럼 너비 정의 ──
 W_CODE   = 8
-W_NAME   = 12
+W_NAME   = 14
 W_PRICE  = 10
 W_RATE   = 8
 W_PER    = 7
 W_PBR    = 6
-W_MKTCAP = 14
+W_MKTCAP = 16
 W_VOL    = 10
 W_AMT    = 10
 W_FRGN   = 9

@@ -60,6 +60,7 @@ Touch-File-If-Not-Exists -TargetFile "theme_data.json" -InitialContent "{}"
 Touch-File-If-Not-Exists -TargetFile "trading.log" -InitialContent ""
 Touch-File-If-Not-Exists -TargetFile "telegram.log" -InitialContent ""
 Touch-File-If-Not-Exists -TargetFile "error.log" -InitialContent ""
+Touch-File-If-Not-Exists -TargetFile "update_trigger" -InitialContent ""
 
 # 환경 설정 파일(.env) 존재 유무 확인 및 Fallback
 if (-not (Test-Path ".env")) {
@@ -130,5 +131,6 @@ if ($UseCompose) {
         -v "${CurrentDir}/trading.log:/app/trading.log" `
         -v "${CurrentDir}/telegram.log:/app/telegram.log" `
         -v "${CurrentDir}/error.log:/app/error.log" `
+        -v "${CurrentDir}/update_trigger:/app/update_trigger" `
         ai-vibe-trader:latest
 }

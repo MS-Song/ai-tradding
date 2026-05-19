@@ -38,6 +38,10 @@ services:
     # 그리고 성과 복기 리포트와 실시간 로그 파일이 유실되지 않도록 호스트 파일과 1:1 결합합니다.
     # [⚠️ 주의] 실행 스크립트(docker_run.sh)를 통해 실행 전에 호스트에 이 파일들을 미리 touch 해 두어야 
     # 도커가 파일 대신 디렉토리로 마운트해 버리는 대참사(Is a directory error)를 방지할 수 있습니다.
+    # Watchtower가 이 컨테이너를 모니터링 및 자동 업데이트 대상으로 지정할 라벨
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
     volumes:
       # 설정 및 자산/매매 상태 보관
       - ./.env:/app/.env:ro                   # 환경설정 파일 (읽기 전용 안전 마운트)
@@ -49,6 +53,29 @@ services:
       - ./trading.log:/app/trading.log
       - ./telegram.log:/app/telegram.log
       - ./error.log:/app/error.log
+
+      # 자동 업데이트 신호 트리거 (볼륨 공유 방식 - 방안 3용)
+      - ./update_trigger:/app/update_trigger
       
     # 컨테이너 오작동 시 자동 재기동 정책 (사용자가 명시적으로 중지하기 전까지 무중단 유지)
     restart: unless-stopped
+
+  # 🐳 자동 업데이트 감시 데몬 (Watchtower)
+  # [방안 1] 원격 이미지 자동 배포 환경에서 작동하며, 매일 새벽 3:30에 무중단 자동 재부팅을 예약합니다.
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: vibe-trader-watchtower
+    restart: unless-stopped
+    volumes:
+      # 호스트의 도커 소켓을 마운트하여 컨테이너 제어 권한 획득
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=Asia/Seoul
+      # 오직 com.centurylinklabs.watchtower.enable=true 라벨이 지정된 컨테이너만 감시
+      - WATCHTOWER_LABEL_ENABLE=true
+      # 장중 재부팅 차단: 매일 새벽 3시 30분에만 원격 이미지 변경 감지 및 반영
+      - WATCHTOWER_SCHEDULE=0 30 3 * * *
+      # 기존 컨테이너에 종료 신호(SIGTERM) 송신 후 최대 30초 대기하여 트레이딩 루프의 우아한 안전 종료 보장
+      - WATCHTOWER_TIMEOUT=30s
+      # 미사용 구버전 이미지 자동 정리 (디스크 관리)
+      - WATCHTOWER_CLEANUP=true

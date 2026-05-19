@@ -14,16 +14,24 @@ REPO_OWNER = "MS-Song"
 REPO_NAME = "ai-tradding"
 GITHUB_API_URL = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 
-def is_running_as_executable() -> bool:
-    """PyInstaller/Nuitka 등으로 빌드된 단일 실행파일(.exe 등)로 실행 중인지 확인합니다.
+def is_running_in_docker() -> bool:
+    """도커 컨테이너 내부 환경인지 확인합니다."""
+    if os.path.exists('/.dockerenv') or os.path.exists('/app/.dockerenv'):
+        return True
+    if os.getenv("IS_DOCKER", "FALSE").upper() == "TRUE":
+        return True
+    return False
 
-    실행파일 형태일 때만 자동 업데이트(파일 교체 및 재시작) 로직이 활성화됩니다. 
-    Python 인터프리터(`python main.py`)로 실행 시에는 알림만 표시됩니다.
+def is_running_as_executable() -> bool:
+    """PyInstaller/Nuitka 단일 실행파일로 실행 중이거나 Docker 환경인지 확인합니다.
+
+    실행파일 형태 또는 Docker 컨테이너 실행 환경일 때만 자동 업데이트가 활성화됩니다.
+    Python 인터프리터(`python main.py`)로 로컬 실행 시에는 알림만 표시됩니다.
 
     Returns:
-        bool: 단일 실행파일로 실행 중이면 True, 아니면 False.
+        bool: 업데이트 기능 적용 대상이면 True, 아니면 False.
     """
-    return getattr(sys, 'frozen', False)
+    return getattr(sys, 'frozen', False) or is_running_in_docker()
 
 def check_for_updates(current_version: str) -> dict:
     """GitHub API를 통해 최신 릴리즈 버전을 확인하고 업데이트 정보를 반환합니다.
@@ -109,14 +117,26 @@ def download_update(url: str, target_path: str, progress_cb=None) -> bool:
         return False
 
 def apply_update_and_restart(new_binary_path: str):
-    """현재 실행 중인 바이너리를 새 파일로 교체하고 프로그램을 재시작합니다.
+    """현재 실행 중인 바이너리 또는 컨테이너를 새 버전으로 교체하고 재시작합니다.
     
-    OS별로 적절한 스크립트(Windows: .bat, Linux: .sh)를 생성하여 
-    현재 프로세스 종료 후 파일을 덮어쓰고 새 프로세스를 실행하도록 예약합니다.
+    도커 환경일 경우 호스트 측에 신호를 보내기 위해 update_trigger 파일에 기록을 남기고 프로세스를 종료합니다.
+    일반 실행파일 형태일 경우 OS별 적절한 덮어쓰기 스크립트를 기동합니다.
 
     Args:
         new_binary_path (str): 다운로드된 새 실행파일의 임시 경로.
     """
+    if is_running_in_docker():
+        # 🐳 도커 환경인 경우: 볼륨 바인딩된 update_trigger 파일에 기록하고 프로세스 안전 종료
+        trigger_path = "update_trigger"
+        try:
+            with open(trigger_path, "w", encoding="utf-8") as f:
+                f.write(f"UPDATE_REQUESTED_AT={datetime.now().isoformat()}\n")
+            _upd_log.info(f"🐳 도커 업데이트 트리거 파일 생성 완료: {trigger_path}")
+            sys.exit(0)
+        except Exception as e:
+            _upd_log.error(f"🐳 도커 업데이트 트리거 파일 생성 실패: {e}")
+            sys.exit(1)
+        return
     is_windows = platform.system() == "Windows"
     current_exe = sys.executable if getattr(sys, 'frozen', False) else sys.argv[0]
     

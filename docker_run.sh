@@ -45,6 +45,7 @@ touch_file_if_not_exists() {
 touch_file_if_not_exists "trading_state.json" "{}"
 touch_file_if_not_exists "trade_retrospective.json" "{}"
 touch_file_if_not_exists "theme_data.json" "{}"
+touch_file_if_not_exists "update_trigger" ""
 
 # 필수 텍스트 로그 파일 초기화
 touch_file_if_not_exists "trading.log" ""
@@ -113,5 +114,6 @@ else
         -v "$(pwd)/trading.log:/app/trading.log" \
         -v "$(pwd)/telegram.log:/app/telegram.log" \
         -v "$(pwd)/error.log:/app/error.log" \
+        -v "$(pwd)/update_trigger:/app/update_trigger" \
         ai-vibe-trader:latest
 fi

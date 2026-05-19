@@ -1,4 +1,4 @@
-# 🌲 AI-Vibe-Trader Logic Tree & Checklist (v2.0.260518)
+# 🌲 AI-Vibe-Trader Logic Tree & Checklist (v2.3.260518)
 
 이 문서는 시스템의 모든 기능 단위(자동/수동)를 정의하고, Docstring 기반의 표준 명세와 테스트 코드가 커버해야 할 특정 조건을 기술합니다.
 
@@ -41,6 +41,8 @@ graph TD
     Infra --> StateSync[DataManager: trading_state.json 실시간 동기화]
     Infra --> PnLSync[SyncWorker: 보유 종목 전수 합산 기반 일일 평가액 보정]
     Infra --> Logger[TradingLogManager: JSON/텍스트 로그 및 텔레그램 알림]
+    Infra --> DockerTrigger[updater.py: Docker 자동 업데이트 감지 및 update_trigger 생성]
+    DockerTrigger --> HostMonitor[docker_update_monitor.sh/.ps1: 호스트에서 트리거 감지 및 git pull/docker compose restart 실행]
 ```
 
 ---
@@ -102,6 +104,7 @@ graph TD
 - **Python 3.14+ 로깅 호환성 대응 [2026-05-18]**: Python 3.14+ 버전에서 `logging.Formatter.converter`가 bound method 형태로 호출될 때 발생하는 `TypeError: kst_converter() takes 1 positional argument but 2 were given` 오류를 가변 인자(*args) 지원 방식으로 대응 및 수정 완료.
 - **통합 테스트 견고화 [2026-05-18]**: `MockStrategy` 가 부팅될 때 시스템 초기 보호(Startup Grace Period)에 의해 익절/손절 테스트가 유예되는 이슈를 해결하기 위해 `boot_time`을 충분한 과거 시간으로 수정하여 `test_tc_a02_pyramiding_trigger` 및 `test_tc_a05_emergency_bypass` 테스트가 정상 통과하도록 복구.
 - **키움증권 웹소켓 안정화 [2026-05-18]**: 키움 OpenAPI 웹소켓 서버가 데이터 송수신이 없거나 하트비트가 없을 때 10초 만에 연결을 강제 종료하는 Idle Timeout 현상을 해결하기 위해 `WS_KIWOOM` 워커의 주기(interval)를 기존 20.0초에서 **5.0초**로 대폭 단축하여 5초마다 JSON PINGPONG 하트비트 메시지를 강제 전송하도록 개선하고, 프로토콜 레벨의 불필요한 타임아웃 오작동을 차단하기 위해 `ping_timeout`을 `None`으로 설정함.
+- **Docker 자동 업데이트 시스템 구축 [v2.3] [2026-05-18]**: Docker 환경 내에서 실시간 업데이트가 이루어질 수 있도록 볼륨 바인딩 기반의 `update_trigger` 메커니즘을 구축하였습니다. TUI 또는 텔레그램 업데이트 시그널 시 컨테이너가 트리거 파일에 신호를 주입하고 셀프 종료하면, 호스트에 상주하는 백그라운드 헬퍼 데몬(`docker_update_monitor.sh` / `.ps1`)이 이를 감지하여 안전하게 `git pull` 및 `docker compose rebuild`를 대신 집행하고 컨테이너를 정상 재가동함으로써, 보안상 치명적인 `docker.sock` 마운트 없이 완벽하게 격리된 이중 자동 업데이트(Watchtower 새벽 03:30 및 핫키 즉시 실행)를 완벽 지원합니다.
 
 ---
 
