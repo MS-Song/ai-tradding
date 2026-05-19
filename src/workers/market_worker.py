@@ -239,20 +239,26 @@ class MarketWorker(BaseWorker):
                 self.state.update_worker_status("RANKING", status="대기 중 (IDLE)", result="성공", last_task=f"테마 분석 완료 ({r_type})", friendly_name="RANKING")
                 
                 from src.logger import logger
-                logger.info(f"📊 [RANKING] 시장 랭킹 데이터 수집 완료 ({r_type}) | 인기:{len(h_raw)} 거래량:{len(v_raw)} 거래대금:{len(a_raw)}")
+                logger.debug(f"📊 [RANKING] 시장 랭킹 데이터 수집 완료 ({r_type}) | 인기:{len(h_raw)} 거래량:{len(v_raw)} 거래대금:{len(a_raw)}")
                 
-                # 모든 랭킹 종목의 실시간 가격 보정을 위한 코드 통합
+                # [Empty Ranking Protection] 
+                # 장외 시간(오전 8시 네이버 금융 초기화 등)이나 API 오류로 랭킹 결과가 비어있으면 기존의 유효한 데이터를 유지하여 TUI 화면 깨짐 방지
+                effective_h = h_raw if h_raw else self.state.hot_raw
+                effective_v = v_raw if v_raw else self.state.vol_raw
+                effective_a = a_raw if a_raw else self.state.amt_raw
+                
+                # 모든 랭킹 종목의 실시간 가격 보정을 위한 코드 통합 (보존된 기존 데이터도 실시간 가격 보정 적용)
                 all_ranking_codes = list(set(
-                    [item['code'] for item in h_raw if item.get('code')] +
-                    [item['code'] for item in v_raw if item.get('code')] +
-                    [item['code'] for item in a_raw if item.get('code')]
+                    [item['code'] for item in effective_h if item.get('code')] +
+                    [item['code'] for item in effective_v if item.get('code')] +
+                    [item['code'] for item in effective_a if item.get('code')]
                 ))
                 
                 if all_ranking_codes:
                     try:
                         rt_bulk = self.api.get_naver_stocks_realtime(all_ranking_codes)
                         if rt_bulk:
-                            for raw_list in [h_raw, v_raw, a_raw]:
+                            for raw_list in [effective_h, effective_v, effective_a]:
                                 for item in raw_list:
                                     rt = rt_bulk.get(item.get('code'))
                                     if rt:
@@ -262,12 +268,12 @@ class MarketWorker(BaseWorker):
                         from src.logger import logger
                         logger.debug(f"랭킹 실시간 가격 보정 실패: {e}")
                 
-                shared_info = self._extract_price_info(h_raw + v_raw + a_raw)
+                shared_info = self._extract_price_info(effective_h + effective_v + effective_a)
                 
                 with self.state.lock:
-                    self.state.hot_raw = h_raw
-                    self.state.vol_raw = v_raw
-                    self.state.amt_raw = a_raw
+                    self.state.hot_raw = effective_h
+                    self.state.vol_raw = effective_v
+                    self.state.amt_raw = effective_a
                     self.state.ranking_type = r_type
                     for c, info in shared_info.items():
                         if c in self.state.stock_info: self.state.stock_info[c].update(info)

@@ -46,8 +46,9 @@ class DataSyncWorker(BaseWorker):
         # 1. 잔고 및 자산 정보 패치 (KIS API 호출) - 5초 주기로 제한 (단, force_sync 시 즉시 실행)
         should_fetch_balance = curr_t - getattr(self, "last_balance_sync", 0) > 5.0 or self.first_run or self.force_sync
         
-        try:
-            if should_fetch_balance:
+        balance_sync_success = False
+        if should_fetch_balance:
+            try:
                 self.state.update_worker_status("ASSET", status="잔고 동기화")
                 h, a = self.api.get_full_balance()
                 self.last_balance_sync = curr_t
@@ -84,21 +85,29 @@ class DataSyncWorker(BaseWorker):
                             self.strategy.last_known_asset = float(a['total_asset'])
                     
                     self.state.update_worker_status("ASSET", status="대기중", result="성공", last_task="계좌 및 평가액 동기화 완료")
-            
-            # 2. 관련 종목 시세 동기화 (네이버 벌크 API 활용 - 이건 Rate Limit 없음)
-            # 잔고 데이터가 없는 초기 상태가 아니라면 항상 실행
+                    balance_sync_success = True
+            except Exception as e:
+                # 에러 발생 시 쿨다운 강제 적용하여 1초 주기 무한 재시도 및 API 공격 차단
+                self.last_balance_sync = curr_t
+                self.force_sync = False
+                
+                if "초당 거래건수를 초과" in str(e):
+                    self.state.update_worker_status("ASSET", status="대기중", result="대기", last_task="API 속도 제한으로 대기 중")
+                else:
+                    log_error(f"DataSyncWorker Balance Sync Error (Holdings Kept): {e}")
+                    self.state.update_worker_status("ASSET", status="대기중", result="실패", last_task=f"잔고 조회 실패: {e}")
+        
+        # 2. 관련 종목 시세 동기화 (네이버 벌크 API 활용 - 이건 Rate Limit 없음)
+        # 잔고 조회가 실패하더라도 시세 수급 및 랭킹 가격 보정은 계속 돌아가도록 독립 실행
+        try:
             current_holdings = self.state.holdings
             if current_holdings or self.first_run:
                 self._sync_stock_prices(current_holdings, curr_t)
-                self.set_result("성공", last_task="전체 잔고 및 시세 동기화 완료")
+                self.set_result("성공", last_task="시세 동기화 완료" if not balance_sync_success else "전체 잔고 및 시세 동기화 완료")
                 self.first_run = False
-                
         except Exception as e:
-            if "초당 거래건수를 초과" in str(e):
-                self.state.update_worker_status("ASSET", status="대기중", result="대기", last_task="API 속도 제한으로 대기 중")
-            else:
-                log_error(f"DataSyncWorker Run Error: {e}")
-            self.set_result("실패", last_task=f"동기화 오류: {e}")
+            log_error(f"DataSyncWorker Price Sync Error: {e}")
+            self.set_result("실패", last_task=f"시세 동기화 오류: {e}")
 
     def _update_asset_metrics(self, a: dict):
         """총 자산 및 일일 손익 지표를 재계산하여 업데이트합니다.
