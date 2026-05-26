@@ -1,7 +1,8 @@
 import time
+import traceback
 from src.workers.base import BaseWorker
 from src.utils import is_market_open
-from src.logger import logger
+from src.logger import logger, log_error
 
 class RecommendationRecoveryWorker(BaseWorker):
     """추세 데이터 누락으로 인해 수동 전용으로 전환된 추천 종목들을 주기적으로 재검토하여 
@@ -29,5 +30,16 @@ class RecommendationRecoveryWorker(BaseWorker):
             self.strategy.reevaluate_manual_recommendations(dm=self.dm)
             self.set_result("성공", last_task="추천 종목 추세 재검토 완료")
         except Exception as e:
-            logger.error(f"RecommendationRecoveryWorker Error: {e}")
+            log_error(f"❌ RecommendationRecoveryWorker Error: {e}\n{traceback.format_exc()}")
             self.set_result("실패", last_task=f"재검토 오류: {e}")
+        finally:
+            # 작업 성공 또는 실패 시 busy 상태를 확실하게 복구하여 TUI 걸림 방지
+            self.clear_busy()
+
+    def clear_busy(self):
+        """작업 상태를 안전하게 해제하고 대기 상태로 전환합니다."""
+        if hasattr(self, 'state') and self.state:
+            try:
+                self.state.clear_worker_status(self.name)
+            except Exception as e:
+                log_error(f"RecommendationRecoveryWorker clear_busy Error: {e}")

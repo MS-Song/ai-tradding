@@ -38,16 +38,72 @@ class MultiLLMAdvisor(BaseAdvisor):
     def _try_all(self, method_name: str, *args, **kwargs):
         """등록된 어드바이저들을 순서대로 호출하며 성공할 때까지 시도합니다."""
         errors = []
-        for advisor in self.advisors:
+        # self.advisors가 루프 도중 변경될 수 있으므로 list 복사본으로 순회
+        for idx, advisor in enumerate(list(self.advisors)):
             try:
                 method = getattr(advisor, method_name)
                 res = method(*args, **kwargs)
                 if res is not None:
+                    # 결과 튜플이나 문자에 "API 호출 실패"가 담겨있는지 확인해 실패 간주
+                    is_api_fail = False
+                    if isinstance(res, tuple):
+                        if any(isinstance(x, str) and "API 호출 실패" in x for x in res):
+                            is_api_fail = True
+                    elif isinstance(res, str):
+                        if "API 호출 실패" in res:
+                            is_api_fail = True
+                    
+                    if is_api_fail:
+                        # API 호출 실패 문구가 있으면 임시 실패로 취급
+                        errors.append(f"{getattr(advisor, 'short_id', advisor.model_id)}: API 호출 실패 응답")
+                        continue
+                    
                     self.last_used_advisor = advisor
                     return res
             except Exception as e:
+                err_msg = str(e)
                 m_tag = getattr(advisor, "short_id", advisor.model_id)
-                errors.append(f"{m_tag}: {str(e)}")
+                errors.append(f"{m_tag}: {err_msg}")
+                
+                # 404 응답 감지 시 영구 우선순위 페일오버 실행
+                if "GEMINI_API_404_ERROR" in err_msg or "404" in err_msg:
+                    from src.logger import log_error, logger
+                    log_msg = f"🚨 [API 영구 페일오버] API 404 감지 ({m_tag}) -> 호출 우선순위 영구 변경 집행"
+                    log_error(log_msg)
+                    logger.info(log_msg)
+                    
+                    # 2순위를 1순위로 올리고, 1순위였던 어드바이저를 3순위(맨 뒤)로 영구 이동
+                    if len(self.advisors) >= 2:
+                        old_first = self.advisors[0]
+                        new_advisors = self.advisors[1:] + [old_first]
+                        self.advisors = new_advisors
+                        
+                        seq_str = " -> ".join([getattr(adv, "short_id", adv.model_id) for adv in self.advisors])
+                        alert_msg = f"⚙️ [AI API 호출 순서 영구 변경 완료]\n새로운 호출 우선순위: {seq_str}"
+                        log_error(alert_msg)
+                        logger.info(alert_msg)
+                        
+                        # 텔레그램 알림 발송
+                        try:
+                            notifier = None
+                            import __main__
+                            if hasattr(__main__, 'dm') and hasattr(__main__.dm, 'notifier'):
+                                notifier = __main__.dm.notifier
+                            
+                            if not notifier:
+                                from src.utils.notifier import TelegramNotifier
+                                notifier = TelegramNotifier()
+                            
+                            if notifier and notifier.is_active:
+                                notifier.send_message(f"🚨 <b>Gemini API 404 감지로 인해 호출 순서가 영구적으로 변경되었습니다.</b>\n새 순위: <code>{seq_str}</code>")
+                        except Exception as n_e:
+                            log_error(f"텔레그램 페일오버 알림 발송 실패: {n_e}")
+                            
+                # 503 응답 감지 시 임시 페일오버 실행
+                elif "GEMINI_API_503_ERROR" in err_msg or "503" in err_msg:
+                    from src.logger import log_error
+                    log_error(f"⚠️ [API 임시 페일오버] API 503 감지 ({m_tag}) -> 이 호출에 한해 2/3순위 백업 모델 재호출 시도")
+                
                 continue
         
         if errors:

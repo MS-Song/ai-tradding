@@ -223,18 +223,19 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                 if inp and inp[0].isdigit() and 0 < int(inp[0]) <= len(f_h):
                     h = f_h[int(inp[0])-1]; code, name = h['pdno'], h['prdt_name']
                     max_qty = int(float(h['hldg_qty']))
-                    if len(inp) < 2:
-                        dm.show_status("⚠️ [번호 수량]을 입력해야 합니다. (예: 1 10)", True)
-                        return
-                        
-                    if not inp[1].replace('.','',1).isdigit():
-                        dm.show_status("⚠️ 수량은 숫자여야 합니다.", True)
-                        return
-
-                    user_qty = int(float(inp[1]))
-                    qty = min(user_qty, max_qty)
-                    price = int(float(inp[2])) if len(inp) > 2 and inp[2].replace('.','',1).isdigit() else 0
                     
+                    if len(inp) < 2:
+                        # 수량을 생략한 경우, 보유수량 전량을 기본값으로 지정하여 시장가 매도 진행
+                        user_qty = max_qty
+                        price = 0
+                    else:
+                        if not inp[1].replace('.','',1).isdigit():
+                            dm.show_status("⚠️ 수량은 숫자여야 합니다.", True)
+                            return
+                        user_qty = int(float(inp[1]))
+                        price = int(float(inp[2])) if len(inp) > 2 and inp[2].replace('.','',1).isdigit() else 0
+                    
+                    qty = min(user_qty, max_qty)
                     qty_adjusted = user_qty > max_qty
 
                     def task_sell():
@@ -247,8 +248,19 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                             dm.add_trading_log(f"[{code}] {name} {p_disp} {qty}주 매도시도")
                             success, msg = api.order_market(code, qty, False, price)
                             if success:
-                                curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
-                                profit = (curr_p - float(h.get('pchs_avg_pric', 0))) * qty
+                                try:
+                                    naver_detail = api.get_naver_stock_detail(code)
+                                    curr_p = float(naver_detail.get('price', price)) if price == 0 and naver_detail else float(price)
+                                except Exception:
+                                    curr_p = float(price) if price > 0 else 0.0
+                                
+                                pchs_avg_pric_raw = h.get('pchs_avg_pric', 0)
+                                try:
+                                    pchs_avg_pric = float(pchs_avg_pric_raw) if pchs_avg_pric_raw else 0.0
+                                except (ValueError, TypeError):
+                                    pchs_avg_pric = 0.0
+                                
+                                profit = (curr_p - pchs_avg_pric) * qty
                                 trading_log.log_trade("수동매도", code, name, curr_p, qty, f"수동 매도 ({p_disp})", profit=profit, model_id="수동", ma_20=dm.ma_20_cache.get(code, 0.0))
                                 strategy.record_sell(code, is_full_exit=(qty >= max_qty))
                                 dm.show_status(f"✅ 매도 성공: {name}"); dm.update_all_data(dm.api.auth.is_virtual, force=True)
@@ -257,6 +269,10 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                                 log_error(f"수동 매도 실패 ({h['prdt_name']}): {msg}")
                                 dm.add_trading_log(f"❌ 수동 매도 실패 ({name}): {msg}")
                                 dm.show_status(f"❌ 매도 실패: {msg}", True)
+                        except Exception as e:
+                            from src.logger import log_error
+                            log_error(f"수동 매도 실행 예외: {e}")
+                            dm.show_status(f"❌ 매도 오류: {e}", True)
                         finally: dm.clear_busy("MANUAL_TRADE")
                     threading.Thread(target=task_sell, name=f"[{code}_{name}_매도]", daemon=True).start()
 
@@ -320,7 +336,11 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                             is_new = not any(h['pdno'] == code for h in dm.cached_holdings)
                             success, msg = api.order_market(code, qty, True, price)
                             if success:
-                                curr_p = float(api.get_naver_stock_detail(code).get('price', price)) if price == 0 else float(price)
+                                try:
+                                    naver_detail = api.get_naver_stock_detail(code)
+                                    curr_p = float(naver_detail.get('price', price)) if price == 0 and naver_detail else float(price)
+                                except Exception:
+                                    curr_p = float(price) if price > 0 else 0.0
                                 strategy.record_buy(code, curr_p, "수동")
                                 trading_log.log_trade("수동매수", code, buy_name, curr_p, qty, f"수동 매수 ({p_disp})", model_id="수동", ma_20=dm.ma_20_cache.get(code, 0.0))
                                 dm.show_status(f"✅ 매수 성공: {buy_name}")
@@ -335,6 +355,10 @@ def perform_interaction(key: str, api, strategy, dm, cycle: int):
                                 from src.logger import log_error
                                 log_error(f"수동 매수 실패 ({buy_name}): {msg}")
                                 dm.show_status(f"❌ 매수 실패: {msg}", True)
+                        except Exception as e:
+                            from src.logger import log_error
+                            log_error(f"수동 매수 실행 예외: {e}")
+                            dm.show_status(f"❌ 매수 오류: {e}", True)
                         finally: dm.clear_busy("MANUAL_TRADE")
                     threading.Thread(target=task_buy, name=f"[{code}_매수]", daemon=True).start()
 

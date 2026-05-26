@@ -44,12 +44,20 @@ class GeminiAdvisor(BaseLLMAdvisor):
                     return res_json['candidates'][0]['content']['parts'][0]['text']
                 else:
                     log_error(f"Gemini API Error ({self.model_id}): {response.status_code} - {response.text}")
-                    # 429(Rate Limit), 500/503(Server Error) 발생 시 지수 백오프 후 재시도
-                    if response.status_code in [429, 500, 503]:
+                    if response.status_code == 404:
+                        raise Exception(f"GEMINI_API_404_ERROR:{self.model_id}")
+                    elif response.status_code == 503:
+                        if attempt < 1:
+                            time.sleep(2 ** attempt)
+                            continue
+                        raise Exception(f"GEMINI_API_503_ERROR:{self.model_id}")
+                    elif response.status_code == 429:
                         time.sleep(2 ** attempt)
                         continue
                     break
             except Exception as e:
                 log_error(f"Gemini API Exception ({self.model_id}): {e}")
+                if "GEMINI_API_404_ERROR" in str(e) or "GEMINI_API_503_ERROR" in str(e):
+                    raise e
                 time.sleep(1)
         return None

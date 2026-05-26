@@ -30,7 +30,19 @@ class MarketWorker(BaseWorker):
         self.strategy = strategy
         self.notifier = notifier
         self.themes = []
-        self._last_theme_sync_time = 0
+        
+        # 테마 동기화 마지막 완료 날짜 초기화 (파일 수정일 기반으로 복구 시도)
+        theme_data_path = "theme_data.json"
+        self._last_theme_sync_date = ""
+        if os.path.exists(theme_data_path):
+            try:
+                from datetime import datetime, timezone, timedelta
+                KST = timezone(timedelta(hours=9))
+                mtime = os.path.getmtime(theme_data_path)
+                mtime_dt = datetime.fromtimestamp(mtime, tz=KST)
+                self._last_theme_sync_date = mtime_dt.strftime('%Y-%m-%d')
+            except Exception:
+                pass
 
     def run(self):
         """시장 데이터 수집 및 분석 루틴을 주기적으로 실행합니다.
@@ -162,9 +174,19 @@ class MarketWorker(BaseWorker):
                 self.state.update_worker_status("VIBE", status="대기 중 (IDLE)", result="실패", last_task=f"분석 오류: {e}")
 
         # 2.5 테마 데이터베이스 동기화 (최초 1회 및 매일 새벽 1회)
-        # theme_data.json 이 없거나 마지막 동기화 후 24시간 경과 시 수행
         theme_data_path = "theme_data.json"
-        needs_sync = not os.path.exists(theme_data_path) or (curr_t - self._last_theme_sync_time > 86400)
+        now = get_now()
+        today_str = now.strftime('%Y-%m-%d')
+        curr_hour = now.hour
+        
+        # 파일이 존재하지 않거나 거의 비어있는 경우(데이터 손상 등) 즉시 동기화
+        needs_sync = not os.path.exists(theme_data_path) or (os.path.exists(theme_data_path) and os.path.getsize(theme_data_path) < 10)
+        
+        # 또는, 오늘 자 동기화가 아직 수행되지 않았고 새벽 5시(05:00) 이후인 경우 동기화 트리거
+        # (주식 장 시작 시간인 09:00 전에 신선한 테마 DB를 확보하기 위함)
+        if not needs_sync:
+            if self._last_theme_sync_date != today_str and curr_hour >= 5:
+                needs_sync = True
         
         if needs_sync and not getattr(self, "_is_syncing_themes", False):
             self._is_syncing_themes = True
@@ -178,7 +200,9 @@ class MarketWorker(BaseWorker):
                     theme_map = self.api.get_naver_theme_data()
                     if theme_map:
                         save_theme_data(theme_map)
-                        self._last_theme_sync_time = time.time()
+                        # 성공 시 동기화 완료 날짜를 오늘로 갱신하여 중복 실행 방지
+                        from src.utils import get_now
+                        self._last_theme_sync_date = get_now().strftime('%Y-%m-%d')
                         logger.info(f"✅ 테마 동기화 완료: {len(theme_map)}개 테마 저장됨.")
                         self.state.update_worker_status("THEME_SYNC", status="대기 중 (IDLE)", result="성공", last_task="테마 DB 갱신 완료")
                     else:

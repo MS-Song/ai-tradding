@@ -77,6 +77,7 @@ class MockStrategy(ExecutionMixin):
         self.replacement_logs = []
         self.indicator_eng = MagicMock()
         self.exit_mgr = ExitManager(base_tp=5.0, base_sl=-5.0)
+        self.debug_mode = True
 
     @property
     def current_market_vibe(self): return self.analyzer.kr_vibe
@@ -140,6 +141,44 @@ class TestManualScenarios:
         strategy.api.order_market("005930", 10, False)
         strategy.api.order_market.assert_called_with("005930", 10, False)
 
+    @patch('src.ui.interaction.get_input')
+    @patch('threading.Thread')
+    def test_manual_sell_omitted_quantity(self, mock_thread, mock_get_input, strategy):
+        """수동 매도 시 수량을 생략하면(예: 번호만 입력), 보유한 수량 전량을 대상으로 매도 주문이 수행되는지 검증"""
+        from src.ui.interaction import perform_interaction
+        
+        # 1. 가상 데이터 매니저 모킹
+        dm = MagicMock()
+        dm.ranking_filter = "ALL"
+        # 보유 종목 리스트 설정 (KX하이텍, 10주 보유)
+        dm.cached_holdings = [
+            {"pdno": "088180", "prdt_name": "KX하이텍", "hldg_qty": "10", "pchs_avg_pric": "1000"}
+        ]
+        dm.ma_20_cache = {}
+        
+        # 2. 사용자 입력 모킹: '1' 번호만 입력 (수량, 가격 생략)
+        mock_get_input.return_value = "1"
+        
+        # 3. 비동기 스레드 실행 대신, 스레드에 넘겨진 task_sell 함수를 동기적으로 직접 가로채서 실행하도록 스파이 구성
+        def thread_side_effect(target, name=None, daemon=True):
+            # target이 task_sell 이므로 이를 직접 동기 호출해 검증
+            target()
+            return MagicMock()
+        mock_thread.side_effect = thread_side_effect
+        
+        # Naver 주가 상세 Mocking
+        strategy.api.get_naver_stock_detail.return_value = {"price": 1100, "rate": 1.0}
+        strategy.api.order_market.return_value = (True, "성공")
+        
+        # 4. 상호작용 수행 ('1' 키 입력)
+        perform_interaction('1', strategy.api, strategy, dm, 1)
+        
+        # 5. 검증
+        # - 수량이 생략되었으므로 max_qty 인 10주 전체가 매도 주문으로 들어갔는지 확인
+        strategy.api.order_market.assert_called_once_with("088180", 10, False, 0)
+        # - 대시보드 상태 알림에 성공 메시지가 정상 출력되었는지 확인
+        dm.show_status.assert_called_with("✅ 매도 성공: KX하이텍")
+
     def test_tc_m02_threshold_change(self, strategy):
         """[TC-M02] 수동 임계치 변경 검증"""
         strategy.exit_mgr.manual_thresholds["005930"] = [10.0, -2.0]
@@ -155,6 +194,63 @@ class TestManualScenarios:
         """[TC-M07] 강제 시황 분석 요청 검증"""
         strategy.analyzer.update(force_ai=True)
         strategy.analyzer.update.assert_called_with(force_ai=True)
+
+    def test_tc_m08_multillm_transient_503_failover(self, strategy):
+        """[TC-M08] 503 에러 발생 시 해당 요청만 임시로 2순위, 3순위 모델로 페일오버하여 성공하는지 검증"""
+        from src.strategy.advisors.multi import MultiLLMAdvisor
+        
+        # 1. 3중화 어드바이저 구성 (Gemini, Groq1, Groq2)
+        api = MagicMock()
+        llm_seq = [("GEMINI", "gemini-3.1-pro-preview"), ("GROQ", "groq-model-1"), ("GROQ", "groq-model-2")]
+        multi_advisor = MultiLLMAdvisor(api, llm_seq)
+        
+        # 2. 1순위 Gemini는 503 Exception 유발 모킹
+        multi_advisor.advisors[0].final_buy_confirm = MagicMock(side_effect=Exception("GEMINI_API_503_ERROR"))
+        
+        # 3. 2순위 Groq1은 정상 결과 리턴 모킹
+        expected_res = (True, "수급 지지 반등", 10)
+        multi_advisor.advisors[1].final_buy_confirm = MagicMock(return_value=expected_res)
+        
+        # 4. 최종 호출 검증
+        res = multi_advisor.final_buy_confirm("088180", "KX하이텍", "neutral", {}, [])
+        
+        # 5. 결과 확인: 2순위로 무사히 페일오버되어 결과가 리턴되어야 함
+        assert res[0] is True
+        assert "수급 지지" in res[1]
+        
+        # 호출 순위 리스트는 그대로 유지되어야 함 (503은 임시 페일오버)
+        assert multi_advisor.advisors[0].model_id == "gemini-3.1-pro-preview"
+
+    def test_tc_m09_multillm_permanent_404_failover(self, strategy):
+        """[TC-M09] 404 에러 발생 시 2순위를 1순위로, 1순위를 3순위로 영구 페일오버 및 우선순위 회전 검증"""
+        from src.strategy.advisors.multi import MultiLLMAdvisor
+        
+        # 1. 3중화 어드바이저 구성 (Gemini, Groq1, Groq2)
+        api = MagicMock()
+        llm_seq = [("GEMINI", "gemini-3.1-pro-preview"), ("GROQ", "groq-model-1"), ("GROQ", "groq-model-2")]
+        multi_advisor = MultiLLMAdvisor(api, llm_seq)
+        
+        # 초기 순서 확인
+        assert [adv.model_id for adv in multi_advisor.advisors] == ["gemini-3.1-pro-preview", "groq-model-1", "groq-model-2"]
+        
+        # 2. 1순위 Gemini는 404 Exception 유발 모킹
+        multi_advisor.advisors[0].final_buy_confirm = MagicMock(side_effect=Exception("GEMINI_API_404_ERROR"))
+        
+        # 3. 2순위 Groq1은 정상 결과 리턴 모킹
+        expected_res = (True, "돌파 상승 확인", 10)
+        multi_advisor.advisors[1].final_buy_confirm = MagicMock(return_value=expected_res)
+        
+        # 4. 최종 호출 수행
+        res = multi_advisor.final_buy_confirm("088180", "KX하이텍", "neutral", {}, [])
+        
+        # 5. 검증
+        # - 성공적으로 페일오버하여 결과 리턴
+        assert res[0] is True
+        assert "돌파 상승" in res[1]
+        
+        # - 404 감지로 인해 호출 순서가 [B, C, A] 즉 [groq-model-1, groq-model-2, gemini-3.1-pro-preview]로 영구 순서 변경되었는지 검증!
+        new_order = [adv.model_id for adv in multi_advisor.advisors]
+        assert new_order == ["groq-model-1", "groq-model-2", "gemini-3.1-pro-preview"]
 
 class TestAlgoScenarios:
     def test_tc_a01_recovery_trigger(self, strategy):
@@ -198,6 +294,23 @@ class TestAlgoScenarios:
         strategy.run_cycle(holdings=holdings)
         strategy.api.order_market.assert_called()
 
+    def test_recovery_short_grace_period(self, strategy):
+        """물타기(매수) 직후 초단기(5분 이내)에는 API 동기화 지연에 따른 핑퐁 손절 유예 검증"""
+        cur_t = strategy.mock_tester.get_now().timestamp()
+        strategy.last_buy_times["005930"] = cur_t - 10  # 10초 전에 구매함 (5분 이내)
+        strategy.last_sell_times["005930"] = cur_t - 7200  # 2시간 전에 판매함
+        # rt (-6.0%) 가 sl (-5.0%) 보다 낮고, 심지어 sl - 1.0% (-6.0% 이하) 라서 평소 같으면 추가 급락 긴급 손절이 발동해야 함
+        holdings = [{"pdno":"005930", "evlu_pfls_rt":-6.1, "hldg_qty":10, "prdt_name":"S"}]
+        strategy.exit_mgr.base_sl = -5.0
+        strategy.analyzer.kr_vibe = "neutral"
+        strategy.api.order_market.reset_mock()
+        
+        results = strategy.run_cycle(holdings=holdings)
+        
+        # 초단기 보호로 인해 손절 주문이 발송되지 않아야 함
+        strategy.api.order_market.assert_not_called()
+        assert any("초단기 보호" in r for r in results)
+
     def test_tc_a06_cash_protection(self, strategy):
         """[TC-A06] 현금 비중 보호 로직 (Bear장)"""
         strategy.analyzer.kr_vibe = "bear"
@@ -207,6 +320,46 @@ class TestAlgoScenarios:
         results = strategy.run_cycle(holdings=holdings, asset_info=asset_info, market_trend="bear")
         strategy.api.order_market.assert_not_called()
         assert not any("물타기" in r for r in results)
+
+    def test_bad_sell_cooldown_removal_and_missing_preset_auto_assign(self, strategy):
+        """보유 중인 종목이 손절 등으로 오해받아 쿨다운에 등록되었을 때, 쿨다운 자동 해제 및 프리셋 복구/배정 검증"""
+        # 1. bad_sell_times에 KX하이텍 코드(088180) 등록
+        strategy.bad_sell_times = {"088180": {"time": time.time(), "type": "손절"}}
+        
+        # 2. auto_assign_preset을 MagicMock으로 모의하여 스파이(Spy) 설정
+        strategy.auto_assign_preset = MagicMock(return_value=True)
+        
+        # KX하이텍 주식을 여전히 보유하고 있는 상황 연출
+        holdings = [{"pdno": "088180", "evlu_pfls_rt": -2.0, "hldg_qty": 10, "prdt_name": "KX하이텍"}]
+        
+        # mock_tester의 get_now()가 지정된 datetime 객체를 리턴하도록 함
+        cur_t = time.time()
+        strategy.mock_tester.get_now.return_value = datetime.fromtimestamp(cur_t)
+        
+        # 3. 첫 번째 루프 실행 (전략 프리셋 미배정 상태)
+        strategy.run_cycle(holdings=holdings)
+        
+        # bad_sell_times에서 즉시 제거되었는지 검증
+        assert "088180" not in strategy.bad_sell_times
+        
+        # auto_assign_preset이 최초 호출되었는지 검증
+        strategy.auto_assign_preset.assert_called_once_with("088180", "KX하이텍")
+        
+        # 4. 1분 뒤 상황 재현 (쿨다운 15분 이내)
+        strategy.mock_tester.get_now.return_value = datetime.fromtimestamp(cur_t + 60)
+        strategy.auto_assign_preset.reset_mock()
+        
+        strategy.run_cycle(holdings=holdings)
+        
+        # 15분 쿨다운에 걸려서 auto_assign_preset이 재호출되지 않았어야 함
+        strategy.auto_assign_preset.assert_not_called()
+        
+        # 5. 16분 뒤 상황 재현 (쿨다운 15분 만료)
+        strategy.mock_tester.get_now.return_value = datetime.fromtimestamp(cur_t + 1000)
+        strategy.run_cycle(holdings=holdings)
+        
+        # 쿨다운 만료 후 auto_assign_preset이 다시 성공적으로 호출되었는지 검증
+        strategy.auto_assign_preset.assert_called_once_with("088180", "KX하이텍")
 
 class TestAIDecisionScenarios:
     def test_tc_i01_market_vibe_logic(self, strategy):
