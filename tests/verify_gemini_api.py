@@ -1,6 +1,4 @@
 import os
-import requests
-import json
 import sys
 from dotenv import load_dotenv
 
@@ -8,79 +6,73 @@ from dotenv import load_dotenv
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
-def verify_gemini():
+def verify_vertex_gemini():
     load_dotenv(override=True)
-    api_key = os.getenv("GOOGLE_API_KEY")
+    project_id = os.getenv("VERTEX_PROJECT_ID")
+    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    location = os.getenv("VERTEX_LOCATION", "us-central1")
     
-    if not api_key:
-        print("❌ GOOGLE_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
-        return
-
     print("\n" + "="*80)
-    print("🚀 [Gemini API 통합 검증 도구] 실행")
+    print("🚀 [Vertex AI Gemini API 통합 검증 도구] 실행")
     print("="*80)
-
-    # 1. 모델 리스트 조회
-    print("\n[1] 접근 가능한 모델 리스트 조회 중...")
-    url_list = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     
-    available_models = []
-    try:
-        res = requests.get(url_list, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            models = data.get('models', [])
-            for m in models:
-                m_id = m.get('name', '').replace('models/', '')
-                if 'generateContent' in m.get('supportedGenerationMethods', []):
-                    available_models.append(m_id)
-                    print(f"✅ ID: {m_id:30} | Name: {m.get('displayName', 'N/A')}")
-        else:
-            print(f"❌ 모델 리스트 조회 실패 (Status: {res.status_code})")
-    except Exception as e:
-        print(f"❌ 예외 발생 (리스트 조회): {e}")
-
-    # 2. 통신 테스트 (60초 타임아웃 적용)
-    if not available_models:
-        print("\n⚠️ 테스트할 수 있는 모델이 없습니다.")
+    if not project_id:
+        print("❌ VERTEX_PROJECT_ID가 설정되지 않았습니다. .env 파일을 확인하세요.")
         return
 
-    print("\n" + "-"*80)
-    print(f"[2] 상위 모델 통신 테스트 (60초 타임아웃 적용)")
+    print(f"🔹 GCP Project ID: {project_id}")
+    print(f"🔹 GCP Region: {location}")
+    print(f"🔹 Service Account Key Path: {credentials_path or '지정되지 않음 (기본 Application Default Credentials 사용)'}")
     
-    # 실통신(200 OK) 확인된 모델 목록 — 비용 저렴한 순 정렬
+    if credentials_path:
+        if os.path.exists(credentials_path):
+            print(f"✅ Service Account Key JSON 파일이 존재합니다: {os.path.abspath(credentials_path)}")
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.abspath(credentials_path)
+        else:
+            print(f"❌ Service Account Key JSON 파일이 해당 경로에 존재하지 않습니다: {credentials_path}")
+            return
+            
+    # Initialize Vertex AI
+    print("\n[1] Vertex AI SDK 초기화 중...")
+    try:
+        import vertexai
+        vertexai.init(project=project_id, location=location)
+        print("✅ Vertex AI SDK 초기화 완료.")
+    except Exception as e:
+        print(f"❌ Vertex AI SDK 초기화 실패: {e}")
+        return
+
+    # Try generating content using different models
+    print("\n" + "-"*80)
+    print(f"[2] Vertex AI Gemini 모델 통신 테스트 (60초 타임아웃 적용)")
+    
     test_targets = [
-        "gemini-2.5-flash-lite",         # ✅ 현재 운영 모델 (최저비용, 200 OK 확인)
-        "gemini-2.5-flash",              # ✅ 중간 비용 (200 OK 확인)
-        "gemini-3-flash-preview",        # ✅ Gemini 3.0 Flash Preview (200 OK 확인)
-        "gemini-3.1-flash-lite-preview", # ✅ Gemini 3.1 Flash Lite Preview (200 OK 확인)
-        "gemini-3.1-pro-preview",        # ✅ Gemini 3.1 Pro Preview (고비용, 200 OK 확인)
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
     ]
     
-    # 실제 존재하는 모델만 필터링
-    actual_targets = [m for m in test_targets if m in available_models]
-    if not actual_targets:
-        actual_targets = [available_models[0]] # 없으면 첫 번째 모델이라도 테스트
-
-    for model_id in actual_targets:
+    for model_id in test_targets:
         print(f"📡 시도 중: {model_id:30} ...", end=" ", flush=True)
-        url_test = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={api_key}"
-        payload = {"contents": [{"parts": [{"text": "Hello, confirm your model version."}]}]}
-        
         try:
-            res = requests.post(url_test, json=payload, timeout=60)
-            if res.status_code == 200:
-                print("✅ 성공 (200 OK)")
+            from vertexai.generative_models import GenerativeModel
+            model = GenerativeModel(model_id)
+            response = model.generate_content(
+                "Hello! Confirm model access by saying 'Hello from Vertex AI'.",
+                request_options={"timeout": 60.0}
+            )
+            if response and response.text:
+                print(f"✅ 성공 (응답: {response.text.strip()})")
             else:
-                print(f"❌ 실패 (Status: {res.status_code})")
-        except requests.exceptions.Timeout:
-            print("⏳ 타임아웃 (60초 초과)")
+                print("❌ 실패 (빈 응답)")
         except Exception as e:
-            print(f"❌ 에외: {e}")
+            print(f"❌ 에러: {e}")
 
     print("\n" + "="*80)
     print("🏁 검증 종료.")
     print("="*80)
 
 if __name__ == "__main__":
-    verify_gemini()
+    verify_vertex_gemini()
+

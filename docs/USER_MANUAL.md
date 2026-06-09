@@ -10,7 +10,7 @@
 1.  **증권사 API 키**:
     *   **한국투자증권(KIS)**: [한국투자증권 개발자 센터](https://apiportal.koreainvestment.com/)에서 앱키와 앱시크릿 발급.
     *   **키움증권(Kiwoom)**: [키움증권 API 서비스](https://www.kiwoom.com/)를 통해 인증 키 및 계좌 연동.
-2.  **Google Gemini API 키**: [Google AI Studio](https://aistudio.google.com/)에서 발급받으세요. (AI 분석 기능을 위해 필수)
+2.  **Google Cloud Vertex AI 설정**: Google Cloud Console에서 프로젝트를 생성하고 Vertex AI API를 활성화한 뒤, 서비스 계정 키(JSON)를 발급받으세요. (AI 분석 기능을 위해 필수)
 3.  **Groq API 키 (선택 사항)**: [Groq Console](https://console.groq.com/)에서 발급받으세요. Gemini 장애 시 백업 모델로 사용하거나 주 모델로 설정 가능합니다.
 4.  **D2Coding 폰트 (필수 권장)**: 완벽한 TUI(터미널) 화면 출력을 위해 배포 파일에 동봉된 `D2Coding.ttf` 폰트를 시스템에 설치해 주세요.
     *   **[Windows]**: 다운로드한 `D2Coding.ttf` 파일을 더블클릭 후 **[설치]** 버튼을 누르거나, 우클릭하여 **[모든 사용자용으로 설치]**를 클릭합니다. 설치 후 현재 사용하는 터미널(명령 프롬프트, PowerShell, Windows Terminal 등) 설정에 들어가 글꼴(Font)을 `D2Coding`으로 변경합니다.
@@ -33,7 +33,7 @@
     *   `App Key / Secret`: 선택한 증권사에서 발급받은 키.
     *   `Account Number (CANO)`: 계좌번호 8~10자리.
     *   `Is Virtual? (y/n)`: 투자 모드 선택.
-    *   `Gemini / Groq API Key`: 사용할 AI 서비스의 키를 입력합니다 (없으면 엔터로 스킵 가능).
+    *   `Vertex AI / Groq 설정`: Vertex AI 사용을 위해 Google Cloud Project ID, 리전 및 서비스 계정 키 JSON 경로를 입력하고, Groq API 키를 입력합니다 (없으면 엔터로 스킵 가능).
     *   **[신규] 텔레그램 알림 설정**: 실시간 매매 및 리포트 알림을 받을 `TELEGRAM_TOKEN`과 `TELEGRAM_CHAT_ID`를 입력합니다. (상세 방법은 3장 참조)
     *   **[신규] 멀티 LLM 설정**: 사용하는 AI 서비스별로 주 모델(Primary)과 부 모델(Secondary)을 지정할 수 있으며, 장애 시 자동으로 다음 모델로 Fail-over 됩니다.
     *   **[신규] AI 자율 매수/매도 모드**: AI 추천 종목을 자동으로 살지(Buy), 그리고 보유 종목에 대해 AI가 매도 결정을 내렸을 때 자동으로 팔지(Sell)를 각각 독립적으로 설정할 수 있습니다.
@@ -399,7 +399,7 @@ Docker 컨테이너 환경에서 실행 중인 경우, 컨테이너 파일 시�
 *   **Q: 데이터가 갱신되지 않아요.**
     *   A: 인터넷 연결을 확인하거나, KIS API 키가 만료되지 않았는지 확인하세요. `S` 키를 눌러 설정을 재검토할 수 있습니다.
 *   **Q: AI 분석(7/8)이 동작하지 않아요.**
-    *   A: `GOOGLE_API_KEY`가 올바르게 입력되었는지 확인하세요. 무료 버전의 경우 초당 호출 제한이 있을 수 있습니다. AI 장애 시 기존 알고리즘 모드로 자동 전환됩니다.
+    *   A: `VERTEX_PROJECT_ID` 및 `GOOGLE_APPLICATION_CREDENTIALS`(서비스 계정 키 파일 경로)가 올바르게 설정되었는지 확인하세요. AI 장애 시 기존 알고리즘 모드로 자동 전환됩니다.
 *   **Q: EXE 파일 실행 시 경고 창이 떠요.**
     *   A: 서명되지 않은 실행 파일의 경우 윈도우에서 경고가 뜰 수 있습니다. [추가 정보] 클릭 후 [실행]을 누르세요.
 *   **Q: 화면이 깨져 보여요.**

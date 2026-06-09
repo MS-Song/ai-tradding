@@ -41,8 +41,8 @@ def get_config():
                 "auto_sell": env_data.get("AI_AUTO_SELL_MODE", "FALSE") == "TRUE",
                 "auto_apply": env_data.get("AUTO_APPLY_AI_STRATEGY", "FALSE") == "TRUE",
                 "debug_mode": env_data.get("AI_DEBUG_MODE", "FALSE") == "TRUE",
-                "preferred_model": env_data.get("GEMINI_MODEL", "gemini-3.1-flash-lite-preview"),
-                "llm_sequence": [tuple(item.split(":")) for item in env_data.get("LLM_SEQUENCE", "GEMINI:gemini-3.1-flash-lite-preview").split(",") if ":" in item]
+                "preferred_model": env_data.get("GEMINI_MODEL", "gemini-2.5-flash"),
+                "llm_sequence": [tuple(item.split(":")) for item in env_data.get("LLM_SEQUENCE", "GEMINI:gemini-2.5-flash").split(",") if ":" in item]
             },
             "starter_kit": {
                 "budget_per_stock": int(env_data.get("STARTER_KIT_BUDGET", 1000000)),
@@ -181,29 +181,15 @@ def ensure_env(force=False):
                     display_val = old_val or (default or "")
                 val = input(f" > {label} [{display_val}]: ").strip()
                 final = val if val else old_val
-                if not final and key not in ["GOOGLE_API_KEY", "GROQ_API_KEY"]:
+                if not final and key not in ["GOOGLE_API_KEY", "GROQ_API_KEY", "VERTEX_PROJECT_ID", "VERTEX_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"]:
                     final = default or ""
                     while not final: final = input(f" ! {label}는 필수입니다: ").strip()
                 return final
 
-        def fetch_gemini_models(api_key):
-            """Google Gemini API를 호출하여 사용 가능한 모델 목록을 동적으로 조회합니다.
-
-            Args:
-                api_key (str): 조회를 위한 API 키.
-
-            Returns:
-                List[str]: 가용한 모델 이름 리스트. 실패 시 기본 리스트 반환.
+        def fetch_gemini_models(project_id=None, location=None, credentials_path=None):
+            """Google Cloud Vertex AI에서 사용 가능한 대표적인 Gemini 모델 목록을 반환합니다.
             """
-            import requests
-            try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-                resp = requests.get(url, timeout=5)
-                if resp.status_code == 200:
-                    models = [m['name'].replace('models/', '') for m in resp.json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-                    return sorted(models)
-            except: pass
-            return ["gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+            return ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
 
         def fetch_groq_models(api_key):
             """Groq API를 호출하여 사용 가능한 모델 목록을 동적으로 조회합니다.
@@ -234,14 +220,19 @@ def ensure_env(force=False):
         print(" 🤖 AI 멀티 LLM 설정")
         print("-"*30)
 
-        # 2-1. Google Gemini 설정
-        gemini_key = handle_input("GOOGLE_API_KEY", "Google Gemini API Key (없으면 엔터)", None, "text", env_data)
-        results["GOOGLE_API_KEY"] = gemini_key
+        # 2-1. Google Cloud Vertex AI 설정
+        vertex_project = handle_input("VERTEX_PROJECT_ID", "Google Cloud Project ID (없으면 엔터)", None, "text", env_data)
+        results["VERTEX_PROJECT_ID"] = vertex_project
         selected_llm_options = []
 
-        if gemini_key:
-            print("  > Gemini 모델 목록을 가져오는 중...")
-            gemini_models = fetch_gemini_models(gemini_key)
+        if vertex_project:
+            vertex_location = handle_input("VERTEX_LOCATION", "Google Cloud Region (기본 us-central1)", "us-central1", "text", env_data)
+            vertex_credentials = handle_input("GOOGLE_APPLICATION_CREDENTIALS", "Google Service Account Key JSON 파일 경로 (예: ./vertex_key.json)", "", "text", env_data)
+            results["VERTEX_LOCATION"] = vertex_location
+            results["GOOGLE_APPLICATION_CREDENTIALS"] = vertex_credentials
+
+            print("  > Vertex AI Gemini 모델 목록을 가져오는 중...")
+            gemini_models = fetch_gemini_models(vertex_project, vertex_location, vertex_credentials)
             print("  [Gemini 모델 리스트]")
             for i, m in enumerate(gemini_models):
                 print(f"   {i+1}: {m}")
@@ -275,6 +266,9 @@ def ensure_env(force=False):
             
             # Gemini CPS 설정
             results["GEMINI_MAX_CPS"] = handle_input("GEMINI_MAX_CPS", "  > Gemini 초당 최대 호출 횟수 (기본 1.0)", "1.0", "text", env_data)
+        else:
+            results["VERTEX_LOCATION"] = ""
+            results["GOOGLE_APPLICATION_CREDENTIALS"] = ""
 
         # 2-2. Groq 설정
         groq_key = handle_input("GROQ_API_KEY", "Groq API Key (없으면 엔터)", None, "text", env_data)
