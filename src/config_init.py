@@ -187,7 +187,7 @@ def ensure_env(force=False):
                 return final
 
         def fetch_gemini_models(api_key):
-            """Google Gemini API를 호출하여 사용 가능한 모델 목록을 동적으로 조회합니다.
+            """google-genai SDK를 사용하여 사용 가능한 Gemini 모델 목록을 조회합니다.
 
             Args:
                 api_key (str): 조회를 위한 API 키.
@@ -195,14 +195,22 @@ def ensure_env(force=False):
             Returns:
                 List[str]: 가용한 모델 이름 리스트. 실패 시 기본 리스트 반환.
             """
-            import requests
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-                resp = requests.get(url, timeout=5)
-                if resp.status_code == 200:
-                    models = [m['name'].replace('models/', '') for m in resp.json().get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-                    return sorted(models)
-            except: pass
+                from google import genai
+                client = genai.Client(api_key=api_key)
+                models_pager = client.models.list()
+                gemini_models = []
+                for m in models_pager:
+                    name = m.name.replace('models/', '') if m.name else ""
+                    # supported_actions를 통해 텍스트 생성이 가능한 모델 필터링
+                    actions = m.supported_actions or []
+                    if any('generateContent' in action for action in actions):
+                        gemini_models.append(name)
+                if gemini_models:
+                    return sorted(gemini_models)
+            except Exception as e:
+                print(f"  > [경고] API를 통한 모델 목록 동적 조회 실패: {e}")
+                print("  > 기본 하드코딩된 모델 리스트로 대체합니다. API 키가 유효한지 확인해주세요.")
             return ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
 
         def fetch_groq_models(api_key):
