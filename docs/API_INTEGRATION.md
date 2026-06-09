@@ -50,20 +50,21 @@
 *   **엔드포인트**: `query1.finance.yahoo.com/v8/finance/chart/{symbol}`.
 *   **주기**: `index_update_worker` 스레드에서 5초마다 실시간 업데이트를 수행합니다.
 
-## 4. Google Cloud Vertex AI Gemini API
+## 4. Google Gemini API
 
 고수준 전략 수립 및 종목 분석을 위한 생성형 AI API입니다.
 
 ### 활용 모델
-*   **주요 모델**: `gemini-1.5-flash` 또는 `gemini-2.5-flash`.
+*   **주요 모델**: `gemini-2.5-flash`, `gemini-2.5-pro` 등.
 
 ### 제공 기능
 *   **전략적 조언 (Advice)**: 시장 Vibe, 포트폴리오 상태를 반영한 3줄 요약 전략 제시.
 *   **상세 분석 리포트**: AI가 발굴한 추천 종목에 대한 심층 투자 근거, 목표가, 리스크 분석.
 
 ### 구현 방식
-*   **라이브러리**: Google Cloud Vertex AI Python SDK (`google-cloud-aiplatform`)
-*   **인증**: `.env` 파일의 `VERTEX_PROJECT_ID` (GCP 프로젝트 ID), `VERTEX_LOCATION` (리전), `GOOGLE_APPLICATION_CREDENTIALS` (서비스 계정 키 JSON 파일 경로)를 사용합니다.
+*   **라이브러리**: Google Gen AI SDK (`google-genai`)
+*   **인증**: `.env` 파일의 `GOOGLE_API_KEY` (발급받은 Gemini API 키)를 사용합니다.
+
 
 ## 5. Groq API
 안정적인 분석 및 Fail-over를 위한 초고속 LLM 인터페이스입니다.

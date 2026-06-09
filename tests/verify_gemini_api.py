@@ -6,45 +6,37 @@ from dotenv import load_dotenv
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 
-def verify_vertex_gemini():
+def verify_gemini():
     load_dotenv(override=True)
-    project_id = os.getenv("VERTEX_PROJECT_ID")
-    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    location = os.getenv("VERTEX_LOCATION", "us-central1")
+    api_key = os.getenv("GOOGLE_API_KEY")
     
     print("\n" + "="*80)
-    print("🚀 [Vertex AI Gemini API 통합 검증 도구] 실행")
+    print("🚀 [Gemini API 통합 검증 도구] 실행")
     print("="*80)
     
-    if not project_id:
-        print("❌ VERTEX_PROJECT_ID가 설정되지 않았습니다. .env 파일을 확인하세요.")
+    if not api_key:
+        print("❌ GOOGLE_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
         return
 
-    print(f"🔹 GCP Project ID: {project_id}")
-    print(f"🔹 GCP Region: {location}")
-    print(f"🔹 Service Account Key Path: {credentials_path or '지정되지 않음 (기본 Application Default Credentials 사용)'}")
+    print(f"🔹 Google API Key: {api_key[:4]}...{api_key[-4:] if len(api_key) > 8 else ''}")
     
-    if credentials_path:
-        if os.path.exists(credentials_path):
-            print(f"✅ Service Account Key JSON 파일이 존재합니다: {os.path.abspath(credentials_path)}")
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.abspath(credentials_path)
-        else:
-            print(f"❌ Service Account Key JSON 파일이 해당 경로에 존재하지 않습니다: {credentials_path}")
-            return
-            
-    # Initialize Vertex AI
-    print("\n[1] Vertex AI SDK 초기화 중...")
+    # google-genai SDK로 API 연결 시도
+    print("\n[1] google-genai SDK 클라이언트 생성 중...")
     try:
-        import vertexai
-        vertexai.init(project=project_id, location=location)
-        print("✅ Vertex AI SDK 초기화 완료.")
+        from google import genai
+        from google.genai import types
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=60000)
+        )
+        print("✅ google-genai SDK 클라이언트 생성 완료.")
     except Exception as e:
-        print(f"❌ Vertex AI SDK 초기화 실패: {e}")
+        print(f"❌ SDK 로딩/클라이언트 생성 실패: {e}")
         return
 
-    # Try generating content using different models
+    # 모델 통신 테스트
     print("\n" + "-"*80)
-    print(f"[2] Vertex AI Gemini 모델 통신 테스트 (60초 타임아웃 적용)")
+    print(f"[2] Gemini 모델 통신 테스트 (60초 타임아웃 적용)")
     
     test_targets = [
         "gemini-2.5-flash",
@@ -54,13 +46,11 @@ def verify_vertex_gemini():
     ]
     
     for model_id in test_targets:
-        print(f"📡 시도 중: {model_id:30} ...", end=" ", flush=True)
+        print(f"📡 시도 중: {model_id:30} ... ", end="", flush=True)
         try:
-            from vertexai.generative_models import GenerativeModel
-            model = GenerativeModel(model_id)
-            response = model.generate_content(
-                "Hello! Confirm model access by saying 'Hello from Vertex AI'.",
-                request_options={"timeout": 60.0}
+            response = client.models.generate_content(
+                model=model_id,
+                contents="Hello! Confirm model access by saying 'Hello from Gemini'."
             )
             if response and response.text:
                 print(f"✅ 성공 (응답: {response.text.strip()})")
@@ -74,5 +64,6 @@ def verify_vertex_gemini():
     print("="*80)
 
 if __name__ == "__main__":
-    verify_vertex_gemini()
+    verify_gemini()
+
 

@@ -6,4 +6,7 @@ lxml
 python-telegram-bot
 pytest
 websocket-client
-google-cloud-aiplatform
+google-genai
+
+
+
