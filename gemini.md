@@ -32,6 +32,8 @@
 
     *   **[신규] 네이버 모바일 증권 테마 JSON API 연동 및 고속 동기화**: 네이버 금융 웹페이지 개편(Next.js/Npay 증권 UI 리뉴얼)으로 기존 HTML 스크래핑 파싱(`type_1` 테이블 부재)이 실패하여 `[DB_SYNC]` 워커가 "실패 | 데이터 없음"을 출력하던 문제를 해결함. 공식 모바일 JSON API(`m.stock.naver.com/api/stocks/theme`) 연동 체계로 전면 전환하고, `ThreadPoolExecutor`를 통한 멀티스레드 병렬 수집을 도입하여 전체 264개 테마 데이터를 수 초 내 초고속으로 완벽하게 수집·동기화함. 아울러 `src/theme_engine.py` 모듈 로드 시 `BROAD_THEMES` 정의 순서에 따른 잠재적 `NameError` 초기화 결함을 원천 수정함.
 
+    *   **[신규] 랭킹/상세/뉴스 모바일 공식 JSON API 전면 전환**: 웹 개편에 따라 기존 HTML 테이블 파싱에 의존하던 실시간 인기(`searchTop`), 거래량 상위(`quantTop`), 거래대금 상위(`priceTop`), 종목 상세(`integration`), 종목 뉴스(`news`) 수집 체계를 공식 모바일 REST API로 전면 전환함. 이를 통해 인기/거래량/테마/AI 추천 4대 영역이 모두 공란으로 출력되던 데이터 파이프라인 장애를 근본적으로 해소하고, 안정적이고 빠른 실시간 시세 및 펀더멘털 분석을 보장함.
+
 *   **Brokerage Support Policy**: 모든 기능 개발 시 **KIS API**와 **Kiwoom API**를 동시에 지원하도록 구현함. 특정 브로커에만 종속된 기능 추가를 지양하고, 양측 API 클라이언트(`kis.py`, `kiwoom.py`)에 동일한 인터페이스 및 데이터 구조를 유지하여 플랫폼 간 기능 격차를 방지함.
 
 

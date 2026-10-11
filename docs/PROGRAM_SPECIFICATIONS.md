@@ -300,7 +300,7 @@ AI-Vibe-Trader/
 
 
 
-- **`naver.py`**: 네이버 금융 뉴스, 상세 시세, 랭킹 및 모바일 증권 테마 JSON API 연동 (ThreadPool 고속 수집).
+- **`naver.py`**: 네이버 모바일 증권 공식 JSON API 연동 (인기/거래량/거래대금 랭킹, 테마 DB ThreadPool 병렬 수집, 종목별 펀더멘털 integration 및 뉴스).
 
 
 

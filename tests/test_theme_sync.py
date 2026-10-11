@@ -5,7 +5,6 @@ from src.theme_engine import save_theme_data, get_theme_for_stock, load_theme_da
 
 def test_theme_data_load_order():
     """모듈 로드 시 BROAD_THEMES가 정의되어 있어 load_theme_data 호출 시 NameError가 발생하지 않는지 검증합니다."""
-    # load_theme_data 호출 시 예외 없이 실행되어야 함
     load_theme_data()
     assert isinstance(_dynamic_theme_map, dict)
     assert isinstance(_code_to_theme_map, dict)
@@ -73,6 +72,39 @@ def test_theme_mapping_and_lookup():
     }
     save_theme_data(sample_data)
     
-    # 현대오토에버 검색
     theme = get_theme_for_stock("307950", "현대오토에버")
     assert theme == "자율주행"
+
+def test_get_naver_mobile_ranking_apis():
+    """모바일 JSON API 기반 인기, 거래량, 거래대금 랭킹 수집 검증."""
+    client = NaverAPIClient()
+    mock_stock = {
+        "itemCode": "005930",
+        "stockName": "삼성전자",
+        "closePriceRaw": "75000",
+        "fluctuationsRatio": "1.50",
+        "sosok": "0",
+        "accumulatedTradingVolumeRaw": "10000000",
+        "accumulatedTradingValueRaw": "750000000000"
+    }
+    mock_res = MagicMock()
+    mock_res.status_code = 200
+    mock_res.json.return_value = {"stocks": [mock_stock]}
+
+    with patch.object(client._session, 'get', return_value=mock_res):
+        hot = client.get_naver_hot_stocks()
+        vol = client.get_naver_volume_stocks()
+        amt = client.get_naver_amount_stocks()
+
+        assert len(hot) == 1
+        assert hot[0]["code"] == "005930"
+        assert hot[0]["name"] == "삼성전자"
+        assert hot[0]["price"] == 75000.0
+        assert hot[0]["rate"] == 1.50
+        assert hot[0]["mkt"] == "KSP"
+
+        assert len(vol) == 1
+        assert vol[0]["vol"] == 10000000.0
+
+        assert len(amt) == 1
+        assert amt[0]["amt"] == 750000.0
