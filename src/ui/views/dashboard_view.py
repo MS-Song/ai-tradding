@@ -334,26 +334,25 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         auto_st_bull = "\033[93mON\033[0m" if u_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
 
         # 정렬 폭 정의 (L:라벨)
-        L1 = 6
+        L1 = 7
 
-        # [v1.6.4] 터미널 너비(tw) 대응 반응형 컬럼 폭 산출 (금액/설정/리스크 짤림 완전 방지)
+        # [v1.6.5] 사용자 맞춤 최적화: BEAR/BULL 간격 동일화(각 32), 리스크 약어(NOR/HLT/OTG) 및 '한도:' 제거
         # 기본 최소 안전 폭 (총 라인 시각 폭 177 기준):
-        # W1:총자산(27), W2:가용/AI(17), W3:주식/BEAR(31), W4:일일/BULL(31), W5:실현/리스크(35)
-        # BEAR(29자), BULL(29자), 리스크 NORMAL(35자)을 온전히 수용하여 말줄임표(..) 방지
-        # tw가 178 이상으로 여유가 있는 경우 남는 공간을 고르게 확장 (최대 라인 폭이 절대 tw-1을 초과하지 않도록 보장)
-        W1, W2, W3, W4, W5 = 27, 17, 31, 31, 35
+        # W1:총자산(28), W2:가용/AI(18), W3:주식/BEAR(32), W4:일일/BULL(32), W5:실현/리스크(30)
+        # BEAR(29자), BULL(29자), 리스크 NOR(27자)에 모두 2~3칸 이상의 넉넉한 여유 공간 확보 (말줄임표 원천 차단)
+        W1, W2, W3, W4, W5 = 28, 18, 32, 32, 30
         extra = max(0, tw - 1 - 177)
-        caps = [6, 2, 2, 3, 2]  # W5(리스크 최대+6), W3(BEAR 최대+2), W4(BULL 최대+2), W1(총자산 최대+3), W2(AI 최대+2)
+        caps = [2, 2, 2, 2, 1]  # W3(BEAR+2), W4(BULL+2), W1(총자산+2), W5(리스크+2), W2(AI+1)
         adds = [0, 0, 0, 0, 0]
         while extra > 0 and any(adds[i] < caps[i] for i in range(5)):
             for i in range(5):
                 if extra > 0 and adds[i] < caps[i]:
                     adds[i] += 1
                     extra -= 1
-        W5 += adds[0]
-        W3 += adds[1]
-        W4 += adds[2]
-        W1 += adds[3]
+        W3 += adds[0]
+        W4 += adds[1]
+        W1 += adds[2]
+        W5 += adds[3]
         W2 += adds[4]
 
         # Line 1: ASSET & COSTS
@@ -404,17 +403,18 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         halted = strategy.risk_mgr.is_halted
         otg_halted = strategy.use_overtrading_guard and strategy.risk_mgr.check_overtrading_guard(strategy.daily_sl_count, strategy.max_daily_sl_count)
         
-        # 일일 손절 한도(OTG) 초과 시에도 경고 상태 표시
+        # 일일 손절 한도(OTG) 초과 시에도 경고 상태 표시 (3자리 슬림화: NOR / !HLT! / !OTG!)
         if halted:
-            risk_st = "\033[41;97m!HALTED!\033[0m"
+            risk_st = "\033[41;97m!HLT!\033[0m"
         elif otg_halted:
-            risk_st = "\033[41;97m!GUARD(OTG)!\033[0m"
+            risk_st = "\033[41;97m!OTG!\033[0m"
         else:
-            risk_st = "\033[92mNORMAL\033[0m"
+            risk_st = "\033[92mNOR\033[0m"
             
         limit_val = strategy.risk_mgr.max_daily_loss_rate
         max_sl = strategy.max_daily_sl_count
-        risk_info = f"리스크:{risk_st}(한도:-{limit_val}%) [OTG:{strategy.daily_sl_count}/{max_sl}]"
+        # '한도:' 글자 생략하여 슬림화
+        risk_info = f"리스크:{risk_st}(-{limit_val}%) [OTG:{strategy.daily_sl_count}/{max_sl}]"
         
         ai_cost_info = f"AI 비용: \033[90m-{total_ai_cost:,.0f}\033[0m"
         line_setup = (f"{label_setup} | {align_kr(strat_info, W1)} | {align_kr(algo_info, W2)} | "
