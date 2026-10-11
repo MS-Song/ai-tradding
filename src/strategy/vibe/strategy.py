@@ -274,12 +274,13 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
     def get_market_phase(self) -> dict:
         now = self.mock_tester.get_now().time()
         is_stabilizing = dtime(9, 0) <= now < dtime(9, 20)
+        is_opening_gap_guard = dtime(9, 0) <= now < dtime(9, 15)
         if dtime(9, 0) <= now < dtime(10, 0): 
-            return {"id": "P1", "name": "OFFENSIVE", "tp_delta": 2.0, "sl_delta": -1.0, "is_stabilizing": is_stabilizing}
-        elif dtime(14, 30) <= now < dtime(15, 10): return {"id": "P3", "name": "CONCLUSION", "tp_delta": 0.0, "sl_delta": 0.0, "is_stabilizing": False}
-        elif dtime(15, 10) <= now < dtime(15, 30): return {"id": "P4", "name": "PREPARATION", "tp_delta": 0.0, "sl_delta": 0.0, "is_stabilizing": False}
-        elif dtime(10, 0) <= now < dtime(14, 30): return {"id": "P2", "name": "CONVERGENCE", "tp_delta": -1.0, "sl_delta": 1.0, "is_stabilizing": False}
-        return {"id": "IDLE", "name": "IDLE", "tp_delta": 0.0, "sl_delta": 0.0, "is_stabilizing": False}
+            return {"id": "P1", "name": "OFFENSIVE", "tp_delta": 2.0, "sl_delta": -1.0, "is_stabilizing": is_stabilizing, "is_opening_gap_guard": is_opening_gap_guard}
+        elif dtime(14, 30) <= now < dtime(15, 10): return {"id": "P3", "name": "CONCLUSION", "tp_delta": 0.0, "sl_delta": 0.0, "is_stabilizing": False, "is_opening_gap_guard": False}
+        elif dtime(15, 10) <= now < dtime(15, 30): return {"id": "P4", "name": "PREPARATION", "tp_delta": 0.0, "sl_delta": 0.0, "is_stabilizing": False, "is_opening_gap_guard": False}
+        elif dtime(10, 0) <= now < dtime(14, 30): return {"id": "P2", "name": "CONVERGENCE", "tp_delta": -1.0, "sl_delta": 1.0, "is_stabilizing": False, "is_opening_gap_guard": False}
+        return {"id": "IDLE", "name": "IDLE", "tp_delta": 0.0, "sl_delta": 0.0, "is_stabilizing": False, "is_opening_gap_guard": False}
 
     def get_dynamic_thresholds(self, code, vibe, p_data=None):
         if code in self.exit_mgr.manual_thresholds:

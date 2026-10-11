@@ -25,6 +25,8 @@ class RiskManager:
         self.risk_per_trade_rate = self.config.get("risk_per_trade_rate", 0.5) # 1회 매매 시 계좌의 0.5% 리스크 감수
         self.atr_multiplier = self.config.get("atr_multiplier", 2.0)          # 2.0 ATR를 손절 범위로 가정
         self.max_daily_sl_count = self.config.get("max_daily_sl_count", 3)     # [VIBE-GUARD] 일일 허용 최대 손절 횟수
+        self.max_stock_inv_rate = self.config.get("max_stock_inv_rate", 0.10)  # [Hard Cap] 단일 종목 최대 투자 비중 (기본 10%)
+        self.max_stock_inv_cap = self.config.get("max_stock_inv_cap", 8000000.0) # [Hard Cap] 단일 종목 최대 투자 금액 상한 (기본 800만원)
         
         self.is_halted = False
         self.halt_reason = ""
@@ -36,6 +38,19 @@ class RiskManager:
         self.risk_per_trade_rate = self.config.get("risk_per_trade_rate", 0.5)
         self.atr_multiplier = self.config.get("atr_multiplier", 2.0)
         self.max_daily_sl_count = self.config.get("max_daily_sl_count", 3)     # [VIBE-GUARD] 동적 갱신
+        self.max_stock_inv_rate = self.config.get("max_stock_inv_rate", 0.10)
+        self.max_stock_inv_cap = self.config.get("max_stock_inv_cap", 8000000.0)
+
+    def get_max_investment_per_stock(self, total_asset: float) -> float:
+        """[복기반영 #6] 단일 종목 최대 투자 가능 금액(Hard Cap)을 계산합니다.
+        
+        총 자산의 10%와 상한선(800만원) 중 작은 값을 적용하여,
+        과도한 단일 종목 집중 투자(몰빵)로 인한 대형 손실을 원천 방어합니다.
+        """
+        if total_asset <= 0:
+            return self.max_stock_inv_cap
+        cap_by_rate = total_asset * self.max_stock_inv_rate
+        return max(500000.0, min(cap_by_rate, self.max_stock_inv_cap))
 
     def check_overtrading_guard(self, daily_sl_count: int, max_sl_count: int = None) -> bool:
         """[VIBE-GUARD] 일일 손절 횟수가 임계치를 초과했는지 검사하여 과도한 매매(Over-trading)를 감지합니다.
@@ -159,9 +174,9 @@ class RiskManager:
             # 수량 = 50만원 / 2000원 = 250주
             qty = math.floor(risk_budget / (atr * self.atr_multiplier))
             
-            # 4. 물리적/금액적 제한 (Safety Filters)
-            # - 최대 매수 가능 금액 제한 (총 자산의 25% 초과 금지 등)
-            max_inv_amt = total_asset * 0.25
+            # 4. 물리적/금액적 제한 (Safety Filters - Hard Cap)
+            # - 최대 매수 가능 금액 제한 (자산의 10% 또는 최대 800만원)
+            max_inv_amt = self.get_max_investment_per_stock(total_asset)
             inv_amt = qty * current_price
             if inv_amt > max_inv_amt:
                 qty = math.floor(max_inv_amt / current_price)

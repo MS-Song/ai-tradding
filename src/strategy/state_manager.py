@@ -96,8 +96,9 @@ class StateManager:
                     "last_rejected_date": today,
                     "start_day_asset": s.start_day_asset,
                     "start_day_pnl": s.start_day_pnl,
-                    "last_asset_date": s.last_asset_date,
                     "daily_sl_count": getattr(s, 'daily_sl_count', 0),
+                    "daily_ticker_sl_count": getattr(s, 'daily_ticker_sl_count', {}),
+                    "max_profit_rates": getattr(s, 'max_profit_rates', {}),
                     "last_sl_date": getattr(s, 'last_sl_date', ""),
                     "notified_dates": getattr(s, 'state', None).notified_dates if getattr(s, 'state', None) else {}
                 }
@@ -150,8 +151,10 @@ class StateManager:
                     s.start_day_pnl = d.get("start_day_pnl", 0.0)
                     s.last_asset_date = d.get("last_asset_date", "")
                     s.replacement_logs = d.get("replacement_logs", [])
-                    # [VIBE-GUARD] 일일 손절 횟수 및 날짜 로드
+                    # [VIBE-GUARD & 복기반영 #6] 일일 손절 횟수, 종목별 손절 횟수 및 최고수익률 로드
                     s.daily_sl_count = d.get("daily_sl_count", 0)
+                    s.daily_ticker_sl_count = d.get("daily_ticker_sl_count", {})
+                    s.max_profit_rates = d.get("max_profit_rates", {})
                     s.last_sl_date = d.get("last_sl_date", "")
                     
                     # bad_sell_times 로드 (재시작 후에도 재진입 차단 유지)

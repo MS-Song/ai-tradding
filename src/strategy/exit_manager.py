@@ -93,6 +93,10 @@ class ExitManager:
                 # 하락장 예외: Bear/Defensive일 때는 P1의 SL 완화 적용 안 함
                 if not (kr_vibe.upper() in ["BEAR", "DEFENSIVE"] and phase_cfg['id'] == "P1"):
                     sl_mod += phase_cfg.get('sl_delta', 0)
+
+                # [복기반영 #6 | 오프닝 갭 가드] 09:00~09:15 시초가 노이즈 휩쏘 방어를 위한 손절 완화 버퍼 (-1.0%)
+                if phase_cfg.get('is_opening_gap_guard'):
+                    sl_mod -= 1.0  # 시초 갭 흔들기로 인한 기계적 바닥 털림 방지
             
             if not keep_tp_zero: target_tp += tp_mod
             if not keep_sl_zero: target_sl += sl_mod
@@ -109,10 +113,10 @@ class ExitManager:
             
         # 6. 손절선 상한 방어 (SL Guard)
         # 손절이 0이면 비활성으로 간주하여 보정 생략
-        # 방어모드(Defensive)나 특정 페이즈(P2) 보정치가 가산되어 손절선이 양수(수익권)로 올라가는 것을 방지
-        # 아무리 타이트한 장세라도 수수료와 호가 스프레드를 고려하여 최소 -1.0%의 공간은 확보함
-        if target_sl != 0 and target_sl > -1.0:
-            target_sl = -1.0
+        # 방어모드(Defensive)나 특정 페이즈(P2) 보정치가 가산되어 손절선이 지나치게 타이트해지는 것을 방지
+        # 수수료(0.25~0.3%)와 호가 스프레드, 장중 미세 흔들림을 고려하여 최소 -2.5%의 안전 마진 공간을 강제 확보함
+        if target_sl != 0 and target_sl > -2.5:
+            target_sl = -2.5
 
         return round(target_tp, 1), round(target_sl, 1), is_vol_spike
 

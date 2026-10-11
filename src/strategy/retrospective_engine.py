@@ -114,27 +114,30 @@ class RetrospectiveEngine:
         with self.lock:
             return date_str in self.data.get("reports", {})
 
-    def get_daily_top_trades(self, date_str: str = None):
-        """지정한 날짜에 발생한 매매 중 손익 금액 기준 상위 3개 종목(수익/손실 각각)을 선별합니다.
+    def get_daily_top_trades(self, date_str: str = None, return_summary: bool = False):
+        """지정한 날짜에 발생한 매매 중 손익 금액 기준 상위 3개 종목(수익/손실 각각)과 종합 통계를 산출합니다.
 
         동일 종목에 대해 여러 번의 매매가 발생한 경우 수익금을 합산하여 계산합니다.
 
         Args:
             date_str (str, optional): 분석 대상 날짜.
+            return_summary (bool, optional): 전체 매매 수수료 및 하위 종목 종합 통계 포함 여부.
 
         Returns:
-            Tuple[List, List]: (수익 상위 리스트, 손실 상위 리스트).
+            Tuple: (수익 상위 리스트, 손실 상위 리스트) 또는 (수익 상위, 손실 상위, 종합 통계 딕셔너리).
         """
         if not date_str:
             date_str = get_now().strftime('%Y-%m-%d')
 
         sell_types = ["익절", "손절", "청산", "확정", "매도", "종료"]
         trades_with_profit = []
+        all_day_trades = []
 
         with trading_log.lock:
             for t in trading_log.data.get("trades", []):
                 if not t["time"].startswith(date_str):
                     continue
+                all_day_trades.append(t)
                 t_type = t.get("type", "")
                 profit = t.get("profit", 0.0)
                 # 수익/손실이 발생한 매도 거래만 수집
@@ -183,6 +186,31 @@ class RetrospectiveEngine:
             key=lambda x: x["total_profit"]
         )[:3]
 
+        # [종합 통계 산출] 하위 종목 손익 및 수수료 누적 집계
+        top_codes = {s["code"] for s in top_profits + top_losses}
+        other_stocks = [s for s in all_stocks if s["code"] not in top_codes]
+        
+        est_fees_taxes = sum(
+            float(t.get("price", 0)) * int(t.get("qty", 0)) * (0.0020 if any(x in t.get("type", "") for x in sell_types) else 0.00015)
+            for t in all_day_trades
+        )
+        dust_trades = sum(
+            1 for t in all_day_trades if (float(t.get("price", 0)) * int(t.get("qty", 0))) < 300000
+        )
+        
+        overall_summary = {
+            "total_trades": len(all_day_trades),
+            "total_buys": sum(1 for t in all_day_trades if "매수" in t.get("type", "")),
+            "total_sells": len(trades_with_profit),
+            "total_realized_profit": round(sum(s["total_profit"] for s in all_stocks), 0),
+            "est_fees_and_taxes": round(est_fees_taxes, 0),
+            "dust_trade_count": dust_trades,
+            "hidden_lower_stocks_count": len(other_stocks),
+            "hidden_lower_stocks_profit": round(sum(s["total_profit"] for s in other_stocks), 0)
+        }
+
+        if return_summary:
+            return top_profits, top_losses, overall_summary
         return top_profits, top_losses
 
     def generate_daily_report(self, date_str: str = None, vibe: str = "Neutral"):
@@ -201,9 +229,9 @@ class RetrospectiveEngine:
         if not date_str:
             date_str = get_now().strftime('%Y-%m-%d')
 
-        top_profits, top_losses = self.get_daily_top_trades(date_str)
+        top_profits, top_losses, overall_summary = self.get_daily_top_trades(date_str, return_summary=True)
 
-        if not top_profits and not top_losses:
+        if not top_profits and not top_losses and overall_summary.get("total_trades", 0) == 0:
             return None  # 매매 기록이 없으면 리포트 생성 불가
 
         # 종목별 현재가 및 뉴스 수집 (장 마감 후이므로 종가 기준)
@@ -214,7 +242,7 @@ class RetrospectiveEngine:
         ai_analysis = None
         if self.ai_advisor:
             ai_analysis = self._request_ai_analysis(
-                date_str, vibe, analyzed_profits, analyzed_losses
+                date_str, vibe, analyzed_profits, analyzed_losses, summary=overall_summary
             )
 
         # 리포트 생성
@@ -222,6 +250,7 @@ class RetrospectiveEngine:
             "generated_at": get_now().strftime('%Y-%m-%d %H:%M:%S'),
             "updated_at": get_now().strftime('%Y-%m-%d %H:%M:%S'),
             "market_vibe": vibe,
+            "overall_summary": overall_summary,
             "top_profits": analyzed_profits,
             "top_losses": analyzed_losses,
             "ai_analysis": ai_analysis,
@@ -302,11 +331,16 @@ class RetrospectiveEngine:
 
         return result
 
-    def _request_ai_analysis(self, date_str, vibe, profits, losses, is_update=False):
+    def _request_ai_analysis(self, date_str, vibe, profits, losses, is_update=False, summary=None):
         """AI Advisor에게 매매 복기 심층 분석을 요청합니다."""
         if not self.ai_advisor: return None
         try:
-            res = self.ai_advisor.analyze_trade_retrospective(date_str, vibe, profits, losses, is_update=is_update)
+            import inspect
+            sig = inspect.signature(self.ai_advisor.analyze_trade_retrospective)
+            if 'summary' in sig.parameters:
+                res = self.ai_advisor.analyze_trade_retrospective(date_str, vibe, profits, losses, is_update=is_update, summary=summary)
+            else:
+                res = self.ai_advisor.analyze_trade_retrospective(date_str, vibe, profits, losses, is_update=is_update)
             return res.replace("**", "") if res else res # TUI 가시성 위해 볼드 제거
         except Exception as e:
             log_error(f"AI 복기 분석 요청 실패: {e}")

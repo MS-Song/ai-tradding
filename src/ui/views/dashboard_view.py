@@ -333,12 +333,28 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         auto_st_bear = "\033[93mON\033[0m" if b_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
         auto_st_bull = "\033[93mON\033[0m" if u_cfg.get("auto_mode") else "\033[90mOFF\033[0m"
 
-        # 정렬 폭 정의 (L:라벨, C:컨텐츠)
-        L1, C1, L2, C2 = 8, 52, 8, 55
+        # 정렬 폭 정의 (L:라벨)
+        L1 = 6
 
-        # [v1.6.3] 컬럼 폭 최적화 (가용 줄이고 BEAR/BULL 늘림) 및 가독성 개선
-        # W1:총자산, W2:가용/AI, W3:주식/BEAR, W4:일일/BULL, W5:실현/리스크
-        W1, W2, W3, W4, W5 = 30, 22, 27, 30, 29
+        # [v1.6.4] 터미널 너비(tw) 대응 반응형 컬럼 폭 산출 (금액/설정/리스크 짤림 완전 방지)
+        # 기본 최소 안전 폭 (총 라인 시각 폭 177 기준):
+        # W1:총자산(27), W2:가용/AI(17), W3:주식/BEAR(31), W4:일일/BULL(31), W5:실현/리스크(35)
+        # BEAR(29자), BULL(29자), 리스크 NORMAL(35자)을 온전히 수용하여 말줄임표(..) 방지
+        # tw가 178 이상으로 여유가 있는 경우 남는 공간을 고르게 확장 (최대 라인 폭이 절대 tw-1을 초과하지 않도록 보장)
+        W1, W2, W3, W4, W5 = 27, 17, 31, 31, 35
+        extra = max(0, tw - 1 - 177)
+        caps = [6, 2, 2, 3, 2]  # W5(리스크 최대+6), W3(BEAR 최대+2), W4(BULL 최대+2), W1(총자산 최대+3), W2(AI 최대+2)
+        adds = [0, 0, 0, 0, 0]
+        while extra > 0 and any(adds[i] < caps[i] for i in range(5)):
+            for i in range(5):
+                if extra > 0 and adds[i] < caps[i]:
+                    adds[i] += 1
+                    extra -= 1
+        W5 += adds[0]
+        W3 += adds[1]
+        W4 += adds[2]
+        W1 += adds[3]
+        W2 += adds[4]
 
         # Line 1: ASSET & COSTS
         label_asset = align_kr(" ASSET", L1)
@@ -375,7 +391,7 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         line_asset = (f"{label_asset} | {align_kr(tot_info, W1)} | {align_kr(cash_info, W2)} | "
                       f"{align_kr(stk_info, W3)} | {align_kr(daily_info, W4)} | "
                       f"{align_kr(realized_info, W5)} | {t_cost_info}\033[0m")
-        buf.write(align_kr(line_asset, tw) + "\n")
+        buf.write(align_kr(line_asset, tw-1) + "\n")
 
         # Line 2: SETUP & RISK
         label_setup = align_kr(" SETUP", L1)

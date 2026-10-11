@@ -134,6 +134,14 @@ class VibeAlphaEngine:
             # 자동 매수 가능 여부 판정 (±8.0% 제한)
             raw_rate = float(item.get('rate', 0))
             auto_eligible = -8.0 <= raw_rate <= 8.0
+            # [복기반영 #6 | 하락장 역배열 낙주 제외] Bear/Defensive 장세에서는 음봉 낙주 종목 자동 매수 제외
+            if str(kr_vibe).upper() in ["BEAR", "DEFENSIVE"] and raw_rate < 0:
+                auto_eligible = False
+
+            # [수수료/슬리피지 방어 | 최소 거래대금 필터] 거래대금 30억원(3,000백만) 미만 소외주는 호가 갭/슬리피지 손실 방지를 위해 자동 매수 배제
+            raw_amt = safe_cast_float(item.get('amt') or item.get('amount') or detail.get('amt', 0))
+            if raw_amt > 0 and raw_amt < 3000:
+                auto_eligible = False
 
             if item_score >= dynamic_min_score:
                 reasons = []

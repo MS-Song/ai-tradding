@@ -70,6 +70,23 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-W03** | 자산 정보 동기화 | 장중 자산 변동 발생 | 1분 주기로 반복 호출 | `start_day_asset` 기준 당일 PnL% 및 총 자산 갱신 확인 |
 | **TC-W04** | Watchtower 새벽 업데이트 | watchtower 컨테이너 백그라운드 구동 | 매일 새벽 03:30 크론 스케줄 도달 | Registry에 최신 버전 감지 시 다운타임을 최소화하며 최신 컨테이너로 무중단 재생성 확인 |
 
+## 6. 복기 기반 손해 축소 5대 전략 테스트 (Retrospective-Driven Loss Reduction)
+20거래일 복기 분석(359회 매매)을 바탕으로 막대한 손실을 원천 차단하기 위해 수립된 핵심 방어 전략을 검증합니다.
+
+| ID | 테스트 항목 | 주입 상황 (Given) | 실행 동작 (When) | 기대 결과 (Then) |
+| :--- | :--- | :--- | :--- | :--- |
+| **TC-R01** | 오프닝 갭 가드 (매수 동결) | 09:10 (장 초반 20분 구간), AI 매수 신호 발생 | `run_cycle` 실행 | 신규 자율 매수 전면 동결 및 `🛡️ [오프닝 갭 가드]` 로그 출력 확인 |
+| **TC-R02** | 오프닝 갭 가드 (SL 버퍼) | 09:10, 수익률 -5.5% (기준 SL -5.0%) | `get_thresholds` 계산 | 09:00~09:15 구간 SL -1.0% 추가 완화(-6.0%) 적용으로 뇌동 손절 방지 확인 |
+| **TC-R03** | 단일 종목 투자 Hard Cap | 총자산 1억(10%=1000만원), 단일 종목 상한 800만원 | `get_max_investment_per_stock` 호출 | `min(10%, 800만원)` 규칙에 의해 최대 매수 가능액이 800만원으로 엄격 제한 확인 |
+| **TC-R04** | 당일 동일 종목 2회 손절 락 | 종목 '005930'이 당일 2회 손절 발생 | AI 매수 루프 진입 | 15:30까지 신규 매수 전면 차단 (`🛡️ [당일 2회 손절 락]`) 확인 (1회 손절 시 3시간 쿨다운) |
+| **TC-R05** | 트레일링 스탑 (수익 보존) | 매수 후 최고 수익률 +5.0% 기록 후 +3.8%로 밀림 | `run_cycle` 실행 | 고점 대비 1.0%p 반락 감지하여 즉시 전량 `트레일링스탑` 시장가 매도 집행 확인 |
+| **TC-R06** | Bear/Neutral 음봉 낙주 필터 | 장세 Bear/Neutral, 주가가 20MA 하회 or 당일 음봉 | `analyze` 및 AI 매수 루프 | `auto_eligible=False` 처리 및 매수 대상에서 즉시 제외 확인 |
+| **TC-R07** | SL Guard -2.5% 안전마진 | Defensive 장세 + Phase 2 중첩 (이론상 -1.0% 도출) | `get_thresholds` 계산 | SL Guard에 의해 최소 -2.5%의 안전마진이 강제 확보되어 조기 털림 방지 확인 |
+| **TC-R08** | 매수 초기 10분 호가 보호 | 매수 3분 경과, 수익률 -3.0% (SL -2.5% 이탈) | `run_cycle` 실행 | 10분 이내이므로 기계적 손절 유예 및 `🛡️ 매수 직후 초단기 보호` 확인 |
+| **TC-R09** | 자투리 1주 매매 전면 차단 | 가용 현금 3만원(Floor 30만원 미달), 주가 2.5만원 | `run_cycle` AI 매수 루프 | 잔돈 털어 억지로 1주 매수하지 않고 스킵하여 수수료 낭비 방지 확인 |
+| **TC-R10** | 거래대금 30억 유동성 필터 | 종목 당일 거래대금 15억원 (<30억원) | `analyze` 스코어링 | 슬리피지 및 호가 갭 방어를 위해 `auto_eligible=False` 처리 확인 |
+| **TC-R11** | 복기 리포트 전체 수수료 통계 | 당일 다수의 매매 및 하위 종목 손절 발생 | `get_daily_top_trades` | 총 거래건수, 총 추정 수수료, 하위 종목 합산 손익이 `overall_summary`에 전수 집계 확인 |
+
 ---
 
 ## 💡 테스트 구현 가이드 (State Injection)
@@ -113,6 +130,18 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-B01** | `tests/test_exit_manager.py` | `test_exit_manager_vibe_modifiers` | VIBE별 TP/SL 보정 |
 | **TC-B02** | `tests/test_exit_manager.py` | `test_exit_manager_phase_adjustment` | 페이즈별 보정 |
 | **TC-T01** | `tests/test_theme_sync.py` | `test_get_naver_theme_data_parsing` | 네이버 모바일 테마 API 수집 및 역방향 매핑 검증 |
+| **TC-R01** | `tests/test_retro_loss_reduction.py` | `test_opening_gap_guard_freezes_autonomous_buys` | 09:00~09:20 신규 매수 동결 |
+| **TC-R02** | `tests/test_retro_loss_reduction.py` | `test_opening_gap_guard_sl_buffer_in_exit_manager` | 09:00~09:15 SL 완화 버퍼 |
+| **TC-R03** | `tests/test_retro_loss_reduction.py` | `test_hard_cap_calculation_in_risk_manager` | 단일 종목 투자 Hard Cap |
+| **TC-R04** | `tests/test_retro_loss_reduction.py` | `test_daily_ticker_sl_lock` | 당일 2회 손절 락 & 3시간 쿨다운 |
+| **TC-R05** | `tests/test_retro_loss_reduction.py` | `test_trailing_stop_trigger` | +3% 도달 후 1%p 추종 트레일링 스탑 |
+| **TC-R06** | `tests/test_retro_loss_reduction.py` | `test_bear_negative_rate_filter_in_alpha_engine` | Bear/Neutral 음봉 및 20MA 역배열 필터 |
+| **TC-R07** | `tests/test_retro_loss_reduction.py` | `test_sl_guard_minimum_margin_floor` | SL Guard 상한선 -2.5% 안전마진 확보 |
+| **TC-R08** | `tests/test_retro_loss_reduction.py` | `test_new_buy_noise_grace_period` | 매수 직후 10분 호가 노이즈 손절 유예 |
+| **TC-R09** | `tests/test_retro_loss_reduction.py` | `test_dust_trading_prevention` | 자투리 1주 매매 전면 차단 (최소주문 Floor) |
+| **TC-R10** | `tests/test_retro_loss_reduction.py` | `test_low_liquidity_trading_value_filter` | 거래대금 30억 미만 소외주 자동매수 배제 |
+| **TC-R11** | `tests/test_retro_loss_reduction.py` | `test_retrospective_overall_summary_collection` | 복기 리포트 전체 수수료 및 하위손익 통계 집계 |
 
 > [!NOTE]
 > 위 표에 명시되지 않은 시나리오(TC-M04, TC-M06, TC-F02, TC-F03, TC-W계열)는 현재 수동 테스트 기반으로 검증되고 있으며, 향후 인프라 모킹 환경 구축 시 자동화 테스트가 보강될 예정입니다.
+

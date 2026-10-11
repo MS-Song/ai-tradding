@@ -52,12 +52,18 @@ class ExecutionMixin:
         phase = self.get_market_phase()
         now_str = get_now().strftime('%Y-%m-%d %H:%M:%S')
         today = get_now().strftime('%Y-%m-%d')
-        # [VIBE-GUARD] 날짜가 바뀌었으면 일일 누적 손절 카운트 리셋
+        # [VIBE-GUARD & 복기반영 #6] 날짜가 바뀌었으면 일일 누적 손절 카운트 및 종목별 통계 리셋
         if getattr(self, "last_sl_date", "") != today:
             self.daily_sl_count = 0
+            self.daily_ticker_sl_count = {}
+            self.daily_replacement_count = 0
+            self.max_profit_rates = {}
             self.last_sl_date = today
             if hasattr(self, "_save_all_states"):
                 self._save_all_states()
+        if not hasattr(self, 'daily_ticker_sl_count'): self.daily_ticker_sl_count = {}
+        if not hasattr(self, 'daily_replacement_count'): self.daily_replacement_count = 0
+        if not hasattr(self, 'max_profit_rates'): self.max_profit_rates = {}
         if not hasattr(self, '_p3_global_processed'): self._p3_global_processed = {}
         self._p4_ai_done_this_cycle = False
         
@@ -118,11 +124,19 @@ class ExecutionMixin:
                         continue
                     
                     price = safe_cast_float(top_rec.get('price'))
-                    qty = math.floor(self.ai_config["amount_per_trade"] / price) if price > 0 else 0
-                    if qty == 0 and asset_info.get('cash', 0) >= price:
-                        qty = 1
-                        
-                    if qty > 0 and not skip_trade:
+                    # [Hard Cap & 자투리매매 방지] 단일 종목 한도 및 최소 주문 금액 적용
+                    raw_cap = self.risk_mgr.get_max_investment_per_stock(getattr(self, 'last_known_asset', 0.0))
+                    max_stock_inv = safe_cast_float(raw_cap, default=self.ai_config["amount_per_trade"])
+                    eff_p4_amt = min(self.ai_config["amount_per_trade"], max_stock_inv)
+                    cash_avail = safe_cast_float(asset_info.get('cash', 0))
+                    known_asset = getattr(self, 'last_known_asset', 0.0)
+                    min_floor = min(300000.0, max(50000.0, known_asset * 0.05)) if known_asset > 0 else 300000.0
+                    usable_p4 = min(eff_p4_amt, cash_avail)
+                    if usable_p4 < min_floor and usable_p4 < price:
+                        continue
+                    qty = math.floor(usable_p4 / price) if price > 0 else 0
+                    if qty <= 0:
+                        continue
                         dry_res = self.mock_tester.intercept_order(code, qty, True)
                         success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
                         if success:
@@ -342,6 +356,14 @@ class ExecutionMixin:
             tp, sl, vol_spike = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
             rt = safe_cast_float(item.get("evlu_pfls_rt"))
             
+            # [복기반영 #6 | 트레일링 스탑] 당일 최고 수익률 추적 및 발동 조건 점검
+            if not hasattr(self, 'max_profit_rates'): self.max_profit_rates = {}
+            if code not in self.max_profit_rates or rt > self.max_profit_rates[code]:
+                self.max_profit_rates[code] = rt
+            peak_rt = self.max_profit_rates[code]
+            # 최고 수익률 +3.0% 이상 도달 후 고점 대비 1.0%p 이상 밀리고 여전히 수익권(+0.8% 이상)일 때 이익 보존
+            is_trailing_stop_triggered = (peak_rt >= 3.0 and rt <= (peak_rt - 1.0) and rt >= 0.8)
+
             # [VIBE-GUARD] 손절선 이상으로 주가가 복귀했으면 대기 기록 삭제 (보호 성공)
             if getattr(self, "use_time_buffered_sl", True) and code in self._sl_violation_start_times and rt > sl:
                 del self._sl_violation_start_times[code]
@@ -383,7 +405,9 @@ class ExecutionMixin:
                     is_tp_disabled, is_sl_disabled = (tp == 0.0), (sl == 0.0)
 
             # --- 실제 매매 판정부 ---
-            if rt >= tp and not is_tp_disabled:
+            if is_trailing_stop_triggered and not is_boot_protected:
+                action, action_reason, sell_qty = "트레일링스탑", f"고점({peak_rt:+.1f}%)대비1%밀림_이익보존", int(item.get('hldg_qty', 0))
+            elif rt >= tp and not is_tp_disabled:
                 if is_boot_protected:
                     if not hasattr(self, '_boot_log_sent'): self._boot_log_sent = {}
                     if code not in self._boot_log_sent:
@@ -401,14 +425,19 @@ class ExecutionMixin:
                     if code not in self._boot_log_sent:
                         msg = f"🛡️ 시스템 시작 초기 보호 (손절 유예): {name} ({int(grace_period - boot_elapsed)}초 남음)"
                         logger.info(msg); results.append(msg); self._boot_log_sent[code] = time.time()
-                # [안전장치 추가] 물타기/매수 직후 초단기(5분 이내)에는 API 미반영 및 평단가 동기화 지연을 감안하여 모든 손절을 유예함
-                elif (curr_t - self.last_buy_times.get(code, 0)) < 300 and self.last_buy_times.get(code, 0) > self.last_sell_times.get(code, 0):
-                    msg = f"🛡️ 물타기 직후 초단기 보호 (손절 유예): {name} ({int(300 - (curr_t - self.last_buy_times.get(code, 0)))}초 남음)"
-                    logger.info(msg)
-                    if not hasattr(self, '_boot_log_sent'): self._boot_log_sent = {}
-                    if f"short_grace_{code}" not in self._boot_log_sent or (curr_t - self._boot_log_sent.get(f"short_grace_{code}", 0)) > 60:
-                        results.append(msg)
-                        self._boot_log_sent[f"short_grace_{code}"] = curr_t
+                # [안전장치 추가] 매수/물타기 직후 10분(600초) 초단기 호가 노이즈 보호 (손절 유예)
+                # API 동기화 지연 및 초단기 호가 흔들림으로 인한 억울한 손절/수수료 낭비 방지
+                elif (curr_t - self.last_buy_times.get(code, 0)) < 600 and self.last_buy_times.get(code, 0) > self.last_sell_times.get(code, 0):
+                    if rt <= -7.0 or self.analyzer.is_panic:
+                        action, action_reason, sell_qty = "긴급손절", f"초기유예중_극단급락({rt:+.1f}%)", int(item.get('hldg_qty', 0))
+                    else:
+                        msg = f"🛡️ 매수 직후 초단기 보호 (손절 유예): {name} ({int(600 - (curr_t - self.last_buy_times.get(code, 0)))}초 남음, 수익률 {rt:+.2f}%)"
+                        logger.info(msg)
+                        if not hasattr(self, '_boot_log_sent'): self._boot_log_sent = {}
+                        if f"short_grace_{code}" not in self._boot_log_sent or (curr_t - self._boot_log_sent.get(f"short_grace_{code}", 0)) > 60:
+                            results.append(msg)
+                            self._boot_log_sent[f"short_grace_{code}"] = curr_t
+                        continue
                 else:
                     # [VIBE-GUARD] 시간 지연 버퍼 손절 적용
                     if getattr(self, "use_time_buffered_sl", True) and getattr(self, "take_profit_time_buffer_sec", 60) > 0:
@@ -446,23 +475,27 @@ class ExecutionMixin:
                     dry_res = self.mock_tester.intercept_order(code, sell_qty, False)
                     success, msg = dry_res if dry_res else self.api.order_market(code, sell_qty, False)
                     if success:
-                        # [Fix] 익절(30%)은 부분 매도이므로 전략 삭제 제외, 손절은 전체 매도이므로 삭제
-                        is_full = action in ["손절", "긴급손절"]
+                        # [Fix] 익절(30%)은 부분 매도이므로 전략 유지, 손절/트레일링스탑은 전량 매도
+                        is_full = action in ["손절", "긴급손절", "트레일링스탑"]
                         self.record_sell(code, is_full_exit=is_full)
-                        if is_full:
+                        if action in ["손절", "긴급손절"]:
                             if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
                             self.bad_sell_times[code] = {"time": curr_t, "type": "손절"}  # 24시간 차단
                             # [VIBE-GUARD] 일일 누적 손절 횟수 증가 및 버퍼 기록 제거
                             self.daily_sl_count += 1
+                            # [복기반영 #6] 당일 종목별 손절 횟수 증가 (당일 동일 종목 2회 락용)
+                            if not hasattr(self, 'daily_ticker_sl_count'): self.daily_ticker_sl_count = {}
+                            self.daily_ticker_sl_count[code] = self.daily_ticker_sl_count.get(code, 0) + 1
                             self.last_sl_date = today
                             if code in self._sl_violation_start_times:
                                 del self._sl_violation_start_times[code]
-                            logger.warning(f"🛡️ [VIBE-GUARD] 누적 손절 횟수 증가: {self.daily_sl_count}/{self.max_daily_sl_count}회")
+                            logger.warning(f"🛡️ [VIBE-GUARD] 누적 손절 횟수: {self.daily_sl_count}/{self.max_daily_sl_count}회 | 당일 [{code}]{name}: {self.daily_ticker_sl_count[code]}회차 손절")
                         m_id = self.last_buy_models.get(code, "")
                         strategy_label = self.get_preset_label(code) or "자동매매"
                         # [통합] log_trade가 TUI 및 JSON 로그를 한 번에 처리
                         trading_log.log_trade(action, code, item.get('prdt_name'), safe_cast_float(item.get('prpr')), sell_qty, f"{action_reason or action} ({strategy_label})", profit=(safe_cast_float(item.get('prpr')) - safe_cast_float(item.get('pchs_avg_pric'))) * sell_qty, model_id=m_id or "TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
-                        results.append(trading_log.last_tui_msg)
+                        msg_tui = trading_log.last_tui_msg or f"{action}: {item.get('prdt_name')}"
+                        results.append(msg_tui)
                         self._async_update_ma_cache(code)
                         self._save_all_states()
                     else:
@@ -530,6 +563,19 @@ class ExecutionMixin:
 
             # (B) AI 자율 매수 집행 (신규 종목 진입)
             if self.auto_ai_trade and self.ai_recommendations:
+                # [복기반영 #6 | 오프닝 갭 가드] 09:00~09:20 장 초반 극심한 변동성 구간 신규 자율 매수 전면 동결 (관망)
+                if phase.get("is_stabilizing"):
+                    curr_t = time.time()
+                    if not hasattr(self, '_last_stabilizing_log_time'):
+                        self._last_stabilizing_log_time = 0
+                    if curr_t - self._last_stabilizing_log_time >= 60:
+                        msg = "🛡️ [오프닝 갭 가드] 09:00~09:20 장 초반 변동성 안정화 대기 (신규 매수 보류)"
+                        logger.info(msg)
+                        if self.state: self.state.add_trading_log(msg)
+                        results.append(msg)
+                        self._last_stabilizing_log_time = curr_t
+                    return results
+
                 max_cnt = self.get_max_stock_count(asset_info.get('total_asset', 0))
                 curr_cnt = len(holdings)
                 
@@ -581,6 +627,28 @@ class ExecutionMixin:
                     if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="AI 매수 분석", last_task=f"분석: {name} ({score:.1f}점)", friendly_name="매매 분석")
                     if any(h.get('pdno') == code for h in holdings): continue
                     
+                    # [복기반영 #6 | 당일 동일 종목 2회 손절 락]
+                    ticker_sl_cnt = getattr(self, "daily_ticker_sl_count", {}).get(code, 0)
+                    if ticker_sl_cnt >= 2:
+                        curr_t = time.time()
+                        if not hasattr(self, '_last_ticker_lock_logs'): self._last_ticker_lock_logs = {}
+                        if curr_t - self._last_ticker_lock_logs.get(code, 0) >= 300:
+                            msg = f"🛡️ [당일 손절 락] [{code}]{name} 당일 {ticker_sl_cnt}회 손절로 오늘 매수 차단"
+                            logger.warning(msg)
+                            if self.state: self.state.add_trading_log(msg)
+                            self._last_ticker_lock_logs[code] = curr_t
+                        continue
+
+                    # [복기반영 #6 | 하락/횡보장 역배열 낙주 필터]
+                    if self.analyzer.kr_vibe.upper() in ["BEAR", "NEUTRAL"]:
+                        ma_20 = self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0
+                        detail = self.api.get_naver_stock_detail(code)
+                        curr_price = safe_cast_float(detail.get('price', 0)) if detail else 0.0
+                        if ma_20 > 0 and curr_price > 0 and curr_price < ma_20:
+                            msg = f"🛡️ [역배열 낙주 차단] [{code}]{name} {self.analyzer.kr_vibe} 장세 20MA({ma_20:,.0f}) 하회로 매수 제외 (현재가 {curr_price:,.0f})"
+                            logger.info(msg)
+                            continue
+
                     # [하락장 필터 대응] 자동 매수 비대상 종목(수동 전용)은 AI 자율 매수 루프에서 스킵
                     if not rec.get('auto_eligible', True): continue
                     
@@ -603,6 +671,13 @@ class ExecutionMixin:
                     # [Step 1] 한도 및 교체 선제 판단 (AI 컨펌 전 비용 절감)
                     target_code = None
                     if curr_cnt >= max_cnt:
+                        # [과도매매 방어 | 일일 최대 교체 매매 3회 제한]
+                        # 잦은 교체 매도로 인한 양방향 수수료 누수를 원천 차단
+                        if getattr(self, 'daily_replacement_count', 0) >= 3:
+                            msg_rep_limit = f"🛡️ [교체제한] 일일 최대 교체 매매 한도(3회) 도달로 {name} 교체 스킵 (수수료 방어)"
+                            logger.info(msg_rep_limit)
+                            continue
+
                         # [교체 품질 게이트 #1] 후보 종목의 등락률이 OVERBOUGHT 구간이면 교체 금지
                         cand_ma_analysis = self.indicator_eng.get_dual_timeframe_analysis(self.api, code, name=name)
                         cand_sig = cand_ma_analysis.get('signal', 'NEUTRAL') if cand_ma_analysis else 'UNKNOWN'
@@ -671,16 +746,17 @@ class ExecutionMixin:
                         continue
                     
                     amt = self.ai_config["amount_per_trade"]
-                    # [개선] 1회 한도가 부족하더라도 가용 현금이 주가보다 크다면 최소 1주 매수 시도 허용
-                    if cash < amt and cash < price:
-                        # 잔고 부족 시 10분 후 재시도
-                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", f"현금부족(보유:{int(cash):,}원) (10분 후 재시도)")
+                    # [수수료/자투리매매 방어] 최소 1회 주문 금액 기준 Floor 설정
+                    # 가용 현금이 소액 남아있다고 억지로 1주 매수하는 자투리 매매(Dust Trading) 전면 차단
+                    min_order_floor = min(300000.0, max(50000.0, total_asset * 0.05)) if total_asset > 0 else 300000.0
+                    if cash < min_order_floor and cash < price:
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", f"현금부족(보유:{int(cash):,}원 < 최소기준:{int(min_order_floor):,}원) (10분 후 재시도)")
                         self.rejected_stocks[code] = {
-                            "reason": "가용 현금 부족", 
+                            "reason": "최소 주문 금액 미달 (자투리 매매 방지)", 
                             "time": time.time(),
                             "expiry": time.time() + 600
                         }
-                        continue # 1주도 살 수 없는 경우만 스킵
+                        continue
                     
                     # 교체 대상 전량 매도
                     if target_code:
@@ -702,6 +778,7 @@ class ExecutionMixin:
                                     "reason": f"AI 교체 판단 (후보: {name})"
                                 })
                                 self.record_sell(target_code, is_full_exit=True)
+                                self.daily_replacement_count = getattr(self, 'daily_replacement_count', 0) + 1
                                 if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
                                 self.bad_sell_times[target_code] = {"time": time.time(), "type": "교체"}  # 4시간 차단
                                 results.append(f"🔄 교체매도: {t_item['prdt_name']} (-> {name})")
@@ -713,13 +790,20 @@ class ExecutionMixin:
                                 log_error(f"교체매도 주문 실패: [{target_code}]{t_item['prdt_name']} | 사유: {fail_reason}")
                                 results.append(f"❌ 교체매도 실패: {t_item['prdt_name']} | 사유: {fail_reason}")
                     
-                    # 가용 현금 내에서 설정된 한도(amt)까지 최대한 매수
-                    qty = math.floor(min(amt, cash) / price) if price > 0 else 0
-                    # [개선] 한도(amt)보다 주가가 높더라도 현금이 있다면 최소 1주 매수 보장
-                    if qty == 0 and cash >= price:
-                        qty = 1
-                        
-                    if qty > 0:
+                    # [복기반영 #6 | Hard Cap & 자투리매매 방어] 가용 현금 및 단일 종목 한도 적용
+                    raw_cap = self.risk_mgr.get_max_investment_per_stock(total_asset)
+                    max_stock_inv = safe_cast_float(raw_cap, default=amt)
+                    eff_amt = min(amt, max_stock_inv)
+                    usable_amt = min(eff_amt, cash)
+
+                    # 가용 주문액이 최소 주문 기준에 미달 시 자투리 매매 방지를 위해 스킵
+                    if usable_amt < min_order_floor and usable_amt < price:
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", f"주문금액미달({int(usable_amt):,}원 < {int(min_order_floor):,}원)")
+                        continue
+
+                    qty = math.floor(usable_amt / price) if price > 0 else 0
+                    if qty <= 0:
+                        continue
                         dry_res = self.mock_tester.intercept_order(code, qty, True)
                         success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
                         if success:

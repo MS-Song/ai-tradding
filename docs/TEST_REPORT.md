@@ -1,44 +1,61 @@
-# 🧪 AI-Vibe-Trader Test Report
+# 🧪 AI-Vibe-Trader Test Report (v2.4.2)
 
 ## 📊 Summary
-- **Total Result**: <span style='color:green; font-weight:bold;'>✅ PASS</span>
-- **Executed at**: `2026-10-11 11:27:54`
-- **Test Suite**: `tests/test_advanced_integration.py`
+- **Total Result**: <span style='color:green; font-weight:bold;'>✅ PASS (64 / 64 Passed, 100%)</span>
+- **Executed at**: `2026-10-11 23:10:47 KST`
+- **Test Suites**:
+  - `tests/test_advanced_integration.py` (31 tests)
+  - `tests/test_expected_price.py` (3 tests)
+  - `tests/test_kis_expected_price.py` (2 tests)
+  - `tests/test_kiwoom_api.py` (3 tests)
+  - `tests/test_realtime_sync_logic.py` (5 tests)
+  - `tests/test_retro_loss_reduction.py` (11 tests - **복기 기반 5대 손해 축소 + 하위종목 수수료 방어 5대 대책**)
+  - `tests/test_theme_sync.py` (4 tests)
+  - `tests/test_trade_warmup_guard.py` (5 tests)
 
-## 📝 Detailed Test Scenarios
+## 📝 Detailed Test Scenarios (복기 기반 신규 전략 포함)
 | 시나리오 명 | 테스트 메서드 | 결과 | 비고 |
 | :--- | :--- | :---: | :--- |
-| [TC-M01] 수동 매수 기능 검증 | `test_tc_m01_manual_buy` | ✅ PASS | - |
-| [TC-M01-2] 수동 매도 기능 검증 | `test_tc_m01_2_manual_sell` | ✅ PASS | - |
-| 수동 매도 시 수량을 생략하면(예: 번호만 입력), 보유한 수량 전량을 대상으로 매도 주문이 수행되는지 검증 | `test_manual_sell_omitted_quantity` | ❌ FAIL | - |
-| [TC-M02] 수동 임계치 변경 검증 | `test_tc_m02_threshold_change` | ✅ PASS | - |
-| [TC-M03] AI 자율매매 ON/OFF 검증 | `test_tc_m03_ai_toggle` | ✅ PASS | - |
-| [TC-M07] 강제 시황 분석 요청 검증 | `test_tc_m07_force_analysis` | ✅ PASS | - |
-| [TC-M08] 503 에러 발생 시 해당 요청만 임시로 2순위, 3순위 모델로 페일오버하여 성공하는지 검증 | `test_tc_m08_multillm_transient_503_failover` | ✅ PASS | - |
-| [TC-M09] 404 에러 발생 시 2순위를 1순위로, 1순위를 3순위로 영구 페일오버 및 우선순위 회전 검증 | `test_tc_m09_multillm_permanent_404_failover` | ✅ PASS | - |
-| [TC-A01] 물타기 트리거 로직 | `test_tc_a01_recovery_trigger` | ✅ PASS | - |
-| [TC-A02] 불타기 트리거 로직 | `test_tc_a02_pyramiding_trigger` | ✅ PASS | - |
-| [TC-A03] P3 장마감 수익확정 | `test_tc_a03_p3_profit_taking` | ✅ PASS | - |
-| [TC-A04] 익절 쿨다운(1시간) 적용 검증 | `test_tc_a04_partial_sell_cooldown` | ✅ PASS | - |
-| [TC-A05] 쿨다운 중 긴급 바이패스 검증 | `test_tc_a05_emergency_bypass` | ✅ PASS | - |
-| 물타기(매수) 직후 초단기(5분 이내)에는 API 동기화 지연에 따른 핑퐁 손절 유예 검증 | `test_recovery_short_grace_period` | ✅ PASS | - |
-| [TC-A06] 현금 비중 보호 로직 (Bear장) | `test_tc_a06_cash_protection` | ✅ PASS | - |
-| 보유 중인 종목이 손절 등으로 오해받아 쿨다운에 등록되었을 때, 쿨다운 자동 해제 및 프리셋 복구/배정 검증 | `test_bad_sell_cooldown_removal_and_missing_preset_auto_assign` | ✅ PASS | - |
-| [TC-I01] 지수 기반 장세 판정 | `test_tc_i01_market_vibe_logic` | ✅ PASS | - |
-| [TC-I02] 상투 매수 방어 로직 | `test_tc_i02_overbought_protection` | ✅ PASS | - |
-| [TC-I03] 종목 교체 진입 | `test_tc_i03_replacement_entry` | ✅ PASS | - |
-| [TC-I05] 데이터 오류(0원) 보호 | `test_tc_i05_zero_data_protection` | ✅ PASS | - |
-| [TC-B01-1] 상승장(Bull) 보정 | `test_tc_b01_bull_modifier` | ✅ PASS | - |
-| [TC-B01-2] 하락장(Bear) 보정 | `test_tc_b01_2_bear_modifier` | ✅ PASS | - |
-| [TC-B02-1] Phase 1 보정 | `test_tc_b02_p1_adjustment` | ✅ PASS | - |
-| [TC-B02-2] Phase 2 보정 | `test_tc_b02_2_p2_adjustment` | ✅ PASS | - |
-| [TC-F01] API 장애 폴백 | `test_tc_f01_api_fallback` | ✅ PASS | - |
-| [TC-F04] 상태 저장 호출 | `test_tc_f04_persistence_call` | ✅ PASS | - |
-| [TC-F08] RecommendationRecoveryWorker가 clear_busy() AttributeError 없이 정상 작동하는지 검증 | `test_tc_f08_recommendation_recovery_worker_no_clear_busy_error` | ✅ PASS | - |
-| [TC-S01] 동시호가 세션 감지 (09:00~15:30 제외 전 시간) | `test_tc_s01_auction_session_detection` | ✅ PASS | - |
-| [TC-S02] 장중 소켓 데이터 우선순위 반영 (Hot-swap) | `test_tc_s02_price_priority_logic` | ✅ PASS | - |
-| [TC-S03] 키움증권 실시간 데이터 파싱 검증 | `test_tc_s03_kiwoom_parsing` | ✅ PASS | - |
-| [TC-S04] KIS 실시간 데이터 파싱 검증 | `test_tc_s04_kis_parsing` | ✅ PASS | - |
+| **[TC-R01] 오프닝 갭 가드 매수 동결** | `test_opening_gap_guard_freezes_autonomous_buys` | ✅ PASS | 09:00~09:20 신규 매수 동결 검증 |
+| **[TC-R02] 오프닝 갭 가드 SL 버퍼** | `test_opening_gap_guard_sl_buffer_in_exit_manager` | ✅ PASS | 09:00~09:15 SL -1.0% 추가 완화 버퍼 |
+| **[TC-R03] 단일 종목 투자 Hard Cap** | `test_hard_cap_calculation_in_risk_manager` | ✅ PASS | 총자산 10% 및 절대 상한 800만원 제한 |
+| **[TC-R04] 당일 2회 손절 락 & 3시간 쿨다운** | `test_daily_ticker_sl_lock` | ✅ PASS | 당일 2회 손절 시 당일 매수 영구 차단 |
+| **[TC-R05] +3% 도달 후 트레일링 스탑** | `test_trailing_stop_trigger` | ✅ PASS | 최고점 대비 1.0%p 반락 시 전량 익절 |
+| **[TC-R06] Bear/Neutral 음봉 낙주 필터** | `test_bear_negative_rate_filter_in_alpha_engine` | ✅ PASS | 하락장 음봉 종목 자동 매수 배제 |
+| **[TC-R07] SL Guard -2.5% 안전마진 확보** | `test_sl_guard_minimum_margin_floor` | ✅ PASS | 타이트 장세에서도 -2.5% 안전 공간 확보 |
+| **[TC-R08] 매수 직후 10분 호가 보호** | `test_new_buy_noise_grace_period` | ✅ PASS | 매수 직후 10분간 호가 노이즈 손절 유예 |
+| **[TC-R09] 자투리 1주 매매(Dust) 차단** | `test_dust_trading_prevention` | ✅ PASS | 최소 주문 Floor 미달 시 억지 매수 방지 |
+| **[TC-R10] 거래대금 30억 유동성 필터** | `test_low_liquidity_trading_value_filter` | ✅ PASS | 거래대금 30억 미만 소외주 자동매수 배제 |
+| **[TC-R11] 복기 리포트 전체 수수료 통계** | `test_retrospective_overall_summary_collection` | ✅ PASS | 전체 수수료 및 하위종목 손익 전수 집계 |
+| [TC-M01] 수동 매수 기능 검증 | `test_tc_m01_manual_buy` | ✅ PASS | 매수 주문 및 신규 종목 전략 배정 |
+| [TC-M01-2] 수동 매도 기능 검증 | `test_tc_m01_2_manual_sell` | ✅ PASS | 지정 수량 매도 및 실현 손익 계산 |
+| [TC-M01-3] 수동 매도 수량 생략 시 전량 매도 | `test_manual_sell_omitted_quantity` | ✅ PASS | 전량 매도 자동 보정 |
+| [TC-M02] 수동 임계치 변경 검증 | `test_tc_m02_threshold_change` | ✅ PASS | 실시간 TP/SL 영속 저장 반영 |
+| [TC-M03] AI 자율매매 ON/OFF 검증 | `test_tc_m03_ai_toggle` | ✅ PASS | 토글 상태에 따른 주문 집행/스킵 |
+| [TC-M07] 강제 시황 분석 요청 검증 | `test_tc_m07_force_analysis` | ✅ PASS | 즉시 분석 큐 진입 및 데이터 갱신 |
+| [TC-M08] 503 에러 발생 시 멀티 LLM 임시 페일오버 | `test_tc_m08_multillm_transient_503_failover` | ✅ PASS | Groq/Gemini 교차 백업 |
+| [TC-M09] 404 에러 발생 시 영구 페일오버 회전 | `test_tc_m09_multillm_permanent_404_failover` | ✅ PASS | 우선순위 자동 재정렬 |
+| [TC-A01] 물타기 트리거 로직 | `test_tc_a01_recovery_trigger` | ✅ PASS | Current SL + 1.0% 상향 트리거 |
+| [TC-A02] 불타기 트리거 로직 | `test_tc_a02_pyramiding_trigger` | ✅ PASS | Current TP - 1.0% 제한 및 리셋 |
+| [TC-A03] P3 장마감 수익확정 | `test_tc_a03_phase3_profit_taking` | ✅ PASS | 50% 분할 익절 및 본전 스탑 상향 |
+| [TC-A04] 익절 쿨다운(1시간) 적용 검증 | `test_tc_a04_partial_sell_cooldown` | ✅ PASS | 부분 익절 후 재진입 쿨다운 |
+| [TC-A05] 쿨다운 중 긴급 바이패스 검증 | `test_tc_a05_emergency_bypass` | ✅ PASS | 급등/폭발 시 즉시 전량 청산 |
+| [TC-A06] 현금 비중 보호 로직 (Bear장) | `test_tc_a06_cash_protection` | ✅ PASS | 최소 현금 30% 미만 시 매수 동결 |
+| [TC-I01] 지수 기반 장세 판정 | `test_tc_i01_market_vibe_logic` | ✅ PASS | DEMA 기반 Bull/Bear/Defensive |
+| [TC-I02] 상투 매수 방어 로직 | `test_tc_i02_overbought_protection` | ✅ PASS | OVERBOUGHT 시그널 하드 차단 |
+| [TC-I03] 종목 교체 진입 | `test_tc_i03_replacement_entry` | ✅ PASS | 한도 초과 시 최하위 종목 스마트 교체 |
+| [TC-I05] 데이터 오류(0원) 보호 | `test_tc_i05_zero_data_protection` | ✅ PASS | 0원 시세 무결성 방어 |
+| [TC-B01-1] 상승장(Bull) 보정 | `test_tc_b01_bull_modifier` | ✅ PASS | TP +3.0%, SL +1.0% |
+| [TC-B01-2] 하락장(Bear) 보정 | `test_tc_b01_2_bear_modifier` | ✅ PASS | TP -2.0%, SL -2.0% |
+| [TC-B02-1] Phase 1 보정 | `test_tc_b02_p1_adjustment` | ✅ PASS | 장초반 변동성 허용 |
+| [TC-B02-2] Phase 2 보정 | `test_tc_b02_2_p2_adjustment` | ✅ PASS | 시장 수렴 안정화 구간 보수적 조정 |
+| [TC-F01] API 장애 폴백 | `test_tc_f01_api_fallback` | ✅ PASS | KIS 장애 시 Naver/Yahoo 2중화 전환 |
+| [TC-F04] 상태 저장 호출 | `test_tc_f04_persistence_call` | ✅ PASS | trading_state.json 무결성 저장 |
+| [TC-F08] RecommendationRecoveryWorker 예외 방지 | `test_tc_f08_recommendation_recovery_worker_no_clear_busy_error` | ✅ PASS | 스레드 비지 해제 안정화 |
+| [TC-S01] 동시호가 세션 감지 | `test_tc_s01_auction_session_detection` | ✅ PASS | 장전/장후 동시호가 예상체결가 모드 |
+| [TC-S02] 장중 소켓 데이터 우선순위 반영 | `test_tc_s02_price_priority_logic` | ✅ PASS | WebSocket 실시간 체결가 Hot-swap |
+| [TC-S03] 키움증권 실시간 데이터 파싱 | `test_tc_s03_kiwoom_parsing` | ✅ PASS | 키움 REST/WS 메시지 무결성 파싱 |
+| [TC-S04] KIS 실시간 데이터 파싱 | `test_tc_s04_kis_parsing` | ✅ PASS | 한국투자증권 체결 데이터 정합성 |
 
 ---
-*Generated by AI-Vibe-Trader Build Pipeline at 11:27:54*
+*Generated by AI-Vibe-Trader Test Pipeline at 22:20:08 KST (Total 64 tests PASSED)*

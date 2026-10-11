@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/AI-Gemini%20|%20Groq-blueviolet.svg" alt="Powered by AI">
   <img src="https://img.shields.io/badge/Market-Korea%20Stock-red.svg" alt="Market">
   <a href="https://github.com/MS-Song/ai-tradding/releases">
-    <img src="https://img.shields.io/badge/version-1.5.0-green.svg" alt="Version">
+    <img src="https://img.shields.io/badge/version-2.4.1-green.svg" alt="Version">
   </a>
 </p>
 
@@ -26,8 +26,9 @@
 
 ### 🎯 핵심 가치
 - **Contextual Awareness**: 가격 데이터만 보는 것이 아니라, 뉴스, 수급, 거시 지표(환율, 나스닥 등)를 통해 시장의 '분위기'를 읽습니다.
-- **Architectural Excellence**: 6대 핵심 모듈(`Exit`, `Market`, `Recovery`, `Pyramiding`, `Alpha`, `Preset`)이 유기적으로 협력하는 견고한 아키텍처를 가집니다.
-- **Proactive Risk Management**: 시장이 하락할 때는 즉시 '방어 모드'로 전환하여 자산을 보호하고, 상승장에서는 '불타기'를 통해 수익을 추종합니다.
+- **Architectural Excellence**: 7대 핵심 모듈(`Exit`, `Market`, `Recovery`, `Pyramiding`, `Alpha`, `Preset`, `Retrospective`)이 유기적으로 협력하는 견고한 아키텍처를 가집니다.
+- **Dual Broker Support**: **한국투자증권(KIS)**과 **키움증권(Kiwoom)**을 동시에 완벽 지원합니다.
+- **Proactive Risk Management**: 복기 빅데이터에 기반한 5대 손해 축소 전략과 하위 종목 수수료 누수 차단 5대 대책으로 계좌를 철통 방어합니다.
 
 ---
 
@@ -39,29 +40,29 @@
 매초 단위로 나스닥 선물, 코스피/코스닥 지수, 달러 환율, 비트코인 프리미엄 등을 수집하여 시장을 4가지 상태로 정의합니다.
 - **BULL**: 공격적 투자, 적극적 불타기 허용
 - **NEUTRAL**: 표준 전략 유지
-- **BEAR**: 현금 비중 확대, 물타기 간격 확대
-- **DEFENSIVE**: 최우량주 1종목 집중 또는 전량 현금화 (극보수적 대응)
+- **BEAR**: 현금 비중 확대(30%), 물타기 간격 확대, 음봉 낙주 배제
+- **DEFENSIVE**: 최우량주 1종목 집중 또는 전량 현금화(80%), SL 즉각 청산
 
 ### 2. Vibe-Alpha Selection (AI 종목 발굴)
-네이버 금융의 실시간 랭킹 데이터와 개별 종목의 펀더멘털(PER, PBR, 배당)을 결합하여 Quant 스코어를 산출합니다. 이후 Gemini/Groq AI가 최신 뉴스와 모멘텀을 2차 검증하여 최종 추천 리스트를 생성합니다.
+네이버 금융 모바일 공식 JSON API의 실시간 랭킹 데이터와 개별 종목의 펀더멘털(PER, PBR, 배당), 일봉/분봉 MA 및 수급을 결합하여 Quant 스코어를 산출합니다. 이후 Gemini/Groq AI가 최신 뉴스와 모멘텀을 2차 검증하여 최종 추천 리스트를 생성합니다.
 
-### 3. Dynamic Strategy Execution (동적 전략 집행)
-종목별로 고정된 수치가 아닌, **AI가 실시간으로 계산한 동적 TP/SL(익절/손절선)**을 적용합니다.
-- **Preset Strategy**: 골든크로스, 모멘텀 등 10대 공식 전략을 AI가 시뮬레이션하여 종목 맞춤형으로 할당합니다.
-- **Time-based Phase**: 장 초반(Offensive)부터 장 마감(Conclusion)까지 시간대별로 리스크 감수도를 자동 조절합니다.
+### 3. Dynamic Strategy Execution & Risk Defense (동적 전략 및 방어)
+- **동적 TP/SL**: Vibe 및 시간대별 Phase(Offensive/Convergence/Conclusion/Preparation)에 따른 실시간 교정.
+- **5대 손해 축소 전략**: 오프닝 갭 가드(09:00~09:20 동결), 단일 종목 Hard Cap(10%/800만원), 당일 2회 손절 락, 수익 보존 트레일링 스탑, 음봉 낙주 필터.
+- **수수료 누수 방어**: SL Guard 안전마진(-2.5% 강제), 신규 매수 초기 10분 호가 보호, 자투리 1주 매매(Dust) 금지, 최소 거래대금 30억 필터, 교체 매매 3회 상한.
 
 ---
 
 ## 🚀 Quick Start (시작하기)
 
 ### 📋 준비물
-1. **한국투자증권(KIS) API 키**: 실전 또는 모의계좌 앱키/시크릿
+1. **증권사 API 키**: 한국투자증권(KIS) 또는 키움증권(Kiwoom) 앱키/시크릿
 2. **AI API 키**: Google Gemini (필수) 및 Groq (선택/Fail-over용)
 
 ### 💻 실행 방법
 
 #### 1. EXE 실행 (일반 사용자)
-- [Releases](https://github.com/MS-Song/ai-tradding/releases) 페이지에서 최신 버전의 `AI-Vibe-Trader.exe`와 `USER_MANUAL.pdf`를 다운로드하세요. 별도의 설치 없이 즉시 실행 가능합니다.
+- [Releases](https://github.com/MS-Song/ai-tradding/releases) 페이지에서 최신 버전의 `AI-Vibe-Trader.exe`를 다운로드하여 즉시 실행 가능합니다.
 
 #### 2. 소스 코드 실행 (개발자)
 ```bash
@@ -75,38 +76,50 @@ pip install -r requirements.txt
 python main.py
 ```
 
+#### 3. Docker 컨테이너 실행
+```bash
+./docker_build.sh && ./docker_run.sh
+```
+
 ---
 
-## 🏗️ System Pillars (6대 핵심 엔진)
+## 🏗️ System Pillars (7대 핵심 엔진)
 
 | 모듈 | 역할 |
 | :--- | :--- |
-| **MarketAnalyzer** | 글로벌 지수 및 거시 지표 기반 시장 분위기(Vibe) 확정 |
-| **VibeAlphaEngine** | 퀀트 + AI 분석을 통한 유망 종목 발굴 및 스코어링 |
-| **ExitManager** | 장세와 시간대(Phase)에 따른 실시간 익절/손절선 교정 |
-| **PresetStrategyEngine** | KIS 10대 공식 전략 기반 종목별 최적 매매 로직 할당 |
+| **MarketAnalyzer** | 글로벌 지수 및 거시 지표 기반 시장 분위기(Vibe) 및 지수 DEMA 판정 |
+| **VibeAlphaEngine** | 퀀트 + 공식 JSON API + AI 분석을 통한 주도주 발굴 및 스코어링 |
+| **ExitManager** | 장세와 Phase에 따른 동적 TP/SL 산출, SL Guard 및 트레일링 스탑 |
 | **RecoveryEngine** | 하락 구간에서의 평단가 관리 및 지능적 물타기 수행 |
-| **PyramidingEngine** | 상승 추세 종목의 비중 확대를 통한 수익 극대화 |
+| **PyramidingEngine** | 상승 추세 종목의 비중 확대를 통한 수익 극대화(불타기) |
+| **PresetStrategyEngine** | KIS 10대 공식 전략 기반 종목별 최적 매매 로직 할당 |
+| **RetrospectiveEngine** | 장 마감 후 당일 매매 성과 사후 복기 및 일일 종합 통계 영속화 |
 
 ---
 
 ## 🛠️ Tech Stack (기술 스택)
 
-- **API Integration**: 한국투자증권(KIS), Yahoo Finance, Naver Finance, Google Gemini, Groq
+- **API Integration**: 한국투자증권(KIS), 키움증권(Kiwoom), Naver Finance JSON API, Google Gemini, Groq
 - **Language**: Python 3.12+
-- **Automation**: GitHub Actions (Windows/Linux 병렬 빌드 및 Release 자동화)
-- **Core Libraries**: `PyInstaller` (바이너리화), `ReportLab` (PDF 생성), `BeautifulSoup4` (데이터 스크래핑)
+- **Automation**: GitHub Actions (Windows EXE 및 Docker Hub 자동 배포)
+- **Container**: Docker (Linux / Windows)
 
 ---
 
-## 📄 Documentation (관련 문서)
+## 📄 Documentation (관련 문서 맵)
 
 | 문서 | 설명 |
 | :--- | :--- |
-| [📖 USER_MANUAL.md](docs/USER_MANUAL.md) | EXE 사용자를 위한 전체 기능 가이드 |
-| [🏗️ SYSTEM_ARCH.md](docs/SYSTEM_ARCH.md) | 6대 모듈 아키텍처 상세 설계 |
-| [🔌 API_INTEGRATION.md](docs/API_INTEGRATION.md) | 외부 API 연동 규격 및 데이터 흐름 |
-| [✅ TEST_REPORT.md](docs/TEST_REPORT.md) | 테스트 명세 및 결과 보고서 |
+| [📈 TRADING_RULES.md](docs/TRADING_RULES.md) | **[코어 매매 규칙]** 동적 TP/SL, 물타기/불타기, 5대 손해 축소 및 수수료 방어 규칙 |
+| [🏗️ SYSTEM_ARCH.md](docs/SYSTEM_ARCH.md) | **[시스템 아키텍처]** 7대 코어 모듈 구조, 데이터 흐름, 듀얼 브로커 설계 |
+| [🌳 LOGIC_TREE.md](docs/LOGIC_TREE.md) | **[의사결정 분기 트리]** 세부 알고리즘 로직 및 유지보수 히스토리 |
+| [📖 USER_MANUAL.md](docs/USER_MANUAL.md) | **[사용자 매뉴얼]** TUI 화면 인터페이스, 전체 단축키 및 설정 가이드 |
+| [🛡️ vibe_guard_manual.md](docs/vibe_guard_manual.md) | **[리스크 가이드]** 3중 방어 메커니즘 및 과도매매 가드 상세 |
+| [🐳 DEPLOYMENT_GUIDE.md](docs/DEPLOYMENT_GUIDE.md) | **[도커/배포 가이드]** Docker 컨테이너 및 CI/CD 자동화 배포 가이드 |
+| [📋 PROGRAM_SPECIFICATIONS.md](docs/PROGRAM_SPECIFICATIONS.md) | **[프로그램 명세서]** 전수 파이썬 소스 파일 상세 명세 |
+| [🔌 API_INTEGRATION.md](docs/API_INTEGRATION.md) | **[API 명세]** KIS 및 Kiwoom 증권사 API 연동 규격 |
+| [✅ TEST_SCENARIOS.md](docs/TEST_SCENARIOS.md) | **[테스트 시나리오]** 64종 통합/단위 테스트 명세 |
+| [📊 TEST_REPORT.md](docs/TEST_REPORT.md) | **[검증 리포트]** 64종 테스트 100% 통과 검증 보고서 |
 
 ---
 
