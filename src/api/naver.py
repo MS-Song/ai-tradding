@@ -337,43 +337,69 @@ class NaverAPIClient(BaseAPI):
         except: return []
 
     def get_naver_theme_data(self) -> dict:
-        """네이버 금융 '테마별 시세' 데이터를 수집하여 테마-종목 맵을 구축합니다.
+        """네이버 모바일 증권 테마 API 데이터를 수집하여 테마-종목 맵을 구축합니다.
+
+        기존 HTML 스크래핑 방식에서 모바일 증권 공식 JSON API 연동으로 전환하여,
+        웹 UI 개편에 영향을 받지 않고 고속 병렬 수집(ThreadPoolExecutor)을 지원합니다.
 
         Returns:
             dict: {테마명: [{"name": 종목명, "code": 종목코드}, ...]} 형식의 데이터.
         """
         theme_map = {}
         try:
-            for page in range(1, 11):
-                url = f"https://finance.naver.com/sise/theme.naver?&page={page}"
-                self._wait_for_domain_delta(url)
-                res = requests.get(url, headers=self.headers, timeout=10)
-                if not BeautifulSoup: return {}
-                soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-                table = soup.find('table', {'class': 'type_1'})
-                if not table: break
-                links = table.find_all('td', {'class': 'col_type1'})
-                for l in links:
-                    a = l.find('a')
-                    if a and 'sise_group_detail.naver' in a['href']:
-                        theme_name, theme_url = a.text.strip(), "https://finance.naver.com" + a['href']
-                        try:
-                            # [v1.7.2] 테마 상세 수집 시 간격을 더 늘려 차단 방지 (1.0s)
-                            time.sleep(1.0)
-                            res_d = self._session.get(theme_url, timeout=5)
-                            soup_d = BeautifulSoup(res_d.content, 'html.parser', from_encoding='cp949')
-                            stocks = []
-                            table_d = soup_d.find('table', {'class': 'type_5'})
-                            if table_d:
-                                for row in table_d.find_all('tr'):
-                                    name_td = row.find('td', {'class': 'name'})
-                                    if name_td and name_td.find('a'):
-                                        a_s = name_td.find('a')
-                                        stocks.append({"name": a_s.text.strip(), "code": a_s['href'].split('=')[-1]})
-                            if stocks: theme_map[theme_name] = stocks
-                        except: continue
+            # 1. 테마 그룹 목록 수집 (모바일 API)
+            groups = []
+            for page in range(1, 20):
+                url = f"https://m.stock.naver.com/api/stocks/theme?page={page}&pageSize=100"
+                res = self._session.get(url, timeout=10)
+                if res.status_code != 200:
+                    break
+                data = res.json()
+                page_groups = data.get("groups", [])
+                if not page_groups:
+                    break
+                groups.extend(page_groups)
+                total_count = data.get("totalCount", 0)
+                if total_count and len(groups) >= total_count:
+                    break
+
+            if not groups:
+                return {}
+
+            # 2. 각 테마 그룹별 편입 종목 수집 (동시성 5개로 안정적 병렬 처리)
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _fetch_group_stocks(group: dict):
+                group_no = group.get("no")
+                group_name = group.get("name")
+                if not group_no or not group_name:
+                    return None, []
+                total_cnt = group.get("totalCount", 0)
+                max_page = (total_cnt + 99) // 100 if total_cnt > 0 else 1
+                group_stocks = []
+                for p in range(1, max_page + 1):
+                    detail_url = f"https://m.stock.naver.com/api/stocks/theme/{group_no}?page={p}&pageSize=100"
+                    try:
+                        r = self._session.get(detail_url, timeout=10)
+                        if r.status_code == 200:
+                            for item in r.json().get("stocks", []):
+                                code = item.get("itemCode")
+                                name = item.get("stockName")
+                                if code and name:
+                                    group_stocks.append({"name": name, "code": code})
+                    except Exception:
+                        pass
+                return group_name, group_stocks
+
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                for name, stocks in executor.map(_fetch_group_stocks, groups):
+                    if name and stocks:
+                        theme_map[name] = stocks
+
             return theme_map
-        except: return {}
+        except Exception as e:
+            log_error(f"get_naver_theme_data 오류 발생: {e}")
+            return {}
 
     def get_naver_minute_chart(self, code: str, count: int = 40) -> List[dict]:
         """네이버 F-Chart XML API를 통해 분봉 데이터를 가져옵니다.

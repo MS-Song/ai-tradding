@@ -163,6 +163,19 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
 
         self.state_mgr = StateManager(self, "trading_state.json")
         self.risk_mgr = RiskManager(api, v_cfg.get("risk_config", {}))
+        
+        # --- [VIBE-GUARD] 잦은 손절 방지 및 리스크 차단 속성 초기화 ---
+        self.daily_sl_count = 0                # 금일 발생한 누적 손절 횟수
+        self.last_sl_date = ""                 # 최근 손절 발생일 (YYYY-MM-DD)
+        self._sl_violation_start_times = {}    # 종목별 손절선 이탈 시작 시간 기록용 (시간 지연 버퍼)
+        
+        # VIBE-GUARD 설정값 로드
+        self.use_time_buffered_sl = v_cfg.get("use_time_buffered_sl", True)
+        self.take_profit_time_buffer_sec = v_cfg.get("take_profit_time_buffer_sec", 60)
+        self.use_overtrading_guard = v_cfg.get("use_overtrading_guard", True)
+        self.max_daily_sl_count = v_cfg.get("max_daily_sl_count", 3)
+        self.use_morning_support_filter = v_cfg.get("use_morning_support_filter", True)
+        
         self.rebalance_eng = RebalanceEngine(api, self.ai_advisor)
         self.preset_eng = PresetStrategyEngine(self.ai_advisor, api, lambda: self.current_market_vibe, self._save_all_states)
         self.analyzer.debug_mode = self.debug_mode # [추가]
@@ -228,6 +241,14 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
                 "report_interval": v_cfg.get("report_interval", 30)
             })
             self.max_stock_count_config = v_cfg.get("max_stock_count_config", "8")
+            
+            # --- [VIBE-GUARD] 설정 갱신 ---
+            self.use_time_buffered_sl = v_cfg.get("use_time_buffered_sl", True)
+            self.take_profit_time_buffer_sec = v_cfg.get("take_profit_time_buffer_sec", 60)
+            self.use_overtrading_guard = v_cfg.get("use_overtrading_guard", True)
+            self.max_daily_sl_count = v_cfg.get("max_daily_sl_count", 3)
+            self.use_morning_support_filter = v_cfg.get("use_morning_support_filter", True)
+            
             llm_seq = v_cfg.get("ai_config", {}).get("llm_sequence", [("GEMINI", self.ai_config.get("preferred_model", "gemini-3.1-flash-lite-preview"))])
             self.ai_advisor = MultiLLMAdvisor(self.api, llm_seq)
             self.alpha_eng.ai_advisor = self.ai_advisor

@@ -112,6 +112,7 @@ Gemini의 분석 결과와 시장 상황에 따른 가변적 로직을 검증합
 | **TC-F08** | `tests/test_advanced_integration.py` | `test_tc_f08_recommendation_recovery_worker_no_clear_busy_error` | 추천 복구 워커 예외 방지 |
 | **TC-B01** | `tests/test_exit_manager.py` | `test_exit_manager_vibe_modifiers` | VIBE별 TP/SL 보정 |
 | **TC-B02** | `tests/test_exit_manager.py` | `test_exit_manager_phase_adjustment` | 페이즈별 보정 |
+| **TC-T01** | `tests/test_theme_sync.py` | `test_get_naver_theme_data_parsing` | 네이버 모바일 테마 API 수집 및 역방향 매핑 검증 |
 
 > [!NOTE]
 > 위 표에 명시되지 않은 시나리오(TC-M04, TC-M06, TC-F02, TC-F03, TC-W계열)는 현재 수동 테스트 기반으로 검증되고 있으며, 향후 인프라 모킹 환경 구축 시 자동화 테스트가 보강될 예정입니다.

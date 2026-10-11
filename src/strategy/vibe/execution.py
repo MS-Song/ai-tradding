@@ -52,6 +52,12 @@ class ExecutionMixin:
         phase = self.get_market_phase()
         now_str = get_now().strftime('%Y-%m-%d %H:%M:%S')
         today = get_now().strftime('%Y-%m-%d')
+        # [VIBE-GUARD] 날짜가 바뀌었으면 일일 누적 손절 카운트 리셋
+        if getattr(self, "last_sl_date", "") != today:
+            self.daily_sl_count = 0
+            self.last_sl_date = today
+            if hasattr(self, "_save_all_states"):
+                self._save_all_states()
         if not hasattr(self, '_p3_global_processed'): self._p3_global_processed = {}
         self._p4_ai_done_this_cycle = False
         
@@ -335,6 +341,15 @@ class ExecutionMixin:
 
             tp, sl, vol_spike = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
             rt = safe_cast_float(item.get("evlu_pfls_rt"))
+            
+            # [VIBE-GUARD] 손절선 이상으로 주가가 복귀했으면 대기 기록 삭제 (보호 성공)
+            if getattr(self, "use_time_buffered_sl", True) and code in self._sl_violation_start_times and rt > sl:
+                del self._sl_violation_start_times[code]
+                msg = f"🛡️ [VIBE-GUARD] {name}({code}) 주가 회복: 수익률 {rt:+.2f}% > {sl:+.2f}%. 손절 대기 상태 해제."
+                logger.info(msg)
+                if self.state:
+                    self.state.add_trading_log(msg)
+                    
             action, sell_qty, action_reason = None, 0, ""
 
             # [v2.1 추가] 시스템 구동 초기 보호 (Startup Grace Period)
@@ -394,12 +409,34 @@ class ExecutionMixin:
                     if f"short_grace_{code}" not in self._boot_log_sent or (curr_t - self._boot_log_sent.get(f"short_grace_{code}", 0)) > 60:
                         results.append(msg)
                         self._boot_log_sent[f"short_grace_{code}"] = curr_t
-                elif self.analyzer.kr_vibe.upper() == "DEFENSIVE":
-                    action, action_reason, sell_qty = "긴급손절", "Defensive장세_SL즉시", int(item.get('hldg_qty', 0))
-                elif (curr_t - self.last_buy_times.get(code, 0)) < 1800 and self.last_buy_times.get(code, 0) > self.last_sell_times.get(code, 0):
-                    is_emg, emg_reason = self._is_emergency_sl(rt, sl, self.analyzer.is_panic, self.analyzer.kr_vibe, phase, True)
-                    if is_emg: action, action_reason, sell_qty = "긴급손절", emg_reason, int(item.get('hldg_qty', 0))
-                else: action, sell_qty = "손절", int(item.get('hldg_qty', 0))
+                else:
+                    # [VIBE-GUARD] 시간 지연 버퍼 손절 적용
+                    if getattr(self, "use_time_buffered_sl", True) and getattr(self, "take_profit_time_buffer_sec", 60) > 0:
+                        if code not in getattr(self, "_sl_violation_start_times", {}):
+                            if not hasattr(self, "_sl_violation_start_times"): self._sl_violation_start_times = {}
+                            self._sl_violation_start_times[code] = curr_t
+                            msg = f"🛡️ [VIBE-GUARD] {name}({code}) 손절선 이탈 감지: 수익률 {rt:+.2f}% <= {sl:+.2f}%. {self.take_profit_time_buffer_sec}초 유예 대기..."
+                            logger.warning(msg)
+                            if self.state:
+                                self.state.add_trading_log(msg)
+                        
+                        elapsed = curr_t - self._sl_violation_start_times[code]
+                        if elapsed < self.take_profit_time_buffer_sec:
+                            # 아직 유예 시간이 지나지 않았으므로 손절 유예
+                            if not hasattr(self, '_last_sl_buffer_log_times'):
+                                self._last_sl_buffer_log_times = {}
+                            if curr_t - self._last_sl_buffer_log_times.get(code, 0) >= 15:  # 15초 간격 TUI 노출
+                                msg = f"🛡️ [VIBE-GUARD] {name}({code}) 손절 보류 중 (유예 {int(self.take_profit_time_buffer_sec - elapsed)}초 남음)"
+                                results.append(msg)
+                                self._last_sl_buffer_log_times[code] = curr_t
+                            continue
+
+                    if self.analyzer.kr_vibe.upper() == "DEFENSIVE":
+                        action, action_reason, sell_qty = "긴급손절", "Defensive장세_SL즉시", int(item.get('hldg_qty', 0))
+                    elif (curr_t - self.last_buy_times.get(code, 0)) < 1800 and self.last_buy_times.get(code, 0) > self.last_sell_times.get(code, 0):
+                        is_emg, emg_reason = self._is_emergency_sl(rt, sl, self.analyzer.is_panic, self.analyzer.kr_vibe, phase, True)
+                        if is_emg: action, action_reason, sell_qty = "긴급손절", emg_reason, int(item.get('hldg_qty', 0))
+                    else: action, sell_qty = "손절", int(item.get('hldg_qty', 0))
 
             if action and not skip_trade and sell_qty > 0:
                 self.current_action = f"{action}실행"
@@ -415,6 +452,12 @@ class ExecutionMixin:
                         if is_full:
                             if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
                             self.bad_sell_times[code] = {"time": curr_t, "type": "손절"}  # 24시간 차단
+                            # [VIBE-GUARD] 일일 누적 손절 횟수 증가 및 버퍼 기록 제거
+                            self.daily_sl_count += 1
+                            self.last_sl_date = today
+                            if code in self._sl_violation_start_times:
+                                del self._sl_violation_start_times[code]
+                            logger.warning(f"🛡️ [VIBE-GUARD] 누적 손절 횟수 증가: {self.daily_sl_count}/{self.max_daily_sl_count}회")
                         m_id = self.last_buy_models.get(code, "")
                         strategy_label = self.get_preset_label(code) or "자동매매"
                         # [통합] log_trade가 TUI 및 JSON 로그를 한 번에 처리
@@ -501,6 +544,40 @@ class ExecutionMixin:
                     if any(x for x in results if any(p in x for p in ["🚀 AI자율매수", "🤖 AI 자율 매도", "🤖 물타기", "🤖 불타기", "자동 익절", "자동 손절", "🔄 교체매도", "🏁 P3 수익확정", "💤 P4 청산"])): break
                     
                     code, name, score = rec['code'], rec['name'], rec.get('score', 0.0)
+                    
+                    # [VIBE-GUARD 1] 일일 최대 손절 한도 도달 시 신규 매수 차단 (Over-trading Guard)
+                    # 하루 동안 잦은 매수-손절로 인해 계좌의 원금이 급격히 녹아내리는 것을 방지하기 위해,
+                    # 계좌 차원의 최대 손절 횟수 초과 시 신규 자율 매수를 정지합니다.
+                    if getattr(self, "use_overtrading_guard", True) and self.risk_mgr.check_overtrading_guard(self.daily_sl_count, self.max_daily_sl_count):
+                        curr_t = time.time()
+                        if not hasattr(self, '_last_otg_log_time'):
+                            self._last_otg_log_time = 0
+                        if curr_t - self._last_otg_log_time >= 600:  # 10분 단위 로그
+                            msg = f"🛡️ [VIBE-GUARD] 일일 최대 손절 한도 도달로 [{code}]{name} 매수 스킵 (누적 손절: {self.daily_sl_count}/{self.max_daily_sl_count}회)"
+                            logger.warning(msg)
+                            if self.state:
+                                self.state.add_trading_log(msg)
+                            self._last_otg_log_time = curr_t
+                        continue
+                        
+                    # [VIBE-GUARD 2] 시초가 지지선 필터 (09:00 ~ 09:30 이평선 지지 확인 / 9:30 룰)
+                    # 개장 직후 30분 동안은 시장의 변동성과 왜곡이 매우 심합니다. 
+                    # 이평선(20분봉 MA) 지지선 돌파 또는 정배열 지지가 확인되지 않은 종목에 대해
+                    # 뇌동매수성 추격 진입을 막아 손절 가능성을 미연에 방지합니다.
+                    if getattr(self, "use_morning_support_filter", True):
+                        from datetime import time as dtime
+                        now_t_check = get_now().time()
+                        if dtime(9, 0) <= now_t_check < dtime(9, 30):
+                            ma_20 = self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0
+                            detail = self.api.get_naver_stock_detail(code)
+                            curr_price = safe_cast_float(detail.get('price', 0))
+                            if ma_20 > 0 and curr_price <= ma_20:
+                                msg = f"🛡️ [VIBE-GUARD] 시초가 지지선 미달로 [{code}]{name} 매수 스킵 (현재가 {curr_price:,.0f} <= 20MA {ma_20:,.0f})"
+                                logger.info(msg)
+                                if self.state:
+                                    self.state.add_trading_log(msg)
+                                continue
+
                     if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="AI 매수 분석", last_task=f"분석: {name} ({score:.1f}점)", friendly_name="매매 분석")
                     if any(h.get('pdno') == code for h in holdings): continue
                     

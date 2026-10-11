@@ -26,3 +26,4 @@ test_results.txt
 *.log
 *.json.tmp
 /scratch/
+vertex_key.json

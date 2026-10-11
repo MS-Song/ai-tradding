@@ -386,9 +386,19 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
         bull_info = f"BULL:[{auto_st_bull}] {u_cfg.get('min_profit_to_pyramid'):+.1f}% {u_cfg.get('average_down_amount')/10000:,.0f}만/{u_cfg.get('max_investment_per_stock')/10000:,.0f}만"
         
         halted = strategy.risk_mgr.is_halted
-        risk_st = "\033[41;97m!HALTED!\033[0m" if halted else "\033[92mNORMAL\033[0m"
+        otg_halted = strategy.use_overtrading_guard and strategy.risk_mgr.check_overtrading_guard(strategy.daily_sl_count, strategy.max_daily_sl_count)
+        
+        # 일일 손절 한도(OTG) 초과 시에도 경고 상태 표시
+        if halted:
+            risk_st = "\033[41;97m!HALTED!\033[0m"
+        elif otg_halted:
+            risk_st = "\033[41;97m!GUARD(OTG)!\033[0m"
+        else:
+            risk_st = "\033[92mNORMAL\033[0m"
+            
         limit_val = strategy.risk_mgr.max_daily_loss_rate
-        risk_info = f"리스크: {risk_st} (한도:-{limit_val}%)"
+        max_sl = strategy.max_daily_sl_count
+        risk_info = f"리스크:{risk_st}(한도:-{limit_val}%) [OTG:{strategy.daily_sl_count}/{max_sl}]"
         
         ai_cost_info = f"AI 비용: \033[90m-{total_ai_cost:,.0f}\033[0m"
         line_setup = (f"{label_setup} | {align_kr(strat_info, W1)} | {align_kr(algo_info, W2)} | "
@@ -415,7 +425,17 @@ def draw_tui(strategy, dm, cycle_info, prompt_mode=None):
                 p_strat = strategy.preset_strategies.get(code)
                 if p_strat and p_strat.get('is_manual') and preset_label:
                     preset_label += "(M)"
-                if p_strat and p_strat.get('deadline'):
+                
+                # [VIBE-GUARD] 손절선 이탈 유예 카운트다운을 남은 시간(rem_txt) 컬럼에 실시간 표시
+                if code in getattr(strategy, "_sl_violation_start_times", {}):
+                    violation_t = strategy._sl_violation_start_times[code]
+                    elapsed = time.time() - violation_t
+                    rem_sec = int(strategy.take_profit_time_buffer_sec - elapsed)
+                    if rem_sec > 0:
+                        rem_txt = f"\033[93mSL:{rem_sec}S\033[0m"   # 대기 중인 초 수를 노란색으로 노출
+                    else:
+                        rem_txt = "\033[91mSL:EXP\033[0m"   # 유예 초과 (곧 집행 예정)
+                elif p_strat and p_strat.get('deadline'):
                     try: rem_mins = int((datetime.strptime(p_strat['deadline'], '%Y-%m-%d %H:%M:%S') - get_now()).total_seconds() / 60); rem_txt = f"{rem_mins}M" if rem_mins > 0 else "EXP"
                     except: rem_txt = "ERR"
                 # [Task 9] TP/SL 색상 적용 (단위 % 제거)

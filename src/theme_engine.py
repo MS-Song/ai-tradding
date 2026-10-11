@@ -21,25 +21,6 @@ _dynamic_theme_map = {} # {theme_name: [{"name": stock_name, "code": stock_code}
 _code_to_theme_map = {} # {code: theme_name} (Reverse map for O(1) lookup)
 _cached_themes = []
 
-def load_theme_data():
-    """파일(`theme_data.json`)로부터 동적 테마 데이터를 로드하고 역방향 매핑 테이블을 구축합니다.
-    
-    데이터 로드 후 `_rebuild_reverse_map`을 호출하여 O(1) 조회를 위한 
-    코드별 테마 맵을 생성합니다.
-    """
-    global _dynamic_theme_map
-    if os.path.exists(THEME_DATA_FILE):
-        try:
-            with open(THEME_DATA_FILE, "r", encoding="utf-8") as f:
-                _dynamic_theme_map = json.load(f)
-                _rebuild_reverse_map()
-        except:
-            _dynamic_theme_map = {}
-            _code_to_theme_map = {}
-
-# 모듈 로드 시 최초 1회 로드
-load_theme_data()
-
 # 제외하거나 후순위로 밀어낼 광범위한 테마명 (섹터 분류 등)
 BROAD_THEMES = [
     "KOSPI200", "KOSDAQ150", "IT 대표주", "자동차 대표주", "금융지주", "은행", "대형주", "중형주", "소형주", 
@@ -75,6 +56,27 @@ def _rebuild_reverse_map():
                 new_map[code] = theme
                 
     _code_to_theme_map = new_map
+
+def load_theme_data():
+    """파일(`theme_data.json`)로부터 동적 테마 데이터를 로드하고 역방향 매핑 테이블을 구축합니다.
+    
+    데이터 로드 후 `_rebuild_reverse_map`을 호출하여 O(1) 조회를 위한 
+    코드별 테마 맵을 생성합니다.
+    """
+    global _dynamic_theme_map
+    if os.path.exists(THEME_DATA_FILE):
+        try:
+            with open(THEME_DATA_FILE, "r", encoding="utf-8") as f:
+                _dynamic_theme_map = json.load(f)
+                _rebuild_reverse_map()
+        except Exception as e:
+            from src.logger import log_error
+            log_error(f"테마 데이터 로드 실패: {e}")
+            _dynamic_theme_map = {}
+            _code_to_theme_map = {}
+
+# 모듈 로드 시 최초 1회 로드
+load_theme_data()
 
 def get_theme_for_stock(code: str, name: str) -> str:
     """주어진 종목 코드와 명칭을 바탕으로 가장 적절한 테마명을 결정합니다.

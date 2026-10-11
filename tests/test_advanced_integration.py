@@ -58,6 +58,7 @@ class MockStrategy(ExecutionMixin):
         
         self.risk_mgr = MagicMock()
         self.risk_mgr.check_circuit_breaker.return_value = False
+        self.risk_mgr.check_overtrading_guard.return_value = False
         
         self.recovery_eng = RecoveryEngine({"min_loss_to_buy": -3.0, "average_down_amount": 500000})
         self.pyramid_eng = PyramidingEngine({"min_profit_to_pyramid": 3.0, "average_down_amount": 500000})
@@ -78,6 +79,16 @@ class MockStrategy(ExecutionMixin):
         self.indicator_eng = MagicMock()
         self.exit_mgr = ExitManager(base_tp=5.0, base_sl=-5.0)
         self.debug_mode = True
+        
+        # --- VIBE-GUARD Attributes ---
+        self.daily_sl_count = 0
+        self.last_sl_date = ""
+        self._sl_violation_start_times = {}
+        self.use_time_buffered_sl = True
+        self.take_profit_time_buffer_sec = 60
+        self.use_overtrading_guard = True
+        self.max_daily_sl_count = 3
+        self.use_morning_support_filter = False
 
     @property
     def current_market_vibe(self): return self.analyzer.kr_vibe

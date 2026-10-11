@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Vibe-Trader | 매매 복기 대시보드</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dark-mode">
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-container">
+                    <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="url(#logo-grad-1)"/>
+                        <path d="M2 17L12 22L22 17" stroke="url(#logo-grad-2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M2 12L12 17L22 12" stroke="url(#logo-grad-3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <defs>
+                            <linearGradient id="logo-grad-1" x1="2" y1="2" x2="22" y2="12" gradientUnits="userSpaceOnUse">
+                                <stop stop-color="#00f2fe"/>
+                                <stop offset="1" stop-color="#4facfe"/>
+                            </linearGradient>
+                            <linearGradient id="logo-grad-2" x1="2" y1="12" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+                                <stop stop-color="#00ff87"/>
+                                <stop offset="1" stop-color="#60efff"/>
+                            </linearGradient>
+                            <linearGradient id="logo-grad-3" x1="2" y1="7" x2="22" y2="17" gradientUnits="userSpaceOnUse">
+                                <stop stop-color="#00f2fe"/>
+                                <stop offset="1" stop-color="#00ff87"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                    <div class="logo-text">
+                        <span class="logo-title">AI-VIBE</span>
+                        <span class="logo-subtitle">TRADER</span>
+                    </div>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-tab="overview">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="9" rx="1"/>
+                        <rect x="14" y="3" width="7" height="5" rx="1"/>
+                        <rect x="14" y="12" width="7" height="9" rx="1"/>
+                        <rect x="3" y="16" width="7" height="5" rx="1"/>
+                    </svg>
+                    <span>종합 대시보드</span>
+                </button>
+                <button class="nav-item" data-tab="daily-reports">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                        <polyline points="10 9 9 9 8 9"/>
+                    </svg>
+                    <span>일별 복기 리포트</span>
+                </button>
+                <button class="nav-item" data-tab="strategy-breakdown">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="20" x2="18" y2="10"/>
+                        <line x1="12" y1="20" x2="12" y2="4"/>
+                        <line x1="6" y1="20" x2="6" y2="14"/>
+                    </svg>
+                    <span>AI 모델 분석</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="connection-status">
+                    <div class="pulse-indicator online"></div>
+                    <div class="status-details">
+                        <span class="status-label">보관 일수</span>
+                        <span class="status-value" id="stats-retention-days">90일 데이터 수집됨</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="content-header">
+                <div class="header-title-area">
+                    <h1 id="page-title">종합 성과 모니터</h1>
+                    <p class="header-subtitle" id="page-subtitle">수집된 투자 복기 JSON 로그 기반 실시간 통계 분석</p>
+                </div>
+                <div class="header-controls">
+                    <div class="vibe-badge-container">
+                        <span class="vibe-label">최근 장세</span>
+                        <span class="vibe-badge vibe-bear" id="current-vibe-badge">Bear</span>
+                    </div>
+                    <button class="btn btn-primary" id="btn-refresh">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
+                            <polyline points="23 4 23 10 17 10"/>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                        </svg>
+                        <span>데이터 갱신</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- TAB 1: OVERVIEW -->
+            <section class="tab-pane active" id="tab-overview">
+                <!-- Summary Metrics Grid -->
+                <div class="metrics-grid">
+                    <!-- Card 1: Net Profit -->
+                    <div class="metric-card card-gradient-profit">
+                        <div class="card-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                                <line x1="12" y1="1" x2="12" y2="23"/>
+                                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                            </svg>
+                        </div>
+                        <div class="metric-details">
+                            <span class="metric-title">누적 순손익</span>
+                            <h2 class="metric-value text-glow-green" id="metric-net-profit">₩0</h2>
+                            <span class="metric-change text-green" id="metric-net-profit-change">총 매매 실현 결과</span>
+                        </div>
+                    </div>
+
+                    <!-- Card 2: Win Rate -->
+                    <div class="metric-card card-gradient-winrate">
+                        <div class="card-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                                <circle cx="12" cy="12" r="10"/>
+                                <path d="M12 6v6l4 2"/>
+                            </svg>
+                        </div>
+                        <div class="metric-details">
+                            <span class="metric-title">매매 승률</span>
+                            <h2 class="metric-value text-glow-blue" id="metric-win-rate">0.0%</h2>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar-fill" id="metric-win-rate-progress" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 3: Total Trades -->
+                    <div class="metric-card">
+                        <div class="card-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                                <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1"/>
+                                <path d="M18 8h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-4"/>
+                                <circle cx="8" cy="12" r="2"/>
+                            </svg>
+                        </div>
+                        <div class="metric-details">
+                            <span class="metric-title">총 거래량</span>
+                            <h2 class="metric-value" id="metric-total-trades">0건</h2>
+                            <span class="metric-change" id="metric-days-count">총 0일 분석 수집</span>
+                        </div>
+                    </div>
+
+                    <!-- Card 4: Avg Profit/Loss -->
+                    <div class="metric-card">
+                        <div class="card-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="card-icon">
+                                <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+                                <polyline points="2 17 12 22 22 17"/>
+                                <polyline points="2 12 12 17 22 12"/>
+                            </svg>
+                        </div>
+                        <div class="metric-details">
+                            <span class="metric-title">수익/손실 평균비</span>
+                            <h2 class="metric-value" id="metric-avg-ratio">0.00</h2>
+                            <span class="metric-change text-muted" id="metric-avg-values">₩0 / ₩0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Section -->
+                <div class="charts-row">
+                    <!-- Main Timeline Chart -->
+                    <div class="chart-container-large card">
+                        <div class="card-header">
+                            <h3>수익 곡선 및 일별 성과 추이</h3>
+                            <div class="chart-legend-custom">
+                                <span class="legend-item"><span class="color-dot bg-cyan"></span>누적 순익</span>
+                                <span class="legend-item"><span class="color-dot bg-emerald"></span>일일 익절</span>
+                                <span class="legend-item"><span class="color-dot bg-coral"></span>일일 손절</span>
+                            </div>
+                        </div>
+                        <div class="chart-wrapper">
+                            <canvas id="chart-net-timeline"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Overview Dashboard Subgrid -->
+                <div class="overview-subgrid">
+                    <!-- Top Profitable & Losing Stocks -->
+                    <div class="card subgrid-card">
+                        <div class="card-header">
+                            <h3>종목별 누적 손익 TOP 5</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="rank-list" id="stock-ranks-container">
+                                <!-- Dynamic ranking content -->
+                                <div class="loading-spinner"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Market Vibe Distribution -->
+                    <div class="card subgrid-card">
+                        <div class="card-header">
+                            <h3>시장 장세(Market Vibe) 통계</h3>
+                        </div>
+                        <div class="card-body vibe-body">
+                            <div class="vibe-stat-container">
+                                <div class="chart-wrapper-circle">
+                                    <canvas id="chart-vibe-pie"></canvas>
+                                </div>
+                                <div class="vibe-legend" id="vibe-stats-legend">
+                                    <!-- Dynamic vibe legend -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 2: DAILY REPORTS -->
+            <section class="tab-pane" id="tab-daily-reports">
+                <div class="daily-reports-layout">
+                    <!-- Left Sidebar Date Picker -->
+                    <div class="date-selector-card card">
+                        <div class="card-header">
+                            <h3>분석 이력 목록</h3>
+                            <span class="badge" id="report-count-badge">0일</span>
+                        </div>
+                        <div class="date-list" id="report-dates-list">
+                            <!-- Dynamic dates list -->
+                            <div class="loading-spinner"></div>
+                        </div>
+                    </div>
+
+                    <!-- Right Detail Panel -->
+                    <div class="report-detail-container">
+                        <div id="no-report-placeholder" class="card placeholder-card">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="placeholder-icon">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="12" y1="8" x2="12" y2="12"/>
+                                <line x1="12" y1="16" x2="12.01" y2="16"/>
+                            </svg>
+                            <h3>분석 보고서를 선택해 주세요</h3>
+                            <p>좌측 일별 복기 리포트 목록에서 특정 거래일을 선택하시면 상세 분석 데이터와 AI 진단 및 개별 매매 내역을 확인할 수 있습니다.</p>
+                        </div>
+
+                        <div id="report-detail-view" class="report-detail-view hidden">
+                            <!-- Daily Summary Banner -->
+                            <div class="report-header-banner card-gradient-banner">
+                                <div class="banner-main">
+                                    <div class="banner-title-row">
+                                        <h2 id="report-date-title">2026-05-15 매매 복기</h2>
+                                        <span class="vibe-badge" id="report-vibe-badge">Bear</span>
+                                    </div>
+                                    <div class="banner-meta">
+                                        <span><strong class="text-white">생성 시간:</strong> <span id="report-generated-at">-</span></span>
+                                        <span class="meta-separator">|</span>
+                                        <span><strong class="text-white">최종 업데이트:</strong> <span id="report-updated-at">-</span></span>
+                                        <span class="meta-separator">|</span>
+                                        <span><strong class="text-white">업데이트 횟수:</strong> <span id="report-update-count" class="badge">1</span></span>
+                                    </div>
+                                </div>
+                                <div class="banner-stat">
+                                    <span class="banner-stat-label">당일 합산 손익</span>
+                                    <h1 class="banner-stat-value" id="report-daily-profit">₩0</h1>
+                                </div>
+                            </div>
+
+                            <!-- AI Analysis Card -->
+                            <div class="card ai-analysis-card">
+                                <div class="card-header border-bottom-0">
+                                    <div class="ai-header-title">
+                                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="ai-logo-icon">
+                                            <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM13 17H11V15H13V17ZM13 13H11V7H13V13Z" fill="url(#ai-grad)"/>
+                                            <defs>
+                                                <linearGradient id="ai-grad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+                                                    <stop stop-color="#a855f7"/>
+                                                    <stop offset="1" stop-color="#4facfe"/>
+                                                </linearGradient>
+                                            </defs>
+                                        </svg>
+                                        <h3>AI 자율매도 엔진 분석 리포트</h3>
+                                    </div>
+                                </div>
+                                <div class="card-body pt-0">
+                                    <div class="ai-content-markdown" id="report-ai-analysis">
+                                        <!-- AI analysis content rendered via markdown renderer -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Daily Profits and Losses Lists -->
+                            <div class="daily-transactions-grid">
+                                <!-- Profits -->
+                                <div class="card transactions-card border-glow-green">
+                                    <div class="card-header">
+                                        <div class="card-header-title text-green">
+                                            <span class="dot-indicator bg-emerald"></span>
+                                            <h3>익절 종목 (TOP PROFITS)</h3>
+                                        </div>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div class="stock-list" id="report-profits-list">
+                                            <!-- Dynamic profits list -->
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Losses -->
+                                <div class="card transactions-card border-glow-red">
+                                    <div class="card-header">
+                                        <div class="card-header-title text-red">
+                                            <span class="dot-indicator bg-coral"></span>
+                                            <h3>손절 종목 (TOP LOSSES)</h3>
+                                        </div>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div class="stock-list" id="report-losses-list">
+                                            <!-- Dynamic losses list -->
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 3: STRATEGY BREAKDOWN -->
+            <section class="tab-pane" id="tab-strategy-breakdown">
+                <div class="strategy-layout">
+                    <!-- Model Performance Comparison -->
+                    <div class="card strategy-card">
+                        <div class="card-header">
+                            <h3>AI 모델별 성과 비교 (Model Comparison)</h3>
+                            <p class="subtitle">시스템 내 구동 중인 자동매매 알고리즘과 수동 매매의 누적 성과 대조</p>
+                        </div>
+                        <div class="card-body strategy-body">
+                            <div class="strategy-charts-grid">
+                                <!-- Profit Chart -->
+                                <div class="strategy-chart-box">
+                                    <h4>모델별 누적 실현손익</h4>
+                                    <div class="chart-wrapper-strategy">
+                                        <canvas id="chart-model-profit"></canvas>
+                                    </div>
+                                </div>
+                                <!-- Win Rate Chart -->
+                                <div class="strategy-chart-box">
+                                    <h4>모델별 매매 건수 및 승률</h4>
+                                    <div class="chart-wrapper-strategy">
+                                        <canvas id="chart-model-winrate"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="strategy-table-card card">
+                        <div class="card-header">
+                            <h3>AI 모델별 상세 지표 요약</h3>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table" id="table-model-stats">
+                                    <thead>
+                                        <tr>
+                                            <th>AI 모델 / 알고리즘</th>
+                                            <th>총 거래수</th>
+                                            <th>승리 거래</th>
+                                            <th>패배 거래</th>
+                                            <th>승률</th>
+                                            <th>총 실현손익</th>
+                                            <th>평균 거래손익</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="table-model-stats-body">
+                                        <!-- Dynamic model table content -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Trade Types & Memos Analysis -->
+                    <div class="overview-subgrid">
+                        <div class="card subgrid-card">
+                            <div class="card-header">
+                                <h3>매매 구분별 손익 분포</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-wrapper-small">
+                                    <canvas id="chart-type-distribution"></canvas>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card subgrid-card">
+                            <div class="card-header">
+                                <h3>판정 태그별 종목 분포</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-wrapper-small">
+                                    <canvas id="chart-judgment-distribution"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Trade Detail Modal -->
+    <div class="modal-backdrop hidden" id="trade-modal">
+        <div class="modal-container">
+            <div class="modal-header">
+                <div>
+                    <h3 id="modal-stock-title">삼성전기 (009150)</h3>
+                    <p class="text-muted" id="modal-stock-subtitle">개별 매매 거래 내역</p>
+                </div>
+                <button class="btn-close" id="btn-close-modal">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="stock-meta-details-row">
+                    <div class="meta-stat-box">
+                        <span class="meta-label">누적 손익</span>
+                        <h3 id="modal-meta-total-profit" class="text-green">₩717,997</h3>
+                    </div>
+                    <div class="meta-stat-box">
+                        <span class="meta-label">종가 (장마감)</span>
+                        <h3 id="modal-meta-closing-price">₩1,010,000</h3>
+                    </div>
+                    <div class="meta-stat-box">
+                        <span class="meta-label">일일 등락률</span>
+                        <h3 id="modal-meta-day-rate" class="text-red">-1.37%</h3>
+                    </div>
+                    <div class="meta-stat-box">
+                        <span class="meta-label">PER / PBR</span>
+                        <h3 id="modal-meta-val">111.0 / 8.00</h3>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table" id="modal-trades-table">
+                        <thead>
+                            <tr>
+                                <th>시간</th>
+                                <th>구분</th>
+                                <th>수량</th>
+                                <th>체결가</th>
+                                <th>실현손익</th>
+                                <th>알고리즘 모델</th>
+                                <th>메모</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modal-trades-body">
+                            <!-- Dynamic modal trades table -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main JavaScript file -->
+    <script src="app.js"></script>
+</body>
+</html>

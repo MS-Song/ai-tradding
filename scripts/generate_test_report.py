@@ -32,7 +32,8 @@ def run_tests_and_generate_report():
     desc_map = get_test_descriptions()
     
     # 2. Pytest 실행 및 결과 수집
-    cmd = ["pytest", "tests/test_advanced_integration.py", "-v"]
+    import sys
+    cmd = [sys.executable, "-m", "pytest", "tests/test_advanced_integration.py", "-v"]
     result = subprocess.run(cmd, capture_output=True, text=True)
     
     output = result.stdout

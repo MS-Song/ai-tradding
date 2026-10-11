@@ -24,6 +24,7 @@ class RiskManager:
         self.max_daily_loss_rate = self.config.get("max_daily_loss_rate", 3.0) # 기본 3% 손실 시 차단
         self.risk_per_trade_rate = self.config.get("risk_per_trade_rate", 0.5) # 1회 매매 시 계좌의 0.5% 리스크 감수
         self.atr_multiplier = self.config.get("atr_multiplier", 2.0)          # 2.0 ATR를 손절 범위로 가정
+        self.max_daily_sl_count = self.config.get("max_daily_sl_count", 3)     # [VIBE-GUARD] 일일 허용 최대 손절 횟수
         
         self.is_halted = False
         self.halt_reason = ""
@@ -34,6 +35,31 @@ class RiskManager:
         self.max_daily_loss_rate = self.config.get("max_daily_loss_rate", 3.0)
         self.risk_per_trade_rate = self.config.get("risk_per_trade_rate", 0.5)
         self.atr_multiplier = self.config.get("atr_multiplier", 2.0)
+        self.max_daily_sl_count = self.config.get("max_daily_sl_count", 3)     # [VIBE-GUARD] 동적 갱신
+
+    def check_overtrading_guard(self, daily_sl_count: int, max_sl_count: int = None) -> bool:
+        """[VIBE-GUARD] 일일 손절 횟수가 임계치를 초과했는지 검사하여 과도한 매매(Over-trading)를 감지합니다.
+
+        하락장이나 횡보장에서 여러 종목이 핑퐁식으로 손절되는 현상이 발견될 경우,
+        계좌 전체의 신규 자율 매수를 정지시켜 자산을 보호하는 방어 메커니즘입니다.
+
+        Args:
+            daily_sl_count (int): 금일 발생한 누적 손절 횟수.
+            max_sl_count (int, optional): 허용할 최대 손절 횟수. 기본값은 self.max_daily_sl_count.
+
+        Returns:
+            bool: True이면 가드가 작동하여 매수를 제한해야 함을 의미.
+        """
+        limit = max_sl_count if max_sl_count is not None else self.max_daily_sl_count
+        
+        # 한도 설정이 0 이하이거나 비활성화인 경우 작동하지 않음
+        if limit <= 0:
+            return False
+            
+        if daily_sl_count >= limit:
+            return True
+            
+        return False
 
     def check_circuit_breaker(self, asset_info: dict) -> bool:
         """일일 수익률을 체크하여 서킷 브레이커 작동 여부를 판단합니다.

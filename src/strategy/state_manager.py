@@ -97,6 +97,8 @@ class StateManager:
                     "start_day_asset": s.start_day_asset,
                     "start_day_pnl": s.start_day_pnl,
                     "last_asset_date": s.last_asset_date,
+                    "daily_sl_count": getattr(s, 'daily_sl_count', 0),
+                    "last_sl_date": getattr(s, 'last_sl_date', ""),
                     "notified_dates": getattr(s, 'state', None).notified_dates if getattr(s, 'state', None) else {}
                 }
                 self._atomic_write(self.state_file, data)
@@ -148,6 +150,10 @@ class StateManager:
                     s.start_day_pnl = d.get("start_day_pnl", 0.0)
                     s.last_asset_date = d.get("last_asset_date", "")
                     s.replacement_logs = d.get("replacement_logs", [])
+                    # [VIBE-GUARD] 일일 손절 횟수 및 날짜 로드
+                    s.daily_sl_count = d.get("daily_sl_count", 0)
+                    s.last_sl_date = d.get("last_sl_date", "")
+                    
                     # bad_sell_times 로드 (재시작 후에도 재진입 차단 유지)
                     if not hasattr(s, 'bad_sell_times'): s.bad_sell_times = {}
                     s.bad_sell_times = d.get("bad_sell_times", {})
