@@ -736,13 +736,14 @@ class ExecutionMixin:
                     # [Step 3] 매수 집행 준비
                     price = safe_cast_float(rec.get('price')) or safe_cast_float(self.api.get_inquire_price(code).get('price'))
                     if price == 0:
-                        # 가격 오류 시 10분만 대기
-                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "FAIL", "시세 데이터 오류 (0원) (10분 후 재시도)")
+                        # 가격 오류 시 5분 쿨타임 대기 (사유 기록)
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "FAIL", "시세 데이터 오류 (0원) (5분 후 재시도)")
                         self.rejected_stocks[code] = {
                             "reason": "시세 데이터 오류 (0원)", 
                             "time": time.time(),
-                            "expiry": time.time() + 600
+                            "expiry": time.time() + 300
                         }
+                        self._save_all_states()
                         continue
                     
                     amt = self.ai_config["amount_per_trade"]
@@ -750,12 +751,13 @@ class ExecutionMixin:
                     # 가용 현금이 소액 남아있다고 억지로 1주 매수하는 자투리 매매(Dust Trading) 전면 차단
                     min_order_floor = min(300000.0, max(50000.0, total_asset * 0.05)) if total_asset > 0 else 300000.0
                     if cash < min_order_floor and cash < price:
-                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", f"현금부족(보유:{int(cash):,}원 < 최소기준:{int(min_order_floor):,}원) (10분 후 재시도)")
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "WAIT", f"현금부족(보유:{int(cash):,}원 < 최소기준:{int(min_order_floor):,}원) (5분 후 재시도)")
                         self.rejected_stocks[code] = {
                             "reason": "최소 주문 금액 미달 (자투리 매매 방지)", 
                             "time": time.time(),
-                            "expiry": time.time() + 600
+                            "expiry": time.time() + 300
                         }
+                        self._save_all_states()
                         continue
                     
                     # 교체 대상 전량 매도
@@ -796,34 +798,57 @@ class ExecutionMixin:
                     eff_amt = min(amt, max_stock_inv)
                     usable_amt = min(eff_amt, cash)
 
-                    # 가용 주문액이 최소 주문 기준에 미달 시 자투리 매매 방지를 위해 스킵
+                    # 가용 주문액이 최소 주문 기준에 미달 시 자투리 매매 방지를 위해 스킵 (5분 쿨타임 적용)
                     if usable_amt < min_order_floor and usable_amt < price:
-                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", f"주문금액미달({int(usable_amt):,}원 < {int(min_order_floor):,}원)")
+                        skip_msg = f"주문금액미달({int(usable_amt):,}원 < {int(min_order_floor):,}원)"
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", f"{skip_msg} (5분 쿨타임)")
+                        self.rejected_stocks[code] = {
+                            "reason": skip_msg,
+                            "time": time.time(),
+                            "expiry": time.time() + 300
+                        }
+                        self._save_all_states()
                         continue
 
                     qty = math.floor(usable_amt / price) if price > 0 else 0
                     if qty <= 0:
+                        skip_msg = f"주문 수량 부족 (0주, 가용액:{int(usable_amt):,}원, 현재가:{int(price):,}원)"
+                        trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", f"{skip_msg} (5분 쿨타임)")
+                        self.rejected_stocks[code] = {
+                            "reason": skip_msg,
+                            "time": time.time(),
+                            "expiry": time.time() + 300
+                        }
+                        self._save_all_states()
                         continue
-                        dry_res = self.mock_tester.intercept_order(code, qty, True)
-                        success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
-                        if success:
-                            self.record_buy(code, price)
-                            self.auto_assign_preset(code, name)
-                            m_id = self.last_buy_models.get(code, "AI")
-                            strategy_label = self.get_preset_label(code) or "AI자율"
-                            # [통합] log_trade가 TUI 및 JSON 로그를 한 번에 처리
-                            trading_log.log_trade("🤖AI자율매수", code, name, price, qty, f"{reason} ({strategy_label})", model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
-                            results.append(trading_log.last_tui_msg)
-                            trading_log.log_buy_reason(code, name, f"{reason} ({strategy_label})", model_id=m_id)
-                            self._async_update_ma_cache(code)
-                            self._save_all_states()
-                        else:
-                            # [추가] 매수 실패 시 구체적 사유 로깅 (교체 매매 추적용)
-                            err_msg = f"❌ AI자율매수 실패: {name}({code}) | 사유: {msg}"
-                            logger.error(err_msg)
-                            msg_fail = f"❌ {name} 매수 실패: {msg}"
-                            results.append(msg_fail)
-                            if self.state: self.state.add_trading_log(msg_fail)
+
+                    dry_res = self.mock_tester.intercept_order(code, qty, True)
+                    success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
+                    if success:
+                        self.record_buy(code, price)
+                        self.auto_assign_preset(code, name)
+                        m_id = self.last_buy_models.get(code, "AI")
+                        strategy_label = self.get_preset_label(code) or "AI자율"
+                        # [통합] log_trade가 TUI 및 JSON 로그를 한 번에 처리
+                        trading_log.log_trade("🤖AI자율매수", code, name, price, qty, f"{reason} ({strategy_label})", model_id=m_id, ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
+                        results.append(trading_log.last_tui_msg)
+                        trading_log.log_buy_reason(code, name, f"{reason} ({strategy_label})", model_id=m_id)
+                        self._async_update_ma_cache(code)
+                        self._save_all_states()
+                    else:
+                        # [추가] 매수 실패 시 구체적 사유 로깅 및 5분 쿨타임 적용 (토큰 낭비 방지)
+                        err_msg = f"❌ AI자율매수 실패: {name}({code}) | 사유: {msg}"
+                        logger.error(err_msg)
+                        msg_fail = f"❌ {name} 매수 실패: {msg}"
+                        trading_log.log_ai_activity("매수실패", f"[{code}] {name}", "FAIL", f"주문 실패: {msg} (5분 쿨타임)")
+                        self.rejected_stocks[code] = {
+                            "reason": f"주문 실패: {msg}",
+                            "time": time.time(),
+                            "expiry": time.time() + 300
+                        }
+                        results.append(msg_fail)
+                        if self.state: self.state.add_trading_log(msg_fail)
+                        self._save_all_states()
                             
         return results
 

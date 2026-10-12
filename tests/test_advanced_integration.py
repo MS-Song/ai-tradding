@@ -412,6 +412,63 @@ class TestAIDecisionScenarios:
         is_ok, reason, _ = strategy.confirm_buy_decision("005930", "S", 90)
         assert is_ok is False and "0원" in reason
 
+    def test_tc_i06_buy_order_executed_when_ai_confirms(self, strategy):
+        """[TC-I06] AI 승인 후 실제 매수 주문이 정상 집행되는지 검증 (들여쓰기 버그 수정 검증)"""
+        from src.logger import trading_log
+        trading_log.set_state(strategy.state)
+        strategy.ai_config["auto_mode"] = True
+        strategy.ai_recommendations = [{"code": "038500", "name": "삼표시멘트", "score": 95.0, "price": 7560}]
+        strategy.confirm_buy_decision = MagicMock(return_value=(True, "승인", 0))
+        strategy.mock_tester.intercept_order.return_value = None
+        strategy.risk_mgr.get_max_investment_per_stock.return_value = 1000000.0
+        strategy.api.order_market.return_value = (True, "주문 성공")
+        
+        # 10주 매수 가능한 자산 및 현금 설정
+        asset_info = {"total_asset": 10000000.0, "cash": 5000000.0}
+        holdings = []
+        
+        results = strategy.run_cycle(holdings=holdings, asset_info=asset_info, market_trend="bull")
+        
+        # order_market이 정상 호출되었는지 확인
+        strategy.api.order_market.assert_called_once()
+        called_code = strategy.api.order_market.call_args[0][0]
+        called_qty = strategy.api.order_market.call_args[0][1]
+        is_buy = strategy.api.order_market.call_args[0][2]
+        assert called_code == "038500"
+        assert called_qty > 0
+        assert is_buy is True
+        assert "038500" in strategy.last_buy_times
+        assert any("AI자율매수" in r for r in results)
+
+    def test_tc_i07_buy_failure_and_skip_triggers_cooldown(self, strategy):
+        """[TC-I07] AI 승인 후 주문 실패 시 5분 쿨타임 등록 및 활동 로그 기록 검증"""
+        strategy.ai_config["auto_mode"] = True
+        strategy.ai_recommendations = [{"code": "038500", "name": "삼표시멘트", "score": 95.0, "price": 7560}]
+        strategy.confirm_buy_decision = MagicMock(return_value=(True, "승인", 0))
+        strategy.mock_tester.intercept_order.return_value = None
+        strategy.risk_mgr.get_max_investment_per_stock.return_value = 1000000.0
+        # 주문 실패 모킹
+        strategy.api.order_market.return_value = (False, "증거금 부족")
+        
+        asset_info = {"total_asset": 10000000.0, "cash": 5000000.0}
+        holdings = []
+        
+        start_t = time.time()
+        results = strategy.run_cycle(holdings=holdings, asset_info=asset_info, market_trend="bull")
+        
+        # 1. 5분(300초) 쿨타임 등록 여부 확인
+        assert "038500" in strategy.rejected_stocks
+        rej = strategy.rejected_stocks["038500"]
+        assert "증거금 부족" in rej["reason"]
+        assert rej["expiry"] >= start_t + 295
+        
+        # 2. 다음 사이클에서 rejected_stocks에 의해 AI 컨펌 없이 사전 차단되는지 확인
+        strategy.confirm_buy_decision.reset_mock()
+        strategy.api.order_market.reset_mock()
+        strategy.run_cycle(holdings=holdings, asset_info=asset_info, market_trend="bull")
+        strategy.confirm_buy_decision.assert_not_called()
+        strategy.api.order_market.assert_not_called()
+
 class TestThresholdScenarios:
     def test_tc_b01_bull_modifier(self, strategy):
         """[TC-B01-1] 상승장(Bull) 보정"""
