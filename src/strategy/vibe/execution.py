@@ -220,12 +220,19 @@ class ExecutionMixin:
                         dry_res = self.mock_tester.intercept_order(code, sell_qty, False)
                         success, msg = dry_res if dry_res else self.api.order_market(code, sell_qty, False)
                         if success:
-                            p_strat['is_p3_processed'], p_strat['sl'] = True, 0.2
+                            # [손익비 극대화 #2 | 추세 추종 러너(Runner) 모드]
+                            # 50% 분할 매도로 원금과 수익을 확보한 후, 남은 50%는 상단을 열어두어(+99%) 대형 추세를 추종
+                            is_runner = self.ai_config.get("enable_trend_runner", True)
+                            p_strat['is_p3_processed'] = True
+                            p_strat['sl'] = 0.2  # 본전 손절 보장
+                            p_strat['is_runner'] = is_runner
+                            if is_runner:
+                                p_strat['tp'] = 99.0  # 고정 TP 상한 개방 (추세 러너)
                             p3_profit = (safe_cast_float(item.get('prpr')) - safe_cast_float(item.get('pchs_avg_pric'))) * sell_qty
                             m_id = self.last_buy_models.get(code, "")
                             strategy_label = self.get_preset_label(code) or "P3수익"
                             # [통합] log_trade가 TUI 및 JSON 로그를 한 번에 처리
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), safe_cast_float(item.get('prpr')), sell_qty, f"Phase3 장마감 대비 분할매도 ({strategy_label})", profit=p3_profit, model_id="TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), safe_cast_float(item.get('prpr')), sell_qty, f"Phase3 장마감 대비 분할매도 ({strategy_label}) [러너모드:{is_runner}]", profit=p3_profit, model_id="TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                             results.append(f"🏁 {trading_log.last_tui_msg}")
                             self.record_sell(code, is_full_exit=False)
                             self._async_update_ma_cache(code)
@@ -246,13 +253,14 @@ class ExecutionMixin:
                         success, msg = dry_res if dry_res else self.api.order_market(code, sell_qty, False)
                         if success:
                             self._p3_global_processed[p3_key] = True
-                            tp_cur, sl_cur, _ = self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)
+                            is_runner = self.ai_config.get("enable_trend_runner", True)
+                            tp_cur = 99.0 if is_runner else self.get_dynamic_thresholds(code, self.analyzer.kr_vibe)[0]
                             self.exit_mgr.manual_thresholds[code] = [tp_cur, 0.2]
                             p3_profit = (safe_cast_float(item.get('prpr')) - safe_cast_float(item.get('pchs_avg_pric'))) * sell_qty
                             m_id = self.last_buy_models.get(code, "")
                             strategy_label = self.get_preset_label(code) or "P3표준"
                             # [통합] log_trade가 TUI 및 JSON 로그를 한 번에 처리
-                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), safe_cast_float(item.get('prpr')), sell_qty, f"Phase3 표준종목 분할매도 ({strategy_label})", profit=p3_profit, model_id="TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
+                            trading_log.log_trade("P3수익확정(50%)", code, item.get('prdt_name'), safe_cast_float(item.get('prpr')), sell_qty, f"Phase3 표준종목 분할매도 ({strategy_label}) [러너모드:{is_runner}]", profit=p3_profit, model_id="TL/SP", ma_20=self.state.ma_20_cache.get(code, 0.0) if self.state else 0.0)
                             results.append(f"🏁 {trading_log.last_tui_msg}")
                             self.record_sell(code, is_full_exit=False)
                             self._async_update_ma_cache(code)
@@ -883,8 +891,10 @@ class ExecutionMixin:
                         self._save_all_states()
                         continue
 
+                    use_smart_limit = self.ai_config.get("use_smart_limit", False)
+                    order_price = int(price) if (use_smart_limit and price > 0) else 0
                     dry_res = self.mock_tester.intercept_order(code, qty, True)
-                    success, msg = dry_res if dry_res else self.api.order_market(code, qty, True)
+                    success, msg = dry_res if dry_res else (self.api.order_market(code, qty, True, order_price) if order_price > 0 else self.api.order_market(code, qty, True))
                     if success:
                         self.record_buy(code, price)
                         self.auto_assign_preset(code, name)

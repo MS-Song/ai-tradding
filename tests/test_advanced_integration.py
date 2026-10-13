@@ -552,6 +552,52 @@ class TestAIDecisionScenarios:
         assert "003670" in strategy.rejected_stocks
         assert "테마 집중 방어" in strategy.rejected_stocks["003670"]["reason"]
 
+    def test_tc_p03_trend_runner_mode(self, strategy):
+        """[TC-P03] P3 분할 매도 후 러너 모드 활성화로 잔여 수량 TP 상한 개방(+99%) 및 SL 본전(+0.2%) 설정 검증"""
+        from src.logger import trading_log
+        trading_log.set_state(strategy.state)
+        strategy.ai_config["auto_mode"] = True
+        strategy.ai_config["enable_trend_runner"] = True
+        
+        # P3 시간대(14:40) 설정
+        p3_dt = datetime.strptime("2026-05-06 14:40:00", "%Y-%m-%d %H:%M:%S")
+        strategy.mock_tester.get_now.return_value = p3_dt
+        strategy.get_market_phase = MagicMock(return_value={"id": "P3", "tp_delta": 0.0, "sl_delta": 0.0})
+        
+        # +3.0% 수익 중인 10주 보유 종목
+        holdings = [{"pdno": "005930", "prdt_name": "삼성전자", "hldg_qty": 10, "evlu_pfls_rt": 3.0, "prpr": 72100, "pchs_avg_pric": 70000}]
+        strategy.preset_strategies["005930"] = {"preset_id": "01", "tp": 5.0, "sl": -3.0, "is_p3_processed": False}
+        strategy.api.order_market.return_value = (True, "주문 성공")
+        
+        results = strategy.run_cycle(holdings=holdings, asset_info={"total_asset": 10000000, "cash": 5000000})
+        
+        # 1. 50% 분할 매도(5주) 주문 집행 확인
+        strategy.api.order_market.assert_called_with("005930", 5, False)
+        # 2. 러너 모드 플래그 및 TP 상한 개방(+99%), SL 본전(+0.2%) 확인
+        p_strat = strategy.preset_strategies["005930"]
+        assert p_strat.get("is_runner") is True
+        assert p_strat.get("tp") == 99.0
+        assert p_strat.get("sl") == 0.2
+
+    def test_tc_p04_smart_limit_order(self, strategy):
+        """[TC-P04] use_smart_limit=True 설정 시 시장가 대신 현재가 지정가로 발주되는지 검증"""
+        strategy.ai_config["auto_mode"] = True
+        strategy.ai_config["use_smart_limit"] = True
+        strategy.ai_recommendations = [{"code": "038500", "name": "삼표시멘트", "score": 95.0, "price": 7560}]
+        strategy.confirm_buy_decision = MagicMock(return_value=(True, "승인", 0))
+        strategy.mock_tester.intercept_order.return_value = None
+        strategy.risk_mgr.get_max_investment_per_stock.return_value = 1000000.0
+        strategy.api.order_market.return_value = (True, "주문 성공")
+        
+        asset_info = {"total_asset": 10000000.0, "cash": 5000000.0}
+        strategy._last_ai_buy_scan_time = 0
+        strategy.run_cycle(holdings=[], asset_info=asset_info, market_trend="bull")
+        
+        # 지정가(price=7560)로 주문이 전달되었는지 검증
+        strategy.api.order_market.assert_called_once()
+        called_price = strategy.api.order_market.call_args[0][3] if len(strategy.api.order_market.call_args[0]) > 3 else strategy.api.order_market.call_args[1].get('price', 0)
+        assert called_price == 7560
+
 class TestThresholdScenarios:
     def test_tc_b01_bull_modifier(self, strategy):
         """[TC-B01-1] 상승장(Bull) 보정"""
