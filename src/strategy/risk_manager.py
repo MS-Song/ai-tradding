@@ -158,12 +158,17 @@ class RiskManager:
         if total_asset <= 0 or current_price <= 0: return 0
         
         try:
-            # 1. ATR 수집
-            atr = self.api.calculate_atr(code)
+            # 1. ATR 수집 (API 메서드 존재 여부 확인)
+            atr = 0.0
+            if hasattr(self.api, "calculate_atr"):
+                try:
+                    atr = float(self.api.calculate_atr(code))
+                except (ValueError, TypeError):
+                    atr = 0.0
             
             # ATR 수집 실패 시 (데이터 부족 등) 기본 금액 방식 폴백
             if atr <= 0:
-                return math.floor(default_amt / current_price)
+                return math.floor(default_amt / current_price) if current_price > 0 else 0
             
             # 2. 리스크 총액 = 총 자산 * 리스크 비율 (예: 1억 자산 * 0.5% = 50만원 리스크)
             # 이 50만원은 '손절 시 날려도 되는 최대 금액'을 의미

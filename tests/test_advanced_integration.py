@@ -343,9 +343,10 @@ class TestAlgoScenarios:
         # KX하이텍 주식을 여전히 보유하고 있는 상황 연출
         holdings = [{"pdno": "088180", "evlu_pfls_rt": -2.0, "hldg_qty": 10, "prdt_name": "KX하이텍"}]
         
-        # mock_tester의 get_now()가 지정된 datetime 객체를 리턴하도록 함
-        cur_t = time.time()
-        strategy.mock_tester.get_now.return_value = datetime.fromtimestamp(cur_t)
+        # mock_tester의 get_now()가 지정된 datetime 객체를 리턴하도록 함 (P2 10:30 기준)
+        cur_dt = datetime.strptime("2026-05-06 10:30:00", "%Y-%m-%d %H:%M:%S")
+        cur_t = cur_dt.timestamp()
+        strategy.mock_tester.get_now.return_value = cur_dt
         
         # 3. 첫 번째 루프 실행 (전략 프리셋 미배정 상태)
         strategy.run_cycle(holdings=holdings)
@@ -505,6 +506,51 @@ class TestAIDecisionScenarios:
         # 60초 스캔 주기에 의해 get_naver_stock_detail 및 confirm_buy_decision 둘 다 호출되지 않아야 함
         strategy.api.get_naver_stock_detail.assert_not_called()
         strategy.confirm_buy_decision.assert_not_called()
+
+    def test_tc_p01_atr_position_sizing(self, strategy):
+        """[TC-P01] ATR 기반 포지션 사이징이 작동하여 고변동성 종목의 수량이 적절히 조절되는지 검증"""
+        from src.logger import trading_log
+        trading_log.set_state(strategy.state)
+        strategy.ai_config["auto_mode"] = True
+        strategy.ai_config["use_atr_sizing"] = True
+        strategy.ai_recommendations = [{"code": "038500", "name": "삼표시멘트", "score": 95.0, "price": 10000}]
+        strategy.confirm_buy_decision = MagicMock(return_value=(True, "승인", 0))
+        strategy.mock_tester.intercept_order.return_value = None
+        strategy.risk_mgr.get_max_investment_per_stock.return_value = 1000000.0
+        # ATR 계산 결과로 50주 산출되도록 모킹 (기본 100주 대신 변동성으로 인해 50주로 축소)
+        strategy.risk_mgr.calculate_position_size = MagicMock(return_value=50)
+        strategy.api.order_market.return_value = (True, "주문 성공")
+        
+        asset_info = {"total_asset": 10000000.0, "cash": 5000000.0}
+        strategy._last_ai_buy_scan_time = 0
+        strategy.run_cycle(holdings=[], asset_info=asset_info, market_trend="bull")
+        
+        strategy.api.order_market.assert_called_once()
+        called_qty = strategy.api.order_market.call_args[0][1]
+        assert called_qty == 50
+
+    def test_tc_p02_sector_theme_cap(self, strategy):
+        """[TC-P02] 동일 테마 종목을 이미 보유 중일 때 테마 캡에 의해 신규 매수가 스킵되는지 검증"""
+        strategy.ai_config["auto_mode"] = True
+        strategy.ai_config["max_stocks_per_theme"] = 1
+        
+        # 이미 2차전지 테마 종목(에코프로) 보유 중
+        holdings = [{"pdno": "086520", "prdt_name": "에코프로", "hldg_qty": 10, "evlu_pfls_rt": 1.0}]
+        
+        # 신규 추천 종목도 2차전지 테마(포스코퓨처엠)
+        strategy.ai_recommendations = [{"code": "003670", "name": "포스코퓨처엠", "score": 95.0, "price": 200000, "theme": "이차전지"}]
+        strategy.confirm_buy_decision = MagicMock()
+        strategy.api.order_market.reset_mock()
+        
+        asset_info = {"total_asset": 10000000.0, "cash": 5000000.0}
+        strategy._last_ai_buy_scan_time = 0
+        strategy.run_cycle(holdings=holdings, asset_info=asset_info, market_trend="bull")
+        
+        # 테마 캡에 의해 매수 차단 및 5분 쿨타임 등록 확인
+        strategy.confirm_buy_decision.assert_not_called()
+        strategy.api.order_market.assert_not_called()
+        assert "003670" in strategy.rejected_stocks
+        assert "테마 집중 방어" in strategy.rejected_stocks["003670"]["reason"]
 
 class TestThresholdScenarios:
     def test_tc_b01_bull_modifier(self, strategy):

@@ -645,6 +645,33 @@ class ExecutionMixin:
                     if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="AI 매수 분석", last_task=f"분석: {name} ({score:.1f}점)", friendly_name="매매 분석")
                     if any(h.get('pdno') == code for h in holdings): continue
                     
+                    # [포트폴리오 분산 #1 | 섹터/테마 집중 캡 (Sector Cap)]
+                    # 특정 섹터의 동반 하락으로 인한 계좌 연쇄 손절을 방지하기 위해 동일 테마 종목 보유를 N개(기본 1개)로 제한
+                    max_per_theme = self.ai_config.get("max_stocks_per_theme", 1)
+                    if max_per_theme > 0:
+                        try:
+                            from src.theme_engine import get_theme_for_stock, BROAD_THEMES
+                            cand_theme = rec.get("theme") or get_theme_for_stock(code, name)
+                            if cand_theme and cand_theme not in BROAD_THEMES and cand_theme != "기타":
+                                held_same_theme = [
+                                    h for h in holdings 
+                                    if get_theme_for_stock(h.get('pdno', ''), h.get('prdt_name', '')) == cand_theme
+                                ]
+                                if len(held_same_theme) >= max_per_theme:
+                                    existing_names = ", ".join(h.get('prdt_name', '') for h in held_same_theme)
+                                    msg = f"🛡️ [테마 집중 방어] [{code}]{name} 이미 '{cand_theme}' 테마 종목({existing_names}) 보유 중으로 매수 스킵 (섹터 쏠림 방지)"
+                                    logger.info(msg)
+                                    if self.state: self.state.add_trading_log(msg)
+                                    self.rejected_stocks[code] = {
+                                        "reason": f"테마 집중 방어 ({cand_theme})",
+                                        "time": time.time(),
+                                        "expiry": time.time() + 300
+                                    }
+                                    self._save_all_states()
+                                    continue
+                        except Exception as e:
+                            logger.debug(f"테마 캡 검사 중 예외 (스킵): {e}")
+                    
                     # [복기반영 #6 | 당일 동일 종목 2회 손절 락]
                     ticker_sl_cnt = getattr(self, "daily_ticker_sl_count", {}).get(code, 0)
                     if ticker_sl_cnt >= 2:
@@ -836,7 +863,15 @@ class ExecutionMixin:
                         self._save_all_states()
                         continue
 
-                    qty = math.floor(usable_amt / price) if price > 0 else 0
+                    base_max_qty = math.floor(usable_amt / price) if price > 0 else 0
+                    if self.ai_config.get("use_atr_sizing", True) and hasattr(self, 'risk_mgr') and hasattr(self.risk_mgr, 'calculate_position_size'):
+                        try:
+                            atr_qty = self.risk_mgr.calculate_position_size(code, total_asset, price, default_amt=int(usable_amt))
+                            qty = min(atr_qty, base_max_qty) if atr_qty > 0 else base_max_qty
+                        except Exception:
+                            qty = base_max_qty
+                    else:
+                        qty = base_max_qty
                     if qty <= 0:
                         skip_msg = f"주문 수량 부족 (0주, 가용액:{int(usable_amt):,}원, 현재가:{int(price):,}원)"
                         trading_log.log_ai_activity("매수스킵", f"[{code}] {name}", "SKIP", f"{skip_msg} (5분 쿨타임)")
