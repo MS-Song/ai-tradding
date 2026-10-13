@@ -199,15 +199,21 @@ class VibeStrategy(AnalysisMixin, ExecutionMixin):
             self.last_buy_models[code] = self.ai_advisor.last_used_advisor.model_id
         self._save_all_states()
 
-    def record_sell(self, code, is_full_exit=True):
+    def record_sell(self, code, is_full_exit=True, profit_rt=None, profit_amt=0.0):
         self.last_sell_times[code] = time.time()
-        # 매도 시 해당 종목에 할당된 프리셋 전략 설정도 함께 삭제 (상태 파일 최적화)
-        # [Fix] 부분 익절 시에는 전략을 삭제하지 않도록 is_full_exit 체크 추가
-        if is_full_exit and code in self.preset_eng.preset_strategies:
+        # 프리셋 전략 성과(EV 및 승률) 기록
+        if code in self.preset_eng.preset_strategies:
             ps = self.preset_eng.preset_strategies[code]
-            s_name = ps.get('stock_name', '')
-            del self.preset_eng.preset_strategies[code]
-            logger.info(f"🗑️ 프리셋 전략 데이터 정리: {s_name} [{code}]")
+            pid = ps.get('preset_id')
+            if pid and profit_rt is not None:
+                self.preset_eng.record_trade_result(pid, profit_rt, profit_amt)
+            
+            # 매도 시 해당 종목에 할당된 프리셋 전략 설정도 함께 삭제 (상태 파일 최적화)
+            # [Fix] 부분 익절 시에는 전략을 삭제하지 않도록 is_full_exit 체크 추가
+            if is_full_exit:
+                s_name = ps.get('stock_name', '')
+                del self.preset_eng.preset_strategies[code]
+                logger.info(f"🗑️ 프리셋 전략 데이터 정리: {s_name} [{code}]")
         self._save_all_states()
 
     def is_reentry_restricted(self, code, cooldown_sec=7200):

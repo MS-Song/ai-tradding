@@ -21,6 +21,8 @@ class PresetStrategyEngine:
     """
     def __init__(self, ai_advisor, api=None, get_vibe_cb=None, state_save_cb=None):
         self.preset_strategies: Dict[str, dict] = {}
+        self.preset_strategy_stats: Dict[str, dict] = {}
+        self.min_trades_for_pruning = 3
         self.ai_advisor = ai_advisor
         self.api = api
         self.get_vibe = get_vibe_cb
@@ -116,18 +118,89 @@ class PresetStrategyEngine:
         if self.save_state: self.save_state()
         return True
 
+    def record_trade_result(self, preset_id: str, profit_rt: float, profit_amount: float = 0.0):
+        """특정 프리셋 전략의 매매 결과를 기록하고 누적 통계(승률, PF, EV)를 실시간 갱신합니다.
+
+        EV (수학적 기대값) = (Win Rate * Avg Win %) - (Loss Rate * Avg Loss %)
+        """
+        if not preset_id or preset_id == "00":
+            return
+        
+        stat = self.preset_strategy_stats.setdefault(preset_id, {
+            "name": PRESET_STRATEGIES.get(preset_id, {}).get("name", f"전략{preset_id}"),
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_profits": [],
+            "loss_profits": [],
+            "win_rate": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "profit_factor": 1.0,
+            "ev": 0.0,
+            "is_pruned": False
+        })
+        
+        stat["trades"] += 1
+        if profit_rt > 0:
+            stat["wins"] += 1
+            stat["win_profits"].append(float(profit_rt))
+        else:
+            stat["losses"] += 1
+            stat["loss_profits"].append(abs(float(profit_rt)))
+            
+        trades = stat["trades"]
+        wins = stat["wins"]
+        stat["win_rate"] = round(wins / trades, 4) if trades > 0 else 0.0
+        
+        avg_w = sum(stat["win_profits"]) / len(stat["win_profits"]) if stat["win_profits"] else 0.0
+        avg_l = sum(stat["loss_profits"]) / len(stat["loss_profits"]) if stat["loss_profits"] else 0.0
+        stat["avg_win"] = round(avg_w, 2)
+        stat["avg_loss"] = round(avg_l, 2)
+        
+        win_rate = stat["win_rate"]
+        loss_rate = 1.0 - win_rate
+        ev = (win_rate * avg_w) - (loss_rate * avg_l)
+        stat["ev"] = round(ev, 2)
+        
+        sum_w = sum(stat["win_profits"])
+        sum_l = sum(stat["loss_profits"])
+        if sum_l > 0:
+            stat["profit_factor"] = round(sum_w / sum_l, 2)
+        else:
+            stat["profit_factor"] = 99.0 if sum_w > 0 else 1.0
+            
+        # 표본 수가 충족되고 EV가 0 이하이거나 Profit Factor < 0.8이면 도태
+        stat["is_pruned"] = (trades >= self.min_trades_for_pruning and (ev <= 0.0 or stat["profit_factor"] < 0.8))
+        if stat["is_pruned"]:
+            from src.logger import logger
+            logger.warning(f"📉 [전략 도태] 프리셋 [{preset_id}:{stat['name']}] EV:{ev:+.2f}%, PF:{stat['profit_factor']:.2f} (표본 {trades}회) -> 약세 전략 자동 도태")
+
+        if self.save_state:
+            self.save_state()
+
+    def is_preset_pruned(self, preset_id: str) -> bool:
+        """해당 프리셋 전략이 기대값 음수로 인해 도태되었는지 여부를 확인합니다."""
+        if not preset_id or preset_id not in self.preset_strategy_stats:
+            return False
+        stat = self.preset_strategy_stats[preset_id]
+        return bool(stat.get("is_pruned", False))
+
+    def get_best_preset_id(self, fallback: str = "01") -> str:
+        """도태되지 않은 프리셋 중 기대값(EV)이 가장 높은 최적 전략 ID를 반환합니다."""
+        candidates = []
+        for pid, s in self.preset_strategy_stats.items():
+            if not s.get("is_pruned", False) and s.get("trades", 0) > 0:
+                candidates.append((pid, s.get("ev", 0.0)))
+        if candidates:
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            return candidates[0][0]
+        return fallback
+
     def auto_assign_preset(self, code: str, name: str) -> Optional[dict]:
         """AI를 호출하여 해당 종목에 가장 적합한 전략 프리셋을 자동으로 판정하고 할당합니다.
 
-        현재 시황(VIBE), 펀더멘털 데이터, 최근 뉴스를 AI에게 전달하여 
-        시뮬레이션된 최적의 전략 파라미터(ID, TP, SL, 수명 등)를 도출합니다.
-
-        Args:
-            code (str): 종목 코드.
-            name (str): 종목명.
-
-        Returns:
-            Optional[dict]: AI가 도출한 전략 상세 정보. 실패 시 None.
+        도태된(Pruned) 약세 전략이 제안될 경우, 양의 기대값을 가진 대안 전략으로 자동 교체합니다.
         """
         try:
             detail = self.api.get_naver_stock_detail(code)
@@ -135,6 +208,16 @@ class PresetStrategyEngine:
             vibe = self.get_vibe() if self.get_vibe else "Neutral"
             result = self.ai_advisor.simulate_preset_strategy(code, name, vibe, detail, news)
             if result:
+                pid = result["preset_id"]
+                if self.is_preset_pruned(pid):
+                    orig_name = PRESET_STRATEGIES.get(pid, {}).get("name", pid)
+                    new_pid = self.get_best_preset_id(fallback="01" if pid != "01" else "02")
+                    new_name = PRESET_STRATEGIES.get(new_pid, {}).get("name", new_pid)
+                    from src.logger import logger
+                    logger.warning(f"⚠️ [전략 도태 차단] [{code}]{name} AI 제안 전략 [{pid}:{orig_name}]은 EV 음수로 도태됨 -> 최적 전략 [{new_pid}:{new_name}]으로 대체 할당")
+                    result["preset_id"] = new_pid
+                    result["reason"] = f"[도태 대체:{orig_name}->{new_name}] " + result.get("reason", "")
+                
                 self.assign_preset(code, result["preset_id"], result["tp"], result["sl"], result["reason"], result.get("lifetime_mins"), name=name)
                 return result
         except Exception as e:

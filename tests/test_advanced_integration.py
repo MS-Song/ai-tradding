@@ -9,6 +9,7 @@ from src.strategy.recovery_engine import RecoveryEngine
 from src.strategy.pyramiding_engine import PyramidingEngine
 from src.strategy.market_analyzer import MarketAnalyzer
 from src.strategy.advisors.base import BaseLLMAdvisor
+from src.strategy.preset_engine import PresetStrategyEngine
 
 # =============================================================================
 # [Mock Helpers]
@@ -69,7 +70,8 @@ class MockStrategy(ExecutionMixin):
         self.ai_advisor = MagicMock()
         self.ai_config = {"amount_per_trade": 1000000, "auto_mode": True, "auto_sell": True, "min_score": 60.0}
         self.ai_recommendations = []
-        self.preset_strategies = {}
+        self.preset_eng = PresetStrategyEngine(self.ai_advisor, self.api, lambda: self.current_market_vibe)
+        self.preset_strategies = self.preset_eng.preset_strategies
         self.last_buy_models = {}
         self.last_buy_times = {}
         self.last_sell_times = {}
@@ -113,13 +115,21 @@ class MockStrategy(ExecutionMixin):
 
     def _cleanup_rejected_stocks(self): pass
     def _save_all_states(self): self.state_mgr.save_all_states()
-    def record_buy(self, code, price): self.last_buy_times[code] = self.mock_tester.get_now().timestamp()
-    def record_sell(self, code, is_full_exit): self.last_sell_times[code] = self.mock_tester.get_now().timestamp()
+    def record_buy(self, code, price, model_id=None): self.last_buy_times[code] = self.mock_tester.get_now().timestamp()
+    def record_sell(self, code, is_full_exit=True, profit_rt=None, profit_amt=0.0):
+        self.last_sell_times[code] = self.mock_tester.get_now().timestamp()
+        if code in self.preset_eng.preset_strategies:
+            ps = self.preset_eng.preset_strategies[code]
+            pid = ps.get('preset_id')
+            if pid and profit_rt is not None:
+                self.preset_eng.record_trade_result(pid, profit_rt, profit_amt)
+            if is_full_exit:
+                del self.preset_eng.preset_strategies[code]
     def get_preset_label(self, code): return "TEST"
-    def auto_assign_preset(self, code, name): return True
-    def assign_preset(self, code, pid, tp, sl, reason, name=None, lifetime_mins=None): 
-        self.preset_strategies[code] = {"preset_id": pid, "tp": tp, "sl": sl}
-        return True
+    def auto_assign_preset(self, code, name):
+        return self.preset_eng.auto_assign_preset(code, name)
+    def assign_preset(self, code, pid, tp=None, sl=None, reason="", name=None, lifetime_mins=None): 
+        return self.preset_eng.assign_preset(code, pid, tp, sl, reason, lifetime_mins, name)
     def _is_bad_sell_blocked(self, code): return False
     def get_max_stock_count(self, total_asset): return 5
     def _is_in_partial_sell_cooldown(self, code, t):
@@ -597,6 +607,53 @@ class TestAIDecisionScenarios:
         strategy.api.order_market.assert_called_once()
         called_price = strategy.api.order_market.call_args[0][3] if len(strategy.api.order_market.call_args[0]) > 3 else strategy.api.order_market.call_args[1].get('price', 0)
         assert called_price == 7560
+
+    def test_tc_p05_preset_ev_tracking_and_pruning(self, strategy):
+        """[TC-P05] 프리셋 전략 수학적 기대값(EV) 산출 및 약세 전략 자동 도태/대체 검증"""
+        eng = strategy.preset_eng
+        eng.min_trades_for_pruning = 3
+        
+        # 1. 프리셋 03 (단기돌파)에 3회 연속 손실 기록 -> EV 음수 도태
+        eng.record_trade_result("03", -3.0)
+        eng.record_trade_result("03", -2.0)
+        eng.record_trade_result("03", -4.0)
+        
+        stat_03 = eng.preset_strategy_stats["03"]
+        assert stat_03["trades"] == 3
+        assert stat_03["wins"] == 0
+        assert stat_03["losses"] == 3
+        assert stat_03["win_rate"] == 0.0
+        assert stat_03["ev"] < 0
+        assert eng.is_preset_pruned("03") is True
+        
+        # 2. 프리셋 01 (평균회귀)에 3회 연속 수익 기록 -> EV 양수 유지
+        eng.record_trade_result("01", +3.0)
+        eng.record_trade_result("01", +2.5)
+        eng.record_trade_result("01", +4.0)
+        
+        stat_01 = eng.preset_strategy_stats["01"]
+        assert stat_01["trades"] == 3
+        assert stat_01["win_rate"] == 1.0
+        assert stat_01["ev"] > 0
+        assert eng.is_preset_pruned("01") is False
+        assert eng.get_best_preset_id() == "01"
+        
+        # 3. AI가 종목에 대해 도태된 전략 "03"을 제안할 때 "01"로 자동 대체되는지 검증
+        strategy.ai_advisor.simulate_preset_strategy.return_value = {
+            "preset_id": "03",
+            "tp": 2.5,
+            "sl": -2.0,
+            "reason": "단기 슈팅 기대",
+            "lifetime_mins": 120
+        }
+        
+        res = eng.auto_assign_preset("005930", "삼성전자")
+        assert res is not None
+        assigned = eng.preset_strategies.get("005930")
+        assert assigned is not None
+        # 도태된 03이 아닌 기대값이 높은 01로 대체되어 할당되었어야 함
+        assert assigned["preset_id"] == "01"
+        assert "[도태 대체" in assigned["reason"]
 
 class TestThresholdScenarios:
     def test_tc_b01_bull_modifier(self, strategy):

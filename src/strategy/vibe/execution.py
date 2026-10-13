@@ -485,7 +485,8 @@ class ExecutionMixin:
                     if success:
                         # [Fix] 익절(30%)은 부분 매도이므로 전략 유지, 손절/트레일링스탑은 전량 매도
                         is_full = action in ["손절", "긴급손절", "트레일링스탑"]
-                        self.record_sell(code, is_full_exit=is_full)
+                        p_val = (safe_cast_float(item.get('prpr')) - safe_cast_float(item.get('pchs_avg_pric'))) * sell_qty
+                        self.record_sell(code, is_full_exit=is_full, profit_rt=rt, profit_amt=p_val)
                         if action in ["손절", "긴급손절"]:
                             if not hasattr(self, 'bad_sell_times'): self.bad_sell_times = {}
                             self.bad_sell_times[code] = {"time": curr_t, "type": "손절"}  # 24시간 차단

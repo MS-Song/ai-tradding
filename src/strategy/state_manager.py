@@ -89,6 +89,7 @@ class StateManager:
                     "bear_config": s.recovery_eng.config,
                     "bull_config": s.bull_config,
                     "preset_strategies": s.preset_eng.preset_strategies,
+                    "preset_strategy_stats": getattr(s.preset_eng, "preset_strategy_stats", {}),
                     "last_closing_bet_date": getattr(s, "_last_closing_bet_date", None),
                     "rejected_stocks": s.rejected_stocks,
                     "bad_sell_times": getattr(s, 'bad_sell_times', {}),
@@ -128,6 +129,7 @@ class StateManager:
                     s.recommendation_history = d.get("recommendation_history", {})
 
                     s.preset_eng.preset_strategies = d.get("preset_strategies", {})
+                    s.preset_eng.preset_strategy_stats = d.get("preset_strategy_stats", {})
 
                     today = get_now().strftime('%Y-%m-%d')
                     if d.get("last_rejected_date") == today:
