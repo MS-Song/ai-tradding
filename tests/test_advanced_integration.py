@@ -469,6 +469,43 @@ class TestAIDecisionScenarios:
         strategy.confirm_buy_decision.assert_not_called()
         strategy.api.order_market.assert_not_called()
 
+    def test_tc_i08_buy_scan_interval_throttling_and_falling_knife_cooldown(self, strategy):
+        """[TC-I08] 신규 AI 매수 스캔 60초 스로틀링 및 역배열 낙주 차단 5분 쿨타임 검증"""
+        strategy.ai_config["auto_mode"] = True
+        strategy.ai_config["buy_scan_interval"] = 60
+        strategy.analyzer.kr_vibe = "BEAR"
+        
+        # 라온시큐어: 20MA 17200, 현재가 17070 (역배열 낙주)
+        strategy.state.ma_20_cache = {"042510": 17200.0}
+        strategy.api.get_naver_stock_detail.return_value = {"price": 17070, "rate": -2.0}
+        strategy.ai_recommendations = [{"code": "042510", "name": "라온시큐어", "score": 85.0, "price": 17070}]
+        strategy.confirm_buy_decision = MagicMock()
+        
+        asset_info = {"total_asset": 10000000.0, "cash": 5000000.0}
+        holdings = []
+        
+        # 1. 첫 실행: 역배열 낙주 차단 발동 및 5분 쿨타임 등록 검증
+        start_t = time.time()
+        strategy.run_cycle(holdings=holdings, asset_info=asset_info, market_trend="bear")
+        
+        assert "042510" in strategy.rejected_stocks
+        rej = strategy.rejected_stocks["042510"]
+        assert "역배열 낙주 차단" in rej["reason"]
+        assert rej["expiry"] >= start_t + 295
+        strategy.confirm_buy_decision.assert_not_called()
+        
+        # 2. 10초 뒤 두 번째 실행: buy_scan_interval(60초) 내이므로 신규 매수 스캔 자체가 스킵되어야 함
+        strategy.confirm_buy_decision.reset_mock()
+        strategy.api.get_naver_stock_detail.reset_mock()
+        # mock_tester 시간 10초 경과 설정
+        cur_dt = strategy.fixed_now.timestamp() + 10
+        strategy.mock_tester.get_now.return_value = datetime.fromtimestamp(cur_dt)
+        
+        strategy.run_cycle(holdings=holdings, asset_info=asset_info, market_trend="bear")
+        # 60초 스캔 주기에 의해 get_naver_stock_detail 및 confirm_buy_decision 둘 다 호출되지 않아야 함
+        strategy.api.get_naver_stock_detail.assert_not_called()
+        strategy.confirm_buy_decision.assert_not_called()
+
 class TestThresholdScenarios:
     def test_tc_b01_bull_modifier(self, strategy):
         """[TC-B01-1] 상승장(Bull) 보정"""

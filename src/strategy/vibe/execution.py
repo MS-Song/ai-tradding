@@ -563,17 +563,26 @@ class ExecutionMixin:
 
             # (B) AI 자율 매수 집행 (신규 종목 진입)
             if self.auto_ai_trade and self.ai_recommendations:
+                # [토큰/부하 방어] 신규 종목 AI 자율 매수 스캔 주기 제어 (기본 60초 = 1분)
+                # 보유 종목 손익/손절/트레일링 감시는 1초 주기를 엄격히 유지하되,
+                # 신규 종목 AI 검토는 1분(60초) 주기로 실행하여 토큰 비용 및 시스템 부하를 획기적으로 절감합니다.
+                scan_interval = self.ai_config.get("buy_scan_interval", 60)
+                last_scan = getattr(self, "_last_ai_buy_scan_time", 0)
+                if curr_t - last_scan < scan_interval:
+                    return results
+                self._last_ai_buy_scan_time = curr_t
+
                 # [복기반영 #6 | 오프닝 갭 가드] 09:00~09:20 장 초반 극심한 변동성 구간 신규 자율 매수 전면 동결 (관망)
                 if phase.get("is_stabilizing"):
-                    curr_t = time.time()
+                    curr_t_stab = time.time()
                     if not hasattr(self, '_last_stabilizing_log_time'):
                         self._last_stabilizing_log_time = 0
-                    if curr_t - self._last_stabilizing_log_time >= 60:
+                    if curr_t_stab - self._last_stabilizing_log_time >= 60:
                         msg = "🛡️ [오프닝 갭 가드] 09:00~09:20 장 초반 변동성 안정화 대기 (신규 매수 보류)"
                         logger.info(msg)
                         if self.state: self.state.add_trading_log(msg)
                         results.append(msg)
-                        self._last_stabilizing_log_time = curr_t
+                        self._last_stabilizing_log_time = curr_t_stab
                     return results
 
                 max_cnt = self.get_max_stock_count(asset_info.get('total_asset', 0))
@@ -590,6 +599,9 @@ class ExecutionMixin:
                     if any(x for x in results if any(p in x for p in ["🚀 AI자율매수", "🤖 AI 자율 매도", "🤖 물타기", "🤖 불타기", "자동 익절", "자동 손절", "🔄 교체매도", "🏁 P3 수익확정", "💤 P4 청산"])): break
                     
                     code, name, score = rec['code'], rec['name'], rec.get('score', 0.0)
+                    
+                    # [Safety] 이미 거절되거나 대기 중인 종목은 루프 최상단에서 즉시 스킵 (중복 로깅 및 불필요한 시세 API 호출 차단)
+                    if code in self.rejected_stocks: continue
                     
                     # [VIBE-GUARD 1] 일일 최대 손절 한도 도달 시 신규 매수 차단 (Over-trading Guard)
                     # 하루 동안 잦은 매수-손절로 인해 계좌의 원금이 급격히 녹아내리는 것을 방지하기 위해,
@@ -618,10 +630,16 @@ class ExecutionMixin:
                             detail = self.api.get_naver_stock_detail(code)
                             curr_price = safe_cast_float(detail.get('price', 0))
                             if ma_20 > 0 and curr_price <= ma_20:
-                                msg = f"🛡️ [VIBE-GUARD] 시초가 지지선 미달로 [{code}]{name} 매수 스킵 (현재가 {curr_price:,.0f} <= 20MA {ma_20:,.0f})"
+                                msg = f"🛡️ [VIBE-GUARD] 시초가 지지선 미달로 [{code}]{name} 매수 스킵 (현재가 {curr_price:,.0f} <= 20MA {ma_20:,.0f}) (5분 쿨타임)"
                                 logger.info(msg)
                                 if self.state:
                                     self.state.add_trading_log(msg)
+                                self.rejected_stocks[code] = {
+                                    "reason": f"시초가 지지선 미달 (현재가 {curr_price:,.0f} <= 20MA {ma_20:,.0f})",
+                                    "time": time.time(),
+                                    "expiry": time.time() + 300
+                                }
+                                self._save_all_states()
                                 continue
 
                     if self.state: self.state.update_worker_status("TRADE_EXECUTION", status="AI 매수 분석", last_task=f"분석: {name} ({score:.1f}점)", friendly_name="매매 분석")
@@ -645,8 +663,16 @@ class ExecutionMixin:
                         detail = self.api.get_naver_stock_detail(code)
                         curr_price = safe_cast_float(detail.get('price', 0)) if detail else 0.0
                         if ma_20 > 0 and curr_price > 0 and curr_price < ma_20:
-                            msg = f"🛡️ [역배열 낙주 차단] [{code}]{name} {self.analyzer.kr_vibe} 장세 20MA({ma_20:,.0f}) 하회로 매수 제외 (현재가 {curr_price:,.0f})"
+                            msg = f"🛡️ [역배열 낙주 차단] [{code}]{name} {self.analyzer.kr_vibe} 장세 20MA({ma_20:,.0f}) 하회로 매수 제외 (현재가 {curr_price:,.0f}) (5분 쿨타임)"
                             logger.info(msg)
+                            if self.state:
+                                self.state.add_trading_log(msg)
+                            self.rejected_stocks[code] = {
+                                "reason": f"역배열 낙주 차단 (20MA {ma_20:,.0f} 하회)",
+                                "time": time.time(),
+                                "expiry": time.time() + 300
+                            }
+                            self._save_all_states()
                             continue
 
                     # [하락장 필터 대응] 자동 매수 비대상 종목(수동 전용)은 AI 자율 매수 루프에서 스킵
