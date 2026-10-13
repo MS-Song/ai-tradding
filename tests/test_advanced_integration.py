@@ -655,6 +655,33 @@ class TestAIDecisionScenarios:
         assert assigned["preset_id"] == "01"
         assert "[도태 대체" in assigned["reason"]
 
+    def test_tc_p06_fast_algo_entry_without_llm_latency(self, strategy):
+        """[TC-P06] 고확신 퀀트 시그널 시 LLM 지연 없이 Fast Path 초고속 체결 검증"""
+        # ExecutionMixin의 실제 confirm_buy_decision 바인딩
+        strategy.confirm_buy_decision = ExecutionMixin.confirm_buy_decision.__get__(strategy, strategy.__class__)
+        strategy.ai_config["use_fast_algo_entry"] = True
+        strategy.ai_config["fast_algo_min_score"] = 85.0
+        
+        strategy.api.get_naver_stock_detail.return_value = {"price": 10000, "rate": 2.0}
+        strategy.api.get_naver_stock_news.return_value = []
+        strategy.api.get_minute_chart_price.return_value = []
+        strategy.indicator_eng.get_dual_timeframe_analysis.return_value = {"signal": "BUY_ZONE", "ma_20": 10000.0}
+        strategy.ai_advisor.final_buy_confirm = MagicMock()
+        
+        # 1. Score 90.0 (>=85.0) & BUY_ZONE -> LLM 호출 없이 Fast Path 직결 승인
+        is_ok, reason, wait_mins = strategy.confirm_buy_decision("005930", "삼성전자", score=90.0)
+        assert is_ok is True
+        assert "[FAST-ALGO]" in reason
+        assert wait_mins == 0
+        strategy.ai_advisor.final_buy_confirm.assert_not_called()
+        
+        # 2. Score 65.0 (+15pt 가점 후 80.0 < 85.0) -> Fast Path 미충족으로 LLM final_buy_confirm 호출
+        strategy.ai_advisor.final_buy_confirm.return_value = (True, "AI 정성 분석 승인", 0)
+        is_ok2, reason2, _ = strategy.confirm_buy_decision("035720", "카카오", score=65.0)
+        assert is_ok2 is True
+        assert "[FAST-ALGO]" not in reason2
+        strategy.ai_advisor.final_buy_confirm.assert_called_once()
+
 class TestThresholdScenarios:
     def test_tc_b01_bull_modifier(self, strategy):
         """[TC-B01-1] 상승장(Bull) 보정"""

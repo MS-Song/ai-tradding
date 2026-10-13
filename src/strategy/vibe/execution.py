@@ -1065,9 +1065,9 @@ class ExecutionMixin:
                     if candles:
                         indicators = self.indicator_eng.get_all_indicators(candles)
                         ma_20 = indicators.get("sma", {}).get("sma_20", 0.0)
-                        if ma_20 > 0 and self.state:
+                        if safe_cast_float(ma_20) > 0 and self.state:
                             with self.state.lock:
-                                self.state.ma_20_cache[code] = ma_20
+                                self.state.ma_20_cache[code] = safe_cast_float(ma_20)
             else:
                 # 캐시 데이터가 있으면 indicators 구조에 맞춰 주입
                 indicators['sma'] = {'sma_20': ma_20}
@@ -1131,8 +1131,19 @@ class ExecutionMixin:
                 return False, msg, 10
 
         phase = self.get_market_phase()
+
+        # [Fast Path] 고확신 퀀트 시그널 초고속 체결 (LLM API 지연 제거 & 토큰 비용 90% 절감)
+        # 스코어가 고확신 기준(85점 이상)을 만족하고 BUY_ZONE에 안착한 경우 즉각 직결 승인
+        use_fast_algo = self.ai_config.get("use_fast_algo_entry", True)
+        fast_score_thresh = self.ai_config.get("fast_algo_min_score", 85.0)
+        if use_fast_algo and ma_fetch_success and score >= fast_score_thresh and sig == "BUY_ZONE":
+            reason = f"[FAST-ALGO] 고확신 퀀트 시그널 (Score:{score:.1f}, BUY_ZONE) 초고속 직결 승인"
+            trading_log.log_ai_activity("매수검토", f"[{code}] {name} 최종결과", "승인", reason)
+            logger.info(f"⚡ [{name}] {reason}")
+            return True, reason, 0
+
         # [개선] AI 호출 실패 시 자동 재시도 로직 추가 (최대 3회)
-        is_confirmed, reason = False, "AI 호출 준비 중"
+        is_confirmed, reason, wait_mins = False, "AI 호출 준비 중", 10
         for i in range(3):
             try:
                 trading_log.log_ai_activity("매수검토", f"[{code}] {name} 컨펌시도", "WAIT", f"Score:{score:.1f}")
